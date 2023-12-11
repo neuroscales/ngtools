@@ -1,0 +1,6 @@
+neuroglancer
+numpy
+nibabel
+tifffile
+fsspec[http]
+dandi>=0.44

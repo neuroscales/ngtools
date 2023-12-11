@@ -1,0 +1,13 @@
+Metadata-Version: 2.1
+Name: ngtracts
+Version: 0.0.0
+Summary: Tracts visualization and annotation in neuroglancer
+Author: Yael Balbastre
+Author-email: ybalbastre@mgh.harvard.edu
+Requires-Python: >=3.8
+Requires-Dist: neuroglancer
+Requires-Dist: numpy
+Requires-Dist: nibabel
+Requires-Dist: tifffile
+Requires-Dist: fsspec[http]
+Requires-Dist: dandi>=0.44

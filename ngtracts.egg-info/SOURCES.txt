@@ -1,0 +1,10 @@
+setup.cfg
+setup.py
+ngtracts/__init__.py
+ngtracts/dandifs.py
+ngtracts/tracts.py
+ngtracts.egg-info/PKG-INFO
+ngtracts.egg-info/SOURCES.txt
+ngtracts.egg-info/dependency_links.txt
+ngtracts.egg-info/requires.txt
+ngtracts.egg-info/top_level.txt

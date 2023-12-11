@@ -1,0 +1,15 @@
+name: ngtracts
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8
+  - nibabel
+  - tifffile
+  - fsspec
+  - requests        # for fsspec[http]
+  - aiohttp         # for fsspec[http]
+  - dandi >= 0.44
+  - pip:
+    - neuroglancer
+    - notebook      # def
+  - ipython         # dev
