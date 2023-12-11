@@ -8,7 +8,7 @@ import random
 import fsspec
 
 
-DEFAULT_MAX_TRACTS = 10000
+DEFAULT_MAX_TRACTS = 1000
 
 
 class TractSource(SkeletonSource):
@@ -100,6 +100,7 @@ class TractSource(SkeletonSource):
                 return
             except Exception as e:
                 tck_error = e
+            print('error', trk_error, tck_error)
             raise RuntimeError(f'trk: {trk_error.message}\n'
                                f'tck: {tck_error.message}')
 
@@ -161,7 +162,6 @@ class TractSource(SkeletonSource):
         vertices = np.concatenate(vertices)
         edges = np.concatenate(edges)
         orientations = np.concatenate(orientations)
-
         return vertices, edges, orientations
 
     @classmethod
@@ -196,10 +196,11 @@ class TractSource(SkeletonSource):
         -------
         skel : neuroglancer.Skeleton
         """
-        if i != 1:
-            raise ValueError('Unknown segment id')
+        # if i != 1:
+        #     raise ValueError('Unknown segment id')
         self._filter()
         vertices, edges, orients = self._make_skeleton()
+        print(vertices.shape, edges.shape, orients.shape)
         return Skeleton(vertices, edges, dict(orientation=orients))
 
     def precomputed_prop_info(self, combined=False):
@@ -280,8 +281,8 @@ class TractSource(SkeletonSource):
         edges = b''
         orientations = b''
 
-        for id in range(self.displayed_ids):
-            tract = self.displayed_tracts[id] * 1E6  # nanometer
+        for id in self.displayed_ids:
+            tract = self[id] * 1E6  # nanometer
             v, e, o = self.get_skeleton(tract)
             # vertex_positions: [num_vertices, 3] float32le (C-order)
             vertices += np.asarray(v, dtype='<f4').tobytes()
