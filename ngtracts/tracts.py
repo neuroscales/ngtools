@@ -200,7 +200,6 @@ class TractSource(SkeletonSource):
         #     raise ValueError('Unknown segment id')
         self._filter()
         vertices, edges, orients = self._make_skeleton()
-        print(vertices.shape, edges.shape, orients.shape)
         return Skeleton(vertices, edges, dict(orientation=orients))
 
     def precomputed_prop_info(self, combined=False):
