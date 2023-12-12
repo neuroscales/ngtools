@@ -8,7 +8,7 @@ import random
 import fsspec
 
 
-DEFAULT_MAX_TRACTS = 1000
+DEFAULT_MAX_TRACTS = 10000
 
 
 class TractSource(SkeletonSource):
@@ -183,7 +183,7 @@ class TractSource(SkeletonSource):
         orient /= length
         return orient
 
-    def get_skeleton(self, i):
+    def get_skeleton(self, i=1):
         """
         Neuroglancer Python API
 
@@ -258,7 +258,13 @@ class TractSource(SkeletonSource):
 
         return info
 
-    def precomputed_skel_tract_combined(self, id=1):
+    def precomputed_skel_data(self, id=1, combined=True):
+        if combined:
+            return self._precomputed_skel_data_combined(id)
+        else:
+            return self._precomputed_skel_data_single(id)
+
+    def _precomputed_skel_data_combined(self, id=1):
         """
         "NG precomputed format" : skeleton data (combined)
 
@@ -274,6 +280,13 @@ class TractSource(SkeletonSource):
         if id != 1:
             return b''
         self._filter()
+
+        # skeleton format:
+        # num_vertices:     uint32le
+        # edges:            uint32le
+        # vertex_positions: float32le [num_vertices, 3]  (C-order)
+        # edges:            uint32le  [num_edges,    2]  (C-order)
+        # attr|orientation: float32le [num_vertices, 3]  (C-order)
 
         num_vertices = num_edges = 0
         vertices = b''
@@ -294,19 +307,14 @@ class TractSource(SkeletonSource):
             num_edges += len(tract) - 1
 
         bintract = b''
-        # num_vertices: uint32le
         bintract += np.asarray(num_vertices, dtype='<u4').tobytes()
-        # edges: uint32le
         bintract += np.asarray(num_edges, dtype='<u4').tobytes()
-        # vertex_positions: [num_vertices, 3] float32le (C-order)
         bintract += vertices
-        # edges: [num_edges, 2] uint32le (C-order)
         bintract += edges
-        # attributes | orientation: [num_vertices, 3] float32le (C-order)
         bintract += orientations
         return bintract
 
-    def precomputed_skel_tract(self, id):
+    def _precomputed_skel_data_single(self, id):
         """
         Return a single tract
 
@@ -316,20 +324,23 @@ class TractSource(SkeletonSource):
         TODO: add orientation attribute
         """
         self._filter()
+
+        # skeleton format:
+        # num_vertices:     uint32le
+        # edges:            uint32le
+        # vertex_positions: float32le [num_vertices, 3]  (C-order)
+        # edges:            uint32le  [num_edges,    2]  (C-order)
+        # attr|orientation: float32le [num_vertices, 3]  (C-order)
+
         tract = self.displayed_tracts[id] * 1E6
+        v, e, o = self.get_skeleton(tract)
 
         bintract = b''
-        # num_vertices: uint32le
-        bintract += np.asarray(len(tract), dtype='<u4').tobytes()
-        # edges: uint32le
-        bintract += np.asarray(len(tract) - 1, dtype='<u4').tobytes()
-        # vertex_positions: [num_vertices, 3] float32le (C-order)
-        bintract += np.asarray(tract, dtype='<f4').tobytes()
-        # edges: [num_edges, 2] uint32le (C-order)
-        bintract += np.stack([
-            np.arange(len(tract) - 1, dtype='<u4'),
-            np.arange(1, len(tract), dtype='<u4')
-        ], -1).tobytes()
+        bintract += np.asarray(len(v), dtype='<u4').tobytes()
+        bintract += np.asarray(len(e), dtype='<u4').tobytes()
+        bintract += np.asarray(v, dtype='<f4').tobytes()
+        bintract += np.asarray(e, dtype='<u4').tobytes()
+        bintract += np.asarray(o, dtype='<f4').tobytes()
 
         print('serve tract', id, '/', len(self.displayed_ids))
         return bintract
