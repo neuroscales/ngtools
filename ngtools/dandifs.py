@@ -21,17 +21,31 @@ class RemoteDandiFileSystem(AbstractFileSystem):
     Examples
     --------
     Load and parse a remote file
-    >> from dandifs import RemoteDandiFileSystem
-    >> import json
-    >> fs = RemoteDandiFileSystem()
-    >> with fs.open('dandi://dandi/000026/rawdata/sub-I38/ses-MRI/anat/'
-    >>              'sub-I38_ses-MRI-echo-4_flip-4_VFA.json') as f:
-    >>      info = json.load(f)
+    ```python
+    from dandi.fs import RemoteDandiFileSystem
+    import json
+    fs = RemoteDandiFileSystem()
+    with fs.open('dandi://dandi/000026/rawdata/sub-I38/ses-MRI/anat/'
+                 'sub-I38_ses-MRI-echo-4_flip-4_VFA.json') as f:
+        info = json.load(f)
+    ```
+
+    The 'dandi://' protocol is registered with fsspec, so the same
+    result can be achived by
+    ```python
+    import fsspec
+    import json
+    with fsspec.open('dandi://dandi/000026/rawdata/sub-I38/ses-MRI/anat/'
+                     'sub-I38_ses-MRI-echo-4_flip-4_VFA.json') as f:
+        info = json.load(f)
+    ```
 
     Browse a dataset
-    >> from dandifs import RemoteDandiFileSystem
-    >> fs = RemoteDandiFileSystem('000026')
-    >> fs.glob('**/anat/*.json')
+    ```python
+    from dandi.fs import RemoteDandiFileSystem
+    fs = RemoteDandiFileSystem('000026')
+    fs.glob('**/anat/*.json')
+    ```
 
     """
 
@@ -154,13 +168,21 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         return dandiset, path
 
     def s3_url(self, path):
+        """
+        Get the the asset url on AWS S3
+
+        path
+        """
         dandiset, asset = self.get_dandiset(path)
         if not isinstance(asset, RemoteAsset):
             asset = dandiset.get_asset_by_path(asset)
-        url = asset.download_url
-        url = requests.request(url=url, method='head').url
-        if '?' in url:
-            return url[:url.index('?')]
+        info = requests.request(url=asset.api_path_url, method='get').json()
+        url = ''
+        for url in info['contentUrl']:
+            if url.startswith('https://dandiarchive.s3.amazonaws.com'):
+                break
+        if not url.startswith('https://dandiarchive.s3.amazonaws.com'):
+            return None
         return url
 
     def _maybe_to_s3(self, url):
