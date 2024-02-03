@@ -76,7 +76,7 @@ class LocalFileServer:
             path_info = os.path.join(self.cwd, path_info)
         if path_info.endswith(('.zarr', '.zarr/')):
             path_info = os.path.join(path_info, '.zgroup')
-        if not os.path.exists(path_info):
+        if not os.path.isfile(path_info):
             return self.file_not_found(path_info, start_response)
         with open(path_info, 'rb') as f:
             data = f.read()

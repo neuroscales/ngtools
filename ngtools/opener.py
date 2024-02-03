@@ -15,6 +15,14 @@ def stringify_path(filename):
     return filename
 
 
+REMOTE_PROTOCOLS = ["http", "https", "s3"]
+
+
+def remote_protocols():
+    """List of accepeted remote protocols"""
+    return tuple(x + '://' for x in REMOTE_PROTOCOLS)
+
+
 @contextmanager
 def open(fileobj, mode='rb', compression='infer'):
     """
@@ -41,7 +49,7 @@ def open(fileobj, mode='rb', compression='infer'):
         opt = dict()
         if not (compression == 'infer' and 'r' in mode):
             opt['compression'], compression = compression, None
-        if fileobj.startswith(('http://', 'https://')):
+        if fileobj.startswith(remote_protocols()):
             opt['block_size'] = 0
         with fsspec.open(fileobj, mode, **opt) as f:
             with open(f, mode, compression) as ff:

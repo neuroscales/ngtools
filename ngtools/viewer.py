@@ -10,7 +10,37 @@ import neuroglancer as ng
 from neuroglancer.server import global_server_args
 from .fileserver import LocalFileServerInBackground
 from .volume import LocalSource, RemoteSource
-from .spaces import neurospaces, neurotransforms, to_square, letter2full
+from .spaces import (
+    neurospaces, neurotransforms, letter2full, compose, to_square)
+from .shaders import shaders, colormaps
+from .transforms import load_affine
+from .opener import remote_protocols
+
+
+def action(func):
+    """
+    Decorator for neuroglancer actions (that can be triggered  by argparse)
+    """
+    def wrapper(self, *args, **kwargs):
+        args = list(args)
+        if args and isinstance(args[0], argparse.Namespace):
+            if len(args) > 1:
+                raise ValueError('Only one positional argument accepted '
+                                 'when an action is applied to an argparse '
+                                 'object')
+            parsedargs = vars(args.pop(0))
+            parsedargs.update(kwargs)
+            parsedargs.pop('func', None)
+            kwargs = parsedargs
+        return func(self, *args, **kwargs)
+
+    return wrapper
+
+
+def ensure_list(x):
+    if not isinstance(x, (list, tuple)):
+        x = [x]
+    return list(x)
 
 
 class LocalNeuroglancer:
@@ -73,7 +103,7 @@ class LocalNeuroglancer:
                     print("(PARSE ERROR)", e, file=sys.stderr)
                     raise e
         except KeyboardInterrupt:
-            print('\n(EXIT)')
+            print('exit')
 
     def make_parser(self):
         mainparser = NoExitArgParse('')
@@ -95,7 +125,7 @@ class LocalNeuroglancer:
 
         unload = parsers.add_parser('unload', help='Unload a file')
         unload.set_defaults(func=self.unload)
-        load.add_argument(
+        unload.add_argument(
             dest='names', nargs='+', help='Name(s) of layer(s) to unload')
 
         transform = parsers.add_parser('transform', help='Apply a transform')
@@ -105,141 +135,198 @@ class LocalNeuroglancer:
             help='Path to transform file or flattened transformation '
                  'matrix (row major)')
         transform.add_argument(
-            '--name', nargs='+', help='Name of layer(s) to transform')
+            '--name', nargs='+', help='Name(s) of layer(s) to transform')
+        transform.add_argument(
+            '--inv', action='store_true', default=False,
+            help='Invert the transform before applying it')
+        transform.add_argument(
+            '--mov', help='Moving image (required by some formats)')
+        transform.add_argument(
+            '--fix', help='Fixed image (required by some formats)')
 
         shader = parsers.add_parser('shader', help='Apply a shader')
         shader.set_defaults(func=self.shader)
+        shader.add_argument(
+            dest='shader', help='Shader name or full shader code')
+        shader.add_argument(
+            '--name', nargs='+', help='Name(s) of layer(s) to apply shader to')
 
         display = parsers.add_parser('display', help='Dimensions to display')
         display.set_defaults(func=self.display)
         display.add_argument(
             dest='dimensions', nargs='*', help='Dimensions to display')
 
-        exit = parsers.add_parser('exit', help='Exit neuroglancer')
+        exit = parsers.add_parser('exit', aliases=['quit'],
+                                  help='Exit neuroglancer')
         exit.set_defaults(func=self.exit)
         return mainparser
 
-    def display(self, args=None):
-        if args and args.dimensions:
-            self.display_dimensions = args.dimensions
-        names = list(map(lambda x: x[0].lower(), self.display_dimensions))
-        names = ''.join([d for d in names if d not in 'ct'])
+    @action
+    def display(self, dimensions=None):
+        """
+        Change displayed dimensions.
+
+        Parameters
+        ----------
+        dimensions : str or list[str]
+            The three dimensions to display.
+            Each dimension can be one of:
+
+            * `"left"` or `"right"`
+            * `"posterior"` or `"anterior"`
+            * `"inferior"` or `"superior"`
+
+            Otherwise, dimensions can be native axis names of the loaded
+            data, such as `"x"`, `"y"`, `"z"`.
+
+            A compact representation (`"RAS"`, or `"zyx"`) can also be
+            provided.
+
+        """
+        dimensions = ensure_list(dimensions or [])
+        if dimensions:
+            if len(dimensions) == 1:
+                dimensions = list(dimensions[0])
+            if len(dimensions) != 3:
+                raise ValueError('display takes three axis names')
+            dimensions = [letter2full.get(letter.lower(), letter)
+                          for letter in dimensions]
+            self.display_dimensions = dimensions
+
+        def compactNames(names):
+            names = list(map(lambda x: x[0].lower(), names))
+            names = ''.join([d for d in names if d not in 'ct'])
+            return names
+
+        names = compactNames(self.display_dimensions)
+
+        def getDimensions(source, _reentrant=False):
+            if getattr(source, 'transform', None):
+                transform = source.transform
+                if transform.inputDimensions:
+                    return transform.inputDimensions
+            if getattr(source, 'dimensions', None):
+                return source.dimensions
+            if not _reentrant and not isinstance(source, ng.LocalVolume):
+                mysource = RemoteSource.from_filename(source.url)
+                return getDimensions(mysource, True)
+            return None
+
+        def getTransform(source):
+            if getattr(source, 'transform', None):
+                return source.transform
+            if not isinstance(source, ng.LocalVolume):
+                mysource = RemoteSource.from_filename(source.url)
+                if getattr(mysource, 'transform', None):
+                    return mysource.transform
+            return None
+
+        def reorientUsingTransform(source):
+            transform = getTransform(source)
+            idims = getDimensions(source)
+            matrix = transform.matrix
+            if matrix is None:
+                matrix = np.eye(4)
+            odims = transform.outputDimensions
+            onames = transform.outputDimensions.names
+            onames = compactNames(onames)
+            if all(name in onames for name in names):
+                return False
+            T0 = ng.CoordinateSpaceTransform(
+                matrix=matrix,
+                input_dimensions=idims,
+                output_dimensions=odims,
+            )
+            T = neurotransforms[(neurospaces[onames], neurospaces[names])]
+            source.transform = compose(T, T0)
+            return True
+
+        def reorientUsingDimensions(source):
+            idims = getDimensions(source)
+            if not idims:
+                return False
+            inames = compactNames(idims.names)
+            if all(name in inames for name in names):
+                return True
+            T0 = ng.CoordinateSpaceTransform(
+                input_dimensions=idims,
+                output_dimensions=idims,
+            )
+            T = neurotransforms[(neurospaces[inames], neurospaces[names])]
+            source.transform = compose(T, T0)
+            return True
+
         with self.viewer.txn() as state:
             for layer in state.layers:
                 layer = layer.layer
                 if isinstance(layer, ng.ImageLayer):
                     for source in layer.source:
-                        print(source)
-                        transform = source.transform
-                        if not transform and not isinstance(source, ng.LocalVolume):
-                            mysource = RemoteSource.from_filename(source.url)
-                            transform = getattr(mysource, 'transform')
-                        if transform:
-                            print('hastransform', transform)
-                            matrix = transform.matrix
-                            if matrix is None:
-                                matrix = np.eye(4)
-                            idims = transform.inputDimensions
-                            if not idims and not isinstance(source, ng.LocalVolume):
-                                mysource = RemoteSource.from_filename(source.url)
-                                idims = getattr(mysource, 'dimensions')
-                            odims = transform.outputDimensions
-                            onames = transform.outputDimensions.names
-                            onames = list(map(lambda x: x[0].lower(), onames))
-                            onames = ''.join([d for d in onames if d not in 'ct'])
-                            if all(name in onames for name in names):
-                                continue
-                            T0 = to_square(matrix)
-                            T = neurotransforms[(neurospaces[onames],
-                                                neurospaces[names])].matrix
-                            T = to_square(T)
-                            T = T @ T0
-                            T = ng.CoordinateSpaceTransform(
-                                matrix=T[:3, :4],
-                                inputDimensions=idims,
-                                outputDimensions=ng.CoordinateSpace(
-                                    names=[letter2full.get(x, x) for x in names],
-                                    units=odims.units,
-                                    scales=np.abs(T[:3, :3] @ odims.scales)
-                                )
-                            )
-                            source.transform = T
-
-                        elif isinstance(source, ng.LocalVolume):
-                            print('local')
-                            idims = getattr(source, 'dimensions', None)
-                            if not idims:
-                                continue
-                            inames = idims.names
-                            inames = list(map(lambda x: x[0].lower(), inames))
-                            inames = ''.join([d for d in inames if d not in 'ct'])
-                            if all(name in inames for name in names):
-                                continue
-                            T = neurotransforms[(neurospaces[inames],
-                                                neurospaces[names])].matrix
-                            T = ng.CoordinateSpaceTransform(
-                                matrix=T[:3, :4],
-                                inputDimensions=idims,
-                                outputDimensions=ng.CoordinateSpace(
-                                    names=[letter2full.get(x, x) for x in names],
-                                    units=idims.units,
-                                    scales=np.abs(T[:3, :3] @ idims.scales)
-                                )
-                            )
-                            source.transform = T
-
+                        if getTransform(source):
+                            reorientUsingTransform(source)
                         else:
-                            print('remote')
-                            mysource = RemoteSource.from_filename(source.url)
-                            odims = getattr(mysource, 'outputDimensions', None)
-                            print(odims)
-                            if not odims:
-                                continue
-                            onames = odims.names
-                            onames = list(map(lambda x: x[0].lower(), onames))
-                            onames = ''.join([d for d in onames if d not in 'ct'])
-                            if all(name in onames for name in names):
-                                continue
-                            T = neurotransforms[(neurospaces[onames],
-                                                neurospaces[names])].matrix
-                            T = ng.CoordinateSpaceTransform(
-                                matrix=T[:3, :4],
-                                inputDimensions=odims,
-                                outputDimensions=ng.CoordinateSpace(
-                                    names=[letter2full.get(x, x) for x in names],
-                                    units=odims.units,
-                                    scales=np.abs(T[:3, :3] @ odims.scales)
-                                )
-                            )
-                            source.transform = T
-                            print(T)
+                            reorientUsingDimensions(source)
 
+        self.redisplay()
+
+    def redisplay(self, *args):
+        """
+        Resets `displayDimensions` to its current value, or to a new value.
+        This function does not transform the data accordingly. It only
+        sets the state's `displayDimensions`.
+
+        Parameters
+        ----------
+        dimensions : None or list[str], optional
+        """
+        if args:
+            self.display_dimensions = args[0]
         with self.viewer.txn() as state:
             state.displayDimensions = self.display_dimensions
 
-    def load(self, args):
-        if args.name and len(args.filenames or []) > 1:
+    @action
+    def load(self, filenames, name=None, transform=None):
+        """
+        Load file(s)
+
+        Parameters
+        ----------
+        filenames : str or list[str]
+            Paths or URL, eventually prepended with "type" and "format"
+            protocols. Ex: `"labels://nifti://http://cloud.com/path/to/nii.gz"`
+        name : str, optional
+            A name for the layer.
+        transform : array_like or list[float] or str, optional
+            Affine transform to apply to the loaded volume.
+        """
+        filenames = ensure_list(filenames or [])
+        if name and len(filenames) > 1:
             raise ValueError('Cannot give a single name to multiple layers. '
                              'Use separate `load` calls.')
-        for filename in args.filenames or []:
-            layertype, ngtype, format, filename = self.parse_filename(filename)
-            name = args.name or os.path.basename(filename)
+        name0 = name
+        display_dimensions = self.display_dimensions
+        self.redisplay(None)
 
-            if ngtype:
+        for filename in filenames or []:
+            layertype, format, filename = self.parse_filename(filename)
+            name = name0 or os.path.basename(filename)
+
+            if format in self.NG_FORMATS:
                 # Remote source
                 filename = self.ensure_url(filename)
-                source = RemoteSource.from_filename(
-                    ngtype + '://' + filename, layer_type=layertype)
+                source = RemoteSource.from_filename(format + '://' + filename)
                 controls = None
                 if hasattr(source, 'quantiles'):
                     q = source.quantiles([0.01, 0.99])
                     controls = {"normalized": {"range": q}}
                 layer = ng.ImageLayer(
-                    source=source,
+                    source=ng.LayerDataSource(
+                        url=format + '://' + filename,
+                        transform=getattr(source, 'transform', None),
+                    ),
                     shaderControls=controls,
                 )
 
-            else:
+            elif format in self.EXTRA_FORMATS:
                 # Local source
                 if format:
                     filename = format + '://' + filename
@@ -254,38 +341,210 @@ class LocalNeuroglancer:
                     shaderControls=controls,
                 )
 
+            else:
+                raise ValueError(
+                    'Unrecognized format. Try specifying a format with the '
+                    'protocol syntax.'
+                )
+
             with self.viewer.txn() as state:
                 state.layers.append(name=name, layer=layer)
 
-            if args.transform:
-                xargs = self.parser.parse_args([
-                    'transform', args.transform, '--name', name])
-                xargs.func(xargs)
+        if transform:
+            self.transform(transform, name=name0)
+        self.redisplay(display_dimensions)
 
-    def unload(self, args):
-        for name in args.names or []:
-            with self.viewer.txn() as state:
-                del state[name]
+    @action
+    def unload(self, names):
+        """
+        Unload layers
 
-    def transform(self, args):
-        pass
+        Parameters
+        ----------
+        names : str or list[str]
+            Names of layers to unload
+        """
+        names = ensure_list(names or [])
+        with self.viewer.txn() as state:
+            for name in names:
+                del state.layers[name]
 
-    def shader(self, args):
-        pass
+    @action
+    def transform(self, transform, name=None, inv=False,
+                  *, mov=None, fix=None):
+        """
+        Apply an affine transform
 
-    def help(self, args):
-        if args.action:
-            args = self.parser.parse_args([args.action, '--help'])
+        Parameters
+        ----------
+        transform : list[float] or np.ndarray or fileobj
+            Affine transform (RAS+)
+        name : str or list[str]
+            Layer(s) to transform
+        inv : bool
+            Invert the transform
+
+        Other Parameters
+        ----------------
+        mov : str
+            Moving/Floating image (required by some affine formats)
+        fix : str
+            Fixed/Reference image (required by some affine formats)
+        """
+        name = name or []
+        if not isinstance(name, (list, tuple)):
+            name = [name]
+        display_dimensions = self.display_dimensions
+        self.display('ras')
+
+        # prepare transformation matrix
+        transform = ensure_list(transform)
+        if len(transform) == 1:
+            transform = transform[0]
+        if isinstance(transform, str):
+            transform = load_affine(transform, moving=mov, fixed=fix)
+        transform = np.asarray(transform, dtype='float64')
+        if transform.ndim == 1:
+            if len(transform) == 12:
+                transform = transform.reshape([3, 4])
+            elif len(transform) == 16:
+                transform = transform.reshape([4, 4])
+            else:
+                n = int(np.sqrt(1 + 4 * len(transform)).item()) // 2
+                transform = transform.reshape([n, n+1])
+        elif transform.ndim > 2:
+            raise ValueError('Transforms must be matrices')
+        transform = to_square(transform)
+        if inv:
+            transform = np.linalg.inv(transform)
+        transform = transform[:-1]
+
+        # make ng transform
+        T = ng.CoordinateSpaceTransform(
+            matrix=transform,
+            input_dimensions=ng.CoordinateSpace(
+                names=["right", "anterior", "superior"],
+                units=["mm"] * 3,
+                scales=[1] * 3
+            ),
+            output_dimensions=ng.CoordinateSpace(
+                names=["right", "anterior", "superior"],
+                units=["mm"] * 3,
+                scales=[1] * 3
+            ),
+        )
+
+        def getDimensions(source, _reentrant=False):
+            if getattr(source, 'transform', None):
+                transform = source.transform
+                if transform.inputDimensions:
+                    return transform.inputDimensions
+            if getattr(source, 'dimensions', None):
+                return source.dimensions
+            if not _reentrant and not isinstance(source, ng.LocalVolume):
+                mysource = RemoteSource.from_filename(source.url)
+                return getDimensions(mysource, True)
+            return None
+
+        def getTransform(source):
+            if getattr(source, 'transform', None):
+                return source.transform
+            if not isinstance(source, ng.LocalVolume):
+                mysource = RemoteSource.from_filename(source.url)
+                if getattr(mysource, 'transform', None):
+                    return mysource.transform
+            return None
+
+        def composeTransform(source):
+            transform = getTransform(source)
+            idims = getDimensions(source)
+            matrix = transform.matrix
+            if matrix is None:
+                matrix = np.eye(4)
+            odims = transform.outputDimensions
+            T0 = ng.CoordinateSpaceTransform(
+                matrix=matrix,
+                input_dimensions=idims,
+                output_dimensions=odims,
+            )
+            source.transform = compose(T, T0)
+            return True
+
+        def applyTransform(source):
+            idims = getDimensions(source)
+            if not idims:
+                return False
+            T0 = ng.CoordinateSpaceTransform(
+                input_dimensions=idims,
+                output_dimensions=idims,
+            )
+            source.transform = compose(T, T0)
+            return True
+
+        with self.viewer.txn() as state:
+            for layer in state.layers:
+                if name and layer.name not in name:
+                    continue
+                layer = layer.layer
+                if isinstance(layer, ng.ImageLayer):
+                    for source in layer.source:
+                        if getTransform(source):
+                            composeTransform(source)
+                        else:
+                            applyTransform(source)
+
+        self.display(display_dimensions)
+
+    @action
+    def shader(self, shader, name=None):
+        """
+        Apply a shader (that is, a colormap or lookup table)
+
+        Parameters
+        ----------
+        shader : str
+            A known shader name (from `ngtools.shaders`), or some
+            user-defined shader code.
+        name : str or list[str], optional
+            Apply the shader to these layers. Default: all layers.
+        """
+        name = name or []
+        if not isinstance(name, (list, tuple)):
+            name = [name]
+        if hasattr(shaders, shader):
+            shader = getattr(shaders, shader)
+        elif hasattr(colormaps, shader):
+            shader = shaders.colormap(shader)
+        with self.viewer.txn() as state:
+            for layer in state.layers:
+                if layer.name not in name:
+                    continue
+                layer = layer.layer
+                layer.shader = shader
+
+    @action
+    def help(self, action=None):
+        """
+        Display help
+
+        Parameters
+        ----------
+        action : str
+            Action for which to display help
+        """
+        if action:
+            self.parser.parse_args([action, '--help'])
         else:
-            args = self.parser.parse_args(['--help'])
+            self.parser.parse_args(['--help'])
 
-    def exit(self, args):
+    @action
+    def exit(self):
+        """Exit gracefully"""
         del self.fileserver
         sys.exit()
 
     def ensure_url(self, filename):
-        remote_protocols = [p + '://' for p in self.REMOTE_PROTOCOLS]
-        if not filename.startswith(tuple(remote_protocols)):
+        if not filename.startswith(remote_protocols()):
             if filename.startswith('/'):
                 filename = 'root://' + filename
             prefix = f'http://{self.fileserver.ip}:{self.fileserver.port}/'
@@ -339,12 +598,6 @@ class LocalNeuroglancer:
         'niftyreg',         # NiftyReg affine transform
     ]
 
-    REMOTE_PROTOCOLS = [
-        'http',
-        'https',
-        's3',
-    ]
-
     def parse_filename(self, filename):
 
         datatype = None
@@ -354,24 +607,15 @@ class LocalNeuroglancer:
                 filename = filename[len(dt)+3:]
                 break
 
-        ng_protocol = None
-        for ngp in self.NG_FORMATS:
-            if filename.startswith(ngp + '://'):
-                ng_protocol = ngp
-                filename = filename[len(ngp)+3:]
-                break
-
         format = None
-        for fmt in self.EXTRA_FORMATS:
+        for fmt in self.NG_FORMATS + self.EXTRA_FORMATS:
             if filename.startswith(fmt + '://'):
-                format = ngp
+                format = fmt
                 filename = filename[len(fmt)+3:]
                 break
 
         if format is None:
-            if ng_protocol:
-                format = ng_protocol
-            elif filename.endswith('.mgh'):
+            if filename.endswith('.mgh'):
                 format = 'mgh'
             elif filename.endswith('.mgz'):
                 format = 'mgz'
@@ -389,11 +633,16 @@ class LocalNeuroglancer:
                 format = 'tiff'
             elif filename.endswith('.gii'):
                 format = 'gii'
+            elif filename.endswith(('.zarr', '.zarr/')):
+                format = 'zarr'
+            elif filename.endswith('.vtk'):
+                format = 'vtk'
+            elif filename.endswith('.obj'):
+                format = 'obj'
+            elif filename.endswith(('.n5', '.n5/')):
+                format = 'n5'
 
-        if not ng_protocol and format == 'nifti':
-            ng_protocol = 'nifti'
-
-        return datatype, ng_protocol, format, filename
+        return datatype, format, filename
 
 
 class NoExitArgParse(argparse.ArgumentParser):

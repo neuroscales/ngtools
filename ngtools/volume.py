@@ -45,12 +45,11 @@ class BabelMixin:
         )
 
 
-class QuantileMixin:
-
-    def _quantiles(self, q, data):
-        steps = [max(1, x//64) for x in data.shape]
-        slicer = (Ellipsis,) + tuple(slice(None, None, step) for step in steps)
-        return np.quantile(data[slicer], q)
+def _quantiles(q, data):
+    """Compute (efficiently) intensity quantiles"""
+    steps = [max(1, x//64) for x in data.shape]
+    slicer = (Ellipsis,) + tuple(slice(None, None, step) for step in steps)
+    return np.quantile(np.asarray(data[slicer]), q)
 
 
 class RemoteSource(ng.LayerDataSource):
@@ -67,7 +66,7 @@ class RemoteSource(ng.LayerDataSource):
         return klass(filename, *args, **kwargs)
 
 
-class RemoteZarr(QuantileMixin, RemoteSource):
+class RemoteZarr(RemoteSource):
     """A remote zarr source"""
 
     def aszarr(self):
@@ -82,22 +81,33 @@ class RemoteZarr(QuantileMixin, RemoteSource):
         nb_levels = len(multiscales['datasets'])
 
         for level in reversed(range(nb_levels)):
-            shape = group[f'{level}'].array.shape
-            shape = [shape[i] for i in range(shape)
+            shape = group[f'{level}'].shape
+            shape = [shape[i] for i in range(len(shape))
                      if multiscales['axes'][i]['type'] == 'space']
             if any(s > 64 for s in shape):
                 break
 
         data = dask.array.from_zarr(group[f'{level}'])
-        return self._quantiles(q, data)
+        return _quantiles(q, data)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         group = self.aszarr()
         multiscales = group.attrs['multiscales'][0]
+        axistypes = [axis['type'] for axis in multiscales['axes']]
         self.names = [axis['name'] for axis in multiscales['axes']]
-        self.units = [axis['unit'] for axis in multiscales['axes']]
-        self.scales = multiscales['coordinateTransformations'][0]['scale']
+        self.names = ["c'" if n == 'c' else n for n in self.names]
+        units = [axis.get('unit', '') for axis in multiscales['axes']]
+        scales = multiscales['datasets'][0]['coordinateTransformations'][0]['scale']  # noqa: E501
+        if 'coordinateTransformations' in multiscales:
+            scalestime = multiscales['coordinateTransformations'][0]['scale']
+            scales = [
+                s0 if t == 'spatial' else s1
+                for t, s0, s1 in zip(axistypes, scales, scalestime)
+            ]
+        scales_units = [self.units2ng(x, u) for x, u in zip(scales, units)]
+        self.scales = [x[0] for x in scales_units]
+        self.units = [x[1] for x in scales_units]
         self.affine = None
         if 'nifti' in group.attrs:
             binheader = base64.b64decode(group.attrs['nifti']['base64'])
@@ -115,16 +125,97 @@ class RemoteZarr(QuantileMixin, RemoteSource):
     @property
     def outputDimensions(self):
         if self.affine is not None:
-            ng.CoordinateSpace(
-                names=["x", "y", "z"],
-                scales=[1]*3,
-                units=['mm']*3,
+            return ng.CoordinateSpace(
+                names=self.names[:-3] + ["x", "y", "z"],
+                scales=self.scales[:-3] + [1]*3,
+                units=self.units[:-3] + ['mm']*3,
             )
         else:
             return self.dimensions
 
+    @property
+    def transform(self):
+        if self.affine is None:
+            return None
+        affine = np.copy(self.affine)
+        affine[:3, :3] /= self.scales[-3:]
+        fullaffine = np.eye(len(self.names)+1)[:-1]
+        fullaffine[-3:, -4:-1] = self.affine[:3, :3][:, ::-1]
+        fullaffine[-3:, -1] = self.affine[:3, -1]
+        return ng.CoordinateSpaceTransform(
+            matrix=fullaffine,
+            input_dimensions=self.dimensions,
+            output_dimensions=self.outputDimensions,
+        )
 
-class RemoteNifti(QuantileMixin, BabelMixin, RemoteSource):
+    @staticmethod
+    def units2ng(value, unit):
+        NONSI = dict(
+            # space
+            angstrom=lambda x: (0.1*x, "nm"),
+            foot=lambda x: (3.048*x, "dm"),
+            inch=lambda x: (2.54*x, "cm"),
+            mile=lambda x: (1.609*x, "m"),
+            yard=lambda x: (0.9144*x, "m"),
+            parsec=lambda x: (30.8568*x, "Pm"),
+            # time
+            day=lambda x: (86400*x, "s"),
+            hour=lambda x: (3600*x, "s"),
+            minute=lambda x: (60*x, "s"),
+        )
+        SI = dict(
+            # space
+            attometer="am",
+            centimeter="cm",
+            decimeter="dm",
+            exameter="Em",
+            femtometer="fm",
+            gigameter="Gm",
+            hectometer="Hm",
+            kilometer="Km",
+            megameter="Mm",
+            meter="m",
+            micrometer="um",
+            millimeter="mm",
+            nanometer="nm",
+            petameter="Pm",
+            picometer="pm",
+            terameter="Tm",
+            yoctometer="Ym",
+            yottameter="ym",
+            zeptometer="Zm",
+            zettameter="zm",
+            # time
+            attosecond="as",
+            centisecond="cs",
+            decisecond="ds",
+            exasecond="Es",
+            femtosecond="fs",
+            gigasecond="Gs",
+            hectosecond="Hs",
+            kilosecond="Ks",
+            megasecond="Ms",
+            microsecond="us",
+            millisecond="ms",
+            nanosecond="ns",
+            petasecond="Ps",
+            picosecond="ps",
+            second="s",
+            terasecond="Ts",
+            yoctosecond="Ys",
+            yottasecond="ys",
+            zeptosecond="Zs",
+            zettasecond="zs",
+        )
+        if unit in SI:
+            return value, SI[unit]
+        elif unit in NONSI:
+            return NONSI[unit](value)
+        else:
+            return value, ''
+
+
+class RemoteNifti(BabelMixin, RemoteSource):
     """A remote NIfTI source"""
 
     def __init__(self, *args, **kwargs):
@@ -141,7 +232,7 @@ class RemoteNifti(QuantileMixin, BabelMixin, RemoteSource):
     def quantiles(self, q):
         with self.asnibabel() as f:
             self.affine = f.affine
-            return super()._quantiles(q, f.get_fdata(dtype='float32'))
+            return _quantiles(q, f.get_fdata(dtype='float32'))
 
 
 class LocalSource(ng.LocalVolume):
@@ -284,9 +375,9 @@ class LocalTiff(LocalSource):
                 = self.ome_zooms(mappedfile.ome_metadata)
         else:
             self.scales = [1] * len(mappedfile.shape)
-            self.units = ['pixel'] * len(mappedfile.shape)
+            self.units = [''] * len(mappedfile.shape)
             self.names = tifffile.axes
-        self.names = list(map(lambda x: x.upper(), self.axes))
+        self.names = list(map(lambda x: x.lower(), self.axes))
         self.layer_type = layer_type
 
         if layer_type == 'volume':

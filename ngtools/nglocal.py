@@ -18,6 +18,7 @@ def cli(args=None):
     parser.add_argument('--port-fileserver', type=int, default=9123)
     parser.add_argument('--port-viewer', type=int, default=9321)
     parser.add_argument('--token', type=str, default='1')
+    parser.add_argument('--no-window', action='store_true', default=False)
     parser.add_argument(nargs='*', dest='filenames', help='Files to load')
     args = parser.parse_args(args)
 
@@ -33,7 +34,9 @@ def cli(args=None):
     neuroglancer = LocalNeuroglancer(
         port=args.port_viewer, token=args.token, fileserver=fileserver)
     print('neuroglancer:', neuroglancer.viewer.get_viewer_url())
-    # webbrowser.open(neuroglancer.viewer.get_viewer_url())
+
+    if not args.no_window:
+        webbrowser.open(neuroglancer.viewer.get_viewer_url())
 
     # load files
     for filename in args.filenames or []:
