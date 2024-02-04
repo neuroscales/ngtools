@@ -12,6 +12,62 @@ def to_square(affine):
     return new_affine
 
 
+mu1 = '\u00B5'
+mu2 = '\u03BC'
+si_prefixes = {
+    "Y": 24,
+    "Z": 21,
+    "E": 18,
+    "P": 15,
+    "T": 12,
+    "G": 9,
+    "M": 6,
+    "k": 3,
+    "h": 2,
+    "": 0,
+    "c": -2,
+    "m": -3,
+    "u": -6,
+    mu1: -6,
+    mu2: -6,
+    "n": -9,
+    "p": -12,
+    "f": -15,
+    "a": -18,
+    "z": -21,
+    "y": -24,
+}
+
+si_units = ["m", "s", "rad/s", "Hz"]
+
+
+def split_unit(unit):
+    """
+    Split prefix and unit
+
+    Parameters
+    ----------
+    unit : [sequence of] str
+
+    Returns
+    -------
+    prefix : [sequence of] str
+    unit : [sequence of] str
+    """
+    if isinstance(unit, (list, tuple)):
+        unit = type(unit)(map(split_unit, unit))
+        prefix = type(unit)(map(lambda x: x[0], unit))
+        unit = type(unit)(map(lambda x: x[1], unit))
+        return prefix, unit
+
+    for strippedunit in ("rad/s", "Hz", "m", "s"):
+        if unit.endswith(strippedunit):
+            return unit[:-len(strippedunit)], strippedunit
+    if not unit:
+        return '', ''
+    raise ValueError(f'Unknown unit "{unit}"')
+
+
 letter2full = {
     'r': 'right',
     'l': 'left',
@@ -32,24 +88,29 @@ def _get_neuronames():
     return all_neurospaces
 
 
-def _get_src2ras(name):
+neuronames = _get_neuronames()
+
+
+def _get_src2ras(src):
+    """Return a matrix mapping from `src` to RAS space."""
     xyz2ras = {'x': 'r', 'y': 'a', 'z': 's'}
-    name = [xyz2ras.get(x, x) for x in name.lower()]
+    src = [xyz2ras.get(x, x) for x in src.lower()]
     pos = list('ras')
     neg = list('lpi')
     mat = np.eye(4)
     # permutation
-    perm = [pos.index(x) if x in pos else neg.index(x) for x in name]
+    perm = [pos.index(x) if x in pos else neg.index(x) for x in src]
     perm += [3]
     mat = mat[:, perm]
     # flip
-    flip = [-1 if x in neg else 1 for x in name]
+    flip = [-1 if x in neg else 1 for x in src]
     flip += [1]
     mat *= np.asarray(flip)
     return mat
 
 
 def _get_src2dst(src, dst):
+    """Return a matrix mapping from `src` to `dst` space."""
     src_to_ras = _get_src2ras(src)
     dst_to_ras = _get_src2ras(dst)
     return np.linalg.inv(dst_to_ras) @ src_to_ras
@@ -62,7 +123,7 @@ neurospaces = {
         scales=[1]*3,
         units=['mm']*3,
     )
-    for name in _get_neuronames()
+    for name in neuronames
 }
 
 
@@ -78,29 +139,37 @@ default = defaultspaces['xyz']
 neurospaces.update(defaultspaces)
 
 
-# Build coordiinate transforms
+# Build coordinate transforms
+# 1) key = string
 neurotransforms = {
-    (neurospaces[src], neurospaces[dst]): ng.CoordinateSpaceTransform(
+    (src, dst): ng.CoordinateSpaceTransform(
         matrix=_get_src2dst(src, dst)[:3, :4],
         input_dimensions=neurospaces[src],
         output_dimensions=neurospaces[dst],
     )
-    for src in _get_neuronames()
-    for dst in _get_neuronames()
+    for src in neuronames
+    for dst in neuronames
 }
-
-
+# 2) key = CoordinateSpace instances
+neurotransforms.update({
+    (neurospaces[src], neurospaces[dst]): neurotransforms[src, dst]
+    for src in neuronames
+    for dst in neuronames
+})
+# 3) neurospace to/from xyz
 for name in itertools.permutations(['x', 'y', 'z']):
     name = ''.join(name)
     for neuroname in _get_neuronames():
         matrix = _get_src2dst(neuroname, name)
-        neurotransforms[(neurospaces[neuroname], defaultspaces[name])] \
+        neurotransforms[(neuroname, name)] \
+            = neurotransforms[(neurospaces[neuroname], defaultspaces[name])] \
             = ng.CoordinateSpaceTransform(
                 matrix=matrix[:3, :4],
                 input_dimensions=neurospaces[neuroname],
                 output_dimensions=defaultspaces[name],
             )
-        neurotransforms[(defaultspaces[name], neurospaces[neuroname])] \
+        neurotransforms[(name, neuroname)] \
+            = neurotransforms[(defaultspaces[name], neurospaces[neuroname])] \
             = ng.CoordinateSpaceTransform(
                 matrix=np.linalg.inv(matrix)[:3, :4],
                 input_dimensions=defaultspaces[name],
@@ -109,7 +178,27 @@ for name in itertools.permutations(['x', 'y', 'z']):
 
 
 def compose(left, right):
-    """Compose two transforms"""
+    """
+    Compose two transforms
+
+    Parameters
+    ----------
+    left : ng.CoordinateSpaceTransform
+    right : ng.CoordinateSpaceTransform
+
+    Returns
+    -------
+    composition : ng.CoordinateSpaceTransform
+    """
+
+    left = convert(
+        left,
+        unit=right.output_dimensions.units,
+        scale=right.output_dimensions.scales,
+        name=right.output_dimensions.names,
+        space='input',
+    )
+
     input_dimensions = right.input_dimensions
     output_dimensions = left.output_dimensions
     right_dimensions = right.output_dimensions
@@ -174,7 +263,6 @@ def compose(left, right):
     lmatrix = lmatrix[:, [lnames.index(n) for n in rnames] + [-1]]
 
     matrix = lmatrix @ rmatrix
-    oscles = np.abs(lmatrix[:-1, :-1] @ rscles)
 
     T = ng.CoordinateSpaceTransform(
         input_dimensions=ng.CoordinateSpace(
@@ -190,3 +278,109 @@ def compose(left, right):
         matrix=matrix[:-1],
     )
     return T
+
+
+def convert(transform, unit, scale=None, name=None, space='input+output'):
+    """
+    Convert units of a transform
+
+    Parameters
+    ----------
+    transform : ng.CoordinateSpaceTransform
+        Transform
+    unit : [list of] str
+        New units
+    name : [list of] str, optional
+        Name of axis (or axes) to convert.
+        Default: all that have compatible units.
+    space : {'input', 'output', 'input+output'}
+        Space to convert
+
+    Returns
+    -------
+    transform : ng.CoordinateSpaceTransform
+    """
+    prefix, unit = split_unit(ensure_list(unit))
+    scale = ensure_list(scale)
+
+    matrix = transform.matrix
+    if matrix is None:
+        matrix = np.eye(len(transform.output_dimensions.names)+1)[:-1]
+    matrix = to_square(np.copy(matrix))
+
+    new_transform = ng.CoordinateSpaceTransform(
+        matrix=matrix,
+        input_dimensions=transform.input_dimensions,
+        output_dimensions=transform.output_dimensions,
+    )
+
+    for convert_space in ('input', 'output'):
+        if convert_space not in space:
+            continue
+
+        dimensions = getattr(transform, convert_space + '_dimensions')
+        if space == 'output':
+            matrix = matrix.T
+
+        dnames = dimensions.names
+        dunits = dimensions.units
+        dscles = dimensions.scales
+
+        convert_names = name
+        if convert_names is None:
+            convert_names = [dnames[i] for i in range(len(dnames))
+                             if split_unit(dunits[i])[1] in unit]
+        convert_names = ensure_list(convert_names)
+        convert_units = ensure_list(unit, len(convert_names))
+        convert_prfix = ensure_list(prefix, len(convert_names))
+        convert_scles = ensure_list(scale, len(convert_names))
+
+        new_units = []
+        new_scles = []
+        for i, (dunit, dscle, dname) in enumerate(zip(dunits, dscles, dnames)):
+            if (dnames[i] not in convert_names) or not dunit:
+                new_units.append(dunit)
+                new_scles.append(dscle)
+                continue
+            j = convert_names.index(dname)
+            dprefix, dunit = split_unit(dunit)
+            new_prefix, new_unit = convert_prfix[j], convert_units[j]
+            if dunit != new_unit:
+                raise ValueError(
+                    f'Incompatible units: "{dunit}" and "{new_unit}"')
+            relprefix = si_prefixes[dprefix] - si_prefixes[new_prefix]
+            new_scle = dscle * 10**relprefix
+            if convert_scles[i] is not None:
+                matrix[:, i] *= new_scle / convert_scles[j]
+                new_scle = convert_scles[j]
+            new_scles.append(new_scle)
+            new_units.append(new_prefix + new_unit)
+
+        if space == 'output':
+            matrix = matrix.T
+        setattr(
+            new_transform, convert_space + '_dimensions',
+            ng.CoordinateSpace(
+                names=dnames,
+                units=new_units,
+                scales=new_scles,
+            )
+        )
+
+    new_transform.matrix = matrix
+    return new_transform
+
+
+def ensure_list(x, n=None, **kwargs):
+    if isinstance(x, np.ndarray):
+        x = x.tolist()
+    if not isinstance(x, (list, tuple)):
+        x = [x]
+    x = list(x)
+    if n is not None:
+        if len(x) < n:
+            default = kwargs.get('default', x[-1])
+            x += [default] * (n - len(x))
+        elif len(x) > n:
+            x = x[:n]
+    return x

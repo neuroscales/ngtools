@@ -1,5 +1,6 @@
 import sys
 import re
+import json
 import os.path
 import argparse
 import shlex                    # parse user input as if a shell commandline
@@ -7,14 +8,19 @@ import readline                 # autocomplete/history in user input
 import atexit                   # do stuff whe exiting (save history...)
 import numpy as np
 import neuroglancer as ng
+from urllib.parse import urlparse, unquote as urlunquote, quote as urlquote
 from neuroglancer.server import global_server_args
 from .fileserver import LocalFileServerInBackground
 from .volume import LocalSource, RemoteSource
 from .spaces import (
-    neurospaces, neurotransforms, letter2full, compose, to_square)
+    neurotransforms, letter2full, compose, to_square)
 from .shaders import shaders, colormaps
 from .transforms import load_affine
 from .opener import remote_protocols
+from .utils import bcolors
+
+
+_print = print
 
 
 def action(func):
@@ -38,6 +44,8 @@ def action(func):
 
 
 def ensure_list(x):
+    if isinstance(x, np.ndarray):
+        x = x.tolist()
     if not isinstance(x, (list, tuple)):
         x = [x]
     return list(x)
@@ -60,7 +68,10 @@ class LocalNeuroglancer:
         token : str
             Unique id for the instance
         filserver : LocalFileServerInBackground or bool
-            A local file server
+            A local file server.
+
+            * If `True`, create a local file server.
+            * If `False`, do not create one -- only remote files can be loaded.
         """
         if fileserver is True:
             fileserver = LocalFileServerInBackground()
@@ -84,30 +95,52 @@ class LocalNeuroglancer:
         self.display_dimensions = ['x', 'y', 'z']
 
     def await_input(self):
+        print(
+            f'\nType {bcolors.bold}help{bcolors.endc} to list available '
+            f'commands, or {bcolors.bold}help <command>{bcolors.endc} '
+            f'for specific help.'
+        )
+        count = 1
         try:
             while True:
-                args = input('[ng] ')
+                # Query input
+                args = input(f'{bcolors.fg.green}[{count}] {bcolors.endc}')
+                if not args.strip():
+                    continue
+                count += 1
+
+                # Parse
                 try:
                     args = self.parser.parse_args(shlex.split(args))
-                    try:
-                        args.func(args)
-                        self.display()
-                    except KeyboardInterrupt as e:
-                        raise e
-                    except Exception as e:
-                        print("(EXEC ERROR) ", e, file=sys.stderr)
-                        raise e
+                    if not vars(args):
+                        raise ValueError("Unknown command")
                 except KeyboardInterrupt as e:
                     raise e
                 except Exception as e:
-                    print("(PARSE ERROR)", e, file=sys.stderr)
+                    print(f"{bcolors.fail}(PARSE ERROR)", e, bcolors.endc,
+                          file=sys.stderr)
+                    continue
+
+                # Execute
+                try:
+                    if hasattr(args, 'func'):
+                        args.func(args)
+                    self.display()
+                except KeyboardInterrupt as e:
                     raise e
-        except KeyboardInterrupt:
+                except Exception as e:
+                    print(f"{bcolors.fail}(EXEC ERROR)", e, bcolors.endc,
+                          file=sys.stderr)
+                    raise e
+                    continue
+
+        except KeyboardInterrupt as e:
             print('exit')
+            raise e
 
     def make_parser(self):
         mainparser = NoExitArgParse('')
-        parsers = mainparser.add_subparsers()
+        parsers = mainparser.add_subparsers(required=True)
 
         help = parsers.add_parser('help', help='Display help')
         help.set_defaults(func=self.help)
@@ -117,7 +150,7 @@ class LocalNeuroglancer:
         load = parsers.add_parser('load', help='Load a file')
         load.set_defaults(func=self.load)
         load.add_argument(
-            dest='filenames', nargs='+', help='Filename(s) with protocols')
+            dest='filename', nargs='+', help='Filename(s) with protocols')
         load.add_argument(
             '--name', help='A name for the image layer')
         load.add_argument(
@@ -126,7 +159,7 @@ class LocalNeuroglancer:
         unload = parsers.add_parser('unload', help='Unload a file')
         unload.set_defaults(func=self.unload)
         unload.add_argument(
-            dest='names', nargs='+', help='Name(s) of layer(s) to unload')
+            dest='layer', nargs='+', help='Layer(s) to unload')
 
         transform = parsers.add_parser('transform', help='Apply a transform')
         transform.set_defaults(func=self.transform)
@@ -135,7 +168,7 @@ class LocalNeuroglancer:
             help='Path to transform file or flattened transformation '
                  'matrix (row major)')
         transform.add_argument(
-            '--name', nargs='+', help='Name(s) of layer(s) to transform')
+            '--layer', nargs='+', help='Layer(s) to transform')
         transform.add_argument(
             '--inv', action='store_true', default=False,
             help='Invert the transform before applying it')
@@ -149,12 +182,28 @@ class LocalNeuroglancer:
         shader.add_argument(
             dest='shader', help='Shader name or full shader code')
         shader.add_argument(
-            '--name', nargs='+', help='Name(s) of layer(s) to apply shader to')
+            '--layer', nargs='+', help='Layer(s) to apply shader to')
+
+        state = parsers.add_parser('state', help='Return the viewer\'s state')
+        state.set_defaults(func=self.state)
+        state.add_argument(
+            '--no-print', action='store_false', default=True, dest='print',
+            help='Do not print the state.')
+        state.add_argument(
+            '--save', help='Save JSON state to this file.'
+        )
+        state.add_argument(
+            '--load', help='Load JSON state from this file. '
+                           'Can also be a JSON string or a URL.'
+        )
+        state.add_argument(
+            '--url', action='store_true', default=False,
+            help='Load (or print) the url form of the state')
 
         display = parsers.add_parser('display', help='Dimensions to display')
         display.set_defaults(func=self.display)
         display.add_argument(
-            dest='dimensions', nargs='*', help='Dimensions to display')
+            dest='dimension', nargs='*', help='Dimensions to display')
 
         exit = parsers.add_parser('exit', aliases=['quit'],
                                   help='Exit neuroglancer')
@@ -162,13 +211,13 @@ class LocalNeuroglancer:
         return mainparser
 
     @action
-    def display(self, dimensions=None):
+    def display(self, dimension=None):
         """
         Change displayed dimensions.
 
         Parameters
         ----------
-        dimensions : str or list[str]
+        dimension : str or list[str]
             The three dimensions to display.
             Each dimension can be one of:
 
@@ -183,7 +232,7 @@ class LocalNeuroglancer:
             provided.
 
         """
-        dimensions = ensure_list(dimensions or [])
+        dimensions = ensure_list(dimension or [])
         if dimensions:
             if len(dimensions) == 1:
                 dimensions = list(dimensions[0])
@@ -237,7 +286,7 @@ class LocalNeuroglancer:
                 input_dimensions=idims,
                 output_dimensions=odims,
             )
-            T = neurotransforms[(neurospaces[onames], neurospaces[names])]
+            T = neurotransforms[(onames, names)]
             source.transform = compose(T, T0)
             return True
 
@@ -252,7 +301,7 @@ class LocalNeuroglancer:
                 input_dimensions=idims,
                 output_dimensions=idims,
             )
-            T = neurotransforms[(neurospaces[inames], neurospaces[names])]
+            T = neurotransforms[(inames, names)]
             source.transform = compose(T, T0)
             return True
 
@@ -284,7 +333,7 @@ class LocalNeuroglancer:
             state.displayDimensions = self.display_dimensions
 
     @action
-    def load(self, filenames, name=None, transform=None):
+    def load(self, filename, name=None, transform=None):
         """
         Load file(s)
 
@@ -298,7 +347,7 @@ class LocalNeuroglancer:
         transform : array_like or list[float] or str, optional
             Affine transform to apply to the loaded volume.
         """
-        filenames = ensure_list(filenames or [])
+        filenames = ensure_list(filename or [])
         if name and len(filenames) > 1:
             raise ValueError('Cannot give a single name to multiple layers. '
                              'Use separate `load` calls.')
@@ -355,22 +404,26 @@ class LocalNeuroglancer:
         self.redisplay(display_dimensions)
 
     @action
-    def unload(self, names):
+    def unload(self, layer=None):
         """
         Unload layers
 
         Parameters
         ----------
-        names : str or list[str]
-            Names of layers to unload
+        layer : str or list[str]
+            Layer(s) to unload
         """
-        names = ensure_list(names or [])
+        layers = layer
+        if not layers:
+            with self.viewer.txn() as state:
+                layers = [layer.name for layer in state.layers]
+        layers = ensure_list(layers)
         with self.viewer.txn() as state:
-            for name in names:
+            for name in layers:
                 del state.layers[name]
 
     @action
-    def transform(self, transform, name=None, inv=False,
+    def transform(self, transform, layer=None, inv=False,
                   *, mov=None, fix=None):
         """
         Apply an affine transform
@@ -379,7 +432,7 @@ class LocalNeuroglancer:
         ----------
         transform : list[float] or np.ndarray or fileobj
             Affine transform (RAS+)
-        name : str or list[str]
+        layer : str or list[str]
             Layer(s) to transform
         inv : bool
             Invert the transform
@@ -391,9 +444,9 @@ class LocalNeuroglancer:
         fix : str
             Fixed/Reference image (required by some affine formats)
         """
-        name = name or []
-        if not isinstance(name, (list, tuple)):
-            name = [name]
+        layer_names = layer or []
+        if not isinstance(layer_names, (list, tuple)):
+            layer_names = [layer_names]
         display_dimensions = self.display_dimensions
         self.display('ras')
 
@@ -483,7 +536,7 @@ class LocalNeuroglancer:
 
         with self.viewer.txn() as state:
             for layer in state.layers:
-                if name and layer.name not in name:
+                if layer_names and layer.name not in layer_names:
                     continue
                 layer = layer.layer
                 if isinstance(layer, ng.ImageLayer):
@@ -496,7 +549,7 @@ class LocalNeuroglancer:
         self.display(display_dimensions)
 
     @action
-    def shader(self, shader, name=None):
+    def shader(self, shader, layer=None):
         """
         Apply a shader (that is, a colormap or lookup table)
 
@@ -505,22 +558,70 @@ class LocalNeuroglancer:
         shader : str
             A known shader name (from `ngtools.shaders`), or some
             user-defined shader code.
-        name : str or list[str], optional
+        layer : str or list[str], optional
             Apply the shader to these layers. Default: all layers.
         """
-        name = name or []
-        if not isinstance(name, (list, tuple)):
-            name = [name]
+        layer_names = layer or []
+        if not isinstance(layer_names, (list, tuple)):
+            layer_names = [layer_names]
         if hasattr(shaders, shader):
             shader = getattr(shaders, shader)
         elif hasattr(colormaps, shader):
             shader = shaders.colormap(shader)
         with self.viewer.txn() as state:
             for layer in state.layers:
-                if layer.name not in name:
+                if layer_names and layer.name not in layer_names:
                     continue
                 layer = layer.layer
                 layer.shader = shader
+
+    @action
+    def state(self, load=None, save=None, url=False, print=True):
+        """
+        Print or save or load the viewer's JSON state
+
+        Parameters
+        ----------
+        load : str
+            Load state from JSON file, or JSON string (or URL if `url=True`).
+        save : str
+            Save state to JSON file
+        url : bool
+            Print/load a JSON URL rather than a JSON object
+        print : bool
+            Print the JSON object or URL
+        """
+        if load:
+            if os.path.exists(load) or load.startswith(remote_protocols()):
+                with open(load) as f:
+                    state = json.load(f)
+            elif url:
+                if '://' in url:
+                    url = urlparse(url).fragment
+                    if url[0] != '!':
+                        raise ValueError('Neuroglancer URL not recognized')
+                    url = url[1:]
+                state = json.loads(urlunquote(url))
+            else:
+                state = json.loads(url)
+            with self.viewer.txn() as ngstate:
+                ngstate.set_state(state)
+        else:
+            with self.viewer.txn() as ngstate:
+                state = ngstate.to_json()
+
+        if save:
+            with open(save, 'wb') as f:
+                json.dump(state, f, indent=4)
+
+        if print:
+            if url:
+                state = urlquote(json.dumps(state))
+                state = 'https://neuroglancer-demo.appspot.com/#!' + state
+                _print(state)
+            else:
+                _print(json.dumps(state, indent=4))
+        return state
 
     @action
     def help(self, action=None):

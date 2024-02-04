@@ -13,6 +13,7 @@ from xml.etree import ElementTree as etree
 from nibabel.filebasedimages import ImageFileError
 from nibabel.imageclasses import all_image_classes
 from .opener import open, stringify_path
+from .spaces import si_prefixes
 
 
 class BabelMixin:
@@ -226,7 +227,7 @@ class RemoteNifti(BabelMixin, RemoteSource):
     @contextmanager
     def asnibabel(self):
         url = '://'.join(self.url.split('://')[1:])
-        with open(url, compression='gzip') as stream:
+        with open(url, compression='infer') as stream:
             yield nib.Nifti1Image.from_stream(stream)
 
     def quantiles(self, q):
@@ -258,7 +259,7 @@ class LocalSource(ng.LocalVolume):
     def quantiles(self, q):
         steps = [max(1, x//64) for x in self.data.shape]
         slicer = tuple(slice(None, None, step) for step in steps)
-        return np.quantile(self.data[slicer], q).tolist()
+        return np.quantile(np.asarray(self.data[slicer]), q).tolist()
 
 
 class LocalBabel(BabelMixin, LocalSource):
@@ -317,7 +318,7 @@ class LocalBabel(BabelMixin, LocalSource):
                     except Exception:
                         pass
         else:
-            fileobj = open(fileobj)
+            fileobj = open(fileobj, compression='infer')
             for image_klass in cls.possible_image_classes:
                 try:
                     return image_klass.from_stream(fileobj)
@@ -341,14 +342,22 @@ class LocalNifti(LocalBabel):
 
 class LocalTiff(LocalSource):
     """A local tiff volume, read with tifffile"""
+    # TODO: would be neat to make use of tifffile's aszarr to enable
+    #       pyramid/patchwise access, rather than loading the whole
+    #       thing in memory
 
     @property
     def dimensions(self):
+        units = ['' if unit == 'pixel' else unit for unit in self.units]
         return ng.CoordinateSpace(
             names=self.names,
             scales=self.scales,
-            units=self.units,
+            units=units,
         )
+
+    @dimensions.setter
+    def dimensions(self, value):
+        pass
 
     @property
     def outputDimensions(self):
@@ -368,7 +377,7 @@ class LocalTiff(LocalSource):
             Type of volume
         """
         fileobj = open(fileobj)
-        mappedfile = tifffile.TiffFile(fileobj)
+        mappedfile = tifffile.TiffFile(fileobj.open())
 
         if mappedfile.ome_metadata:
             self.scales, self.units, self.names \
@@ -377,14 +386,15 @@ class LocalTiff(LocalSource):
             self.scales = [1] * len(mappedfile.shape)
             self.units = [''] * len(mappedfile.shape)
             self.names = tifffile.axes
-        self.names = list(map(lambda x: x.lower(), self.axes))
+        self.names = list(map(lambda x: x.lower(), self.names))
         self.layer_type = layer_type
 
         if layer_type == 'volume':
             layer_type = 'image'
         elif layer_type == 'labels':
             layer_type = 'segmentation'
-        super.__init__(
+        super().__init__(
+            # dask.array.from_zarr(mappedfile.aszarr()),
             mappedfile.asarray(),
             self.dimensions,
             volume_type=layer_type,
@@ -412,21 +422,10 @@ class LocalTiff(LocalSource):
         if unit is None or len(unit) == 0:
             return 1.
         if unit == 'pixel':
-            return 1., unit
+            return 1., ''
         unit_type = unit[-1]
         unit_scale = unit[:-1]
-        mu1 = '\u00B5'
-        mu2 = '\u03BC'
-        unit_map = {
-            'Y': 1E24, 'Z': 1E21, 'E': 1E18, 'P': 1E15, 'T': 1E12, 'G': 1E9,
-            'M': 1E6, 'k': 1E3, 'h': 1e2, 'da': 1E1, 'd': 1E-1, 'c': 1E-2,
-            'm': 1E-3, mu1: 1E-6, mu2: 1E-6, 'u': 1E-6, 'n': 1E-9,
-            'p': 1E-12, 'f': 1E-15, 'a': 1E-18, 'z': 1E-21, 'y': 1E-24,
-        }
-        if len(unit_scale) == 0:
-            return 1., unit_type
-        else:
-            return unit_map[unit_scale], unit_type
+        return 10**si_prefixes[unit_scale], unit_type
 
     @staticmethod
     def ome_zooms(omexml, series=None):
@@ -448,6 +447,7 @@ class LocalTiff(LocalSource):
         >>> units_series1 = units[1]
         >>> units_series1
         ('mm', 'mm', 'mm')
+        ```
 
         Parameters
         ----------
@@ -461,8 +461,6 @@ class LocalTiff(LocalSource):
         zooms : tuple[float]
         units : tuple[str]
         axes : str
-
-        ```
 
         """
         if not isinstance(omexml, (str, bytes)) or omexml[-4:] != 'OME>':
@@ -478,7 +476,7 @@ class LocalTiff(LocalSource):
             except Exception:
                 return None
 
-        single_series = False
+        single_series = True
         if series is not None:
             single_series = isinstance(series, int)
             if not isinstance(series, (list, tuple)):

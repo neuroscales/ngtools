@@ -57,9 +57,34 @@ class LocalFileServer:
             ("<html><body>%s not found</body></html>" % dest).encode("utf-8")
         ]
 
-    def serve(self, environ, start_response):
+    @staticmethod
+    def method_not_allowed(method, start_response):
+        start_response(
+            "405 Method Not Allowed",
+            [
+                ("Content-type", "text/html"),
+                ("Access-Control-Allow-Origin", "*"),
+            ],
+        )
+        return [
+            (
+                "<html><body>%s not allowed</body></html>" % method
+             ).encode("utf-8")
+        ]
 
-        path_info = environ["PATH_INFO"]
+    def serve(self, environ, start_response):
+        path_info = environ['PATH_INFO']
+
+        method = environ['REQUEST_METHOD']
+        if method not in ('GET', 'HEAD'):
+            return self.method_not_allowed(method, start_response)
+
+        range = environ.get('HTTP_RANGE', '')
+        if range.startswith('bytes='):
+            range = range.split('=')[1].strip().split('-')
+        else:
+            range = None
+
         # There is always a leading /, this means that relative paths
         # have the form
         #   /relative/path/from/cwd/file.ext
@@ -74,21 +99,45 @@ class LocalFileServer:
         else:
             # relative path, prepend working dir
             path_info = os.path.join(self.cwd, path_info)
+
         if path_info.endswith(('.zarr', '.zarr/')):
             path_info = os.path.join(path_info, '.zgroup')
+
         if not os.path.isfile(path_info):
             return self.file_not_found(path_info, start_response)
-        with open(path_info, 'rb') as f:
-            data = f.read()
-        start_response(
-            "200 OK",
-            [
-                ("Content-type", "application/octet-stream"),
-                ("Content-Length", str(len(data))),
-                ("Access-Control-Allow-Origin", "*"),
-            ],
-        )
-        return [data]
+
+        length = lengthrange = os.path.getsize(path_info)
+
+        if range:
+            start, end = range
+            if not start:
+                start = max(0, length - int(end))
+                end = None
+            start, end = int(start or 0), int(end or length - 1)
+            end = min(end, length - 1)
+            lengthrange = end - start + 1
+
+        header = [
+            ("Content-type", "application/octet-stream"),
+            ("Content-Length", str(lengthrange)),
+            ("Access-Control-Allow-Origin", "*"),
+            ("Accept-Ranges", "bytes"),
+        ]
+
+        body = []
+        if method == 'GET':
+            with open(path_info, 'rb') as f:
+                if range:
+                    f.seek(start)
+                    body = [f.read(lengthrange)]
+                    header.append(
+                        ("Content-Range", f"{start}-{end}/{length}")
+                    )
+                else:
+                    body = [f.read()]
+
+        start_response("200 OK", header)
+        return body
 
 
 class LocalFileServerInBackground:
