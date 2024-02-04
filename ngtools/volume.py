@@ -376,8 +376,8 @@ class LocalTiff(LocalSource):
         layer_type : {'volume', 'labels', None}
             Type of volume
         """
-        fileobj = open(fileobj)
-        mappedfile = tifffile.TiffFile(fileobj.open())
+        self.fileobj = open(fileobj)  # keep a ref to avoid closing file
+        mappedfile = tifffile.TiffFile(self.fileobj.open())
 
         if mappedfile.ome_metadata:
             self.scales, self.units, self.names \
