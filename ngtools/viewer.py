@@ -3,6 +3,7 @@ import re
 import json
 import os.path
 import argparse
+import textwrap
 import shlex                    # parse user input as if a shell commandline
 import readline                 # autocomplete/history in user input
 import atexit                   # do stuff whe exiting (save history...)
@@ -14,7 +15,7 @@ from .fileserver import LocalFileServerInBackground
 from .volume import LocalSource, RemoteSource
 from .spaces import (
     neurotransforms, letter2full, compose, to_square)
-from .shaders import shaders, colormaps
+from .shaders import shaders, colormaps, pretty_colormap_list
 from .transforms import load_affine
 from .opener import remote_protocols
 from .utils import bcolors
@@ -134,19 +135,24 @@ class LocalNeuroglancer:
                     raise e
                     continue
 
-        except KeyboardInterrupt as e:
+        except KeyboardInterrupt:
             print('exit')
-            raise e
 
     def make_parser(self):
         mainparser = NoExitArgParse('')
         parsers = mainparser.add_subparsers(required=True)
 
+        # ==============================================================
+        #   HELP
+        # ==============================================================
         help = parsers.add_parser('help', help='Display help')
         help.set_defaults(func=self.help)
         help.add_argument(
             dest='action', nargs='?', help='Command for which to display help')
 
+        # ==============================================================
+        #   LOAD
+        # ==============================================================
         load = parsers.add_parser('load', help='Load a file')
         load.set_defaults(func=self.load)
         load.add_argument(
@@ -156,11 +162,17 @@ class LocalNeuroglancer:
         load.add_argument(
             '--transform', help='Apply a transform')
 
+        # ==============================================================
+        #   UNLOAD
+        # ==============================================================
         unload = parsers.add_parser('unload', help='Unload a file')
         unload.set_defaults(func=self.unload)
         unload.add_argument(
             dest='layer', nargs='+', help='Layer(s) to unload')
 
+        # ==============================================================
+        #   TRANSFORM
+        # ==============================================================
         transform = parsers.add_parser('transform', help='Apply a transform')
         transform.set_defaults(func=self.transform)
         transform.add_argument(
@@ -177,13 +189,68 @@ class LocalNeuroglancer:
         transform.add_argument(
             '--fix', help='Fixed image (required by some formats)')
 
-        shader = parsers.add_parser('shader', help='Apply a shader')
+        # ==============================================================
+        #   SHADER
+        # ==============================================================
+        description = textwrap.dedent(
+            """
+            Applies a colormap, or a more advanced shading function to all
+            or some of the layers.
+
+            List of builtin colormaps
+            -------------------------
+            """
+        ) + textwrap.indent(pretty_colormap_list(), ' ')
+        shader = parsers.add_parser(
+            'shader', help='Apply a shader', description=description,
+            formatter_class=argparse.RawDescriptionHelpFormatter)
         shader.set_defaults(func=self.shader)
         shader.add_argument(
-            dest='shader', help='Shader name or full shader code')
+            dest='shader', help='Shader name or GLSL shader code')
         shader.add_argument(
             '--layer', nargs='+', help='Layer(s) to apply shader to')
 
+        # ==============================================================
+        #   DISPLAY
+        # ==============================================================
+        display = parsers.add_parser('display', help='Dimensions to display')
+        display.set_defaults(func=self.display)
+        display.add_argument(
+            dest='dimension', nargs='*', help='Dimensions to display')
+
+        # ==============================================================
+        #   LAYOUT
+        # ==============================================================
+        LAYOUTS = ["xy", "yz", "xz", "xy-3d", "yz-3d", "xz-3d", "4panel", "3d"]
+        layout = parsers.add_parser('layout', help='Layout')
+        layout.set_defaults(func=self.layout)
+        layout.add_argument(
+            dest='layout', nargs='*', choices=LAYOUTS, help='Layout')
+        layout.add_argument(
+            '--stack', choices=("row", "column"), help="Stack direction"
+        )
+        layout.add_argument(
+            '--layer', nargs='*', help="Layer(s) to include"
+        )
+        layout.add_argument(
+            '--flex', type=float, default=1, help="Flex"
+        )
+        layout.add_argument(
+            '--append', type=int, nargs='*',
+            help="Append to existing (nested) layout"
+        )
+        layout.add_argument(
+            '--insert', type=int, nargs='+',
+            help="Insert in existing (nested) layout"
+        )
+        layout.add_argument(
+            '--remove', type=int, nargs='+',
+            help="Remove from an existing (nested) layout"
+        )
+
+        # ==============================================================
+        #   STATE
+        # ==============================================================
         state = parsers.add_parser('state', help='Return the viewer\'s state')
         state.set_defaults(func=self.state)
         state.add_argument(
@@ -200,11 +267,9 @@ class LocalNeuroglancer:
             '--url', action='store_true', default=False,
             help='Load (or print) the url form of the state')
 
-        display = parsers.add_parser('display', help='Dimensions to display')
-        display.set_defaults(func=self.display)
-        display.add_argument(
-            dest='dimension', nargs='*', help='Dimensions to display')
-
+        # ==============================================================
+        #   EXIT
+        # ==============================================================
         exit = parsers.add_parser('exit', aliases=['quit'],
                                   help='Exit neuroglancer')
         exit.set_defaults(func=self.exit)
@@ -365,8 +430,13 @@ class LocalNeuroglancer:
                 source = RemoteSource.from_filename(format + '://' + filename)
                 controls = None
                 if hasattr(source, 'quantiles'):
-                    q = source.quantiles([0.01, 0.99])
-                    controls = {"normalized": {"range": q}}
+                    mn, q0, q1, mx = source.quantiles([0.0, 0.01, 0.99, 1.0])
+                    controls = {
+                        "normalized": {
+                            "range": np.stack([q0, q1]),
+                            "window": np.stack([mn, mx]),
+                        }
+                    }
                 layer = ng.ImageLayer(
                     source=ng.LayerDataSource(
                         url=format + '://' + filename,
@@ -383,8 +453,13 @@ class LocalNeuroglancer:
                     filename, layer_type=layertype)
                 controls = None
                 if hasattr(source, 'quantiles'):
-                    q = source.quantiles([0.01, 0.99])
-                    controls = {"normalized": {"range": q}}
+                    mn, q0, q1, mx = source.quantiles([0.0, 0.01, 0.99, 1.0])
+                    controls = {
+                        "normalized": {
+                            "range": np.stack([q0, q1]),
+                            "window": np.stack([mn, mx]),
+                        }
+                    }
                 layer = ng.ImageLayer(
                     source=source,
                     shaderControls=controls,
@@ -590,6 +665,11 @@ class LocalNeuroglancer:
             Print/load a JSON URL rather than a JSON object
         print : bool
             Print the JSON object or URL
+
+        Returns
+        -------
+        state : dict
+            JSON state
         """
         if load:
             if os.path.exists(load) or load.startswith(remote_protocols()):
@@ -622,6 +702,126 @@ class LocalNeuroglancer:
             else:
                 _print(json.dumps(state, indent=4))
         return state
+
+    @action
+    def layout(self, layout=None, stack=None, layer=None, *,
+               flex=1, append=None, insert=None, remove=None):
+        """
+        Change layout.
+
+        Parameters
+        ----------
+        layout : [list of] {"xy", "yz", "xz", "xy-3d", "yz-3d", "xz-3d", "4panel", "3d"}
+            Layout(s) to set or insert. If list, `stack` must be set.
+        stack : {"row", "column"}, optional
+            Insert a stack of layouts.
+        layer : [list of] str
+            Set of layers to include in the layout.
+            By default, all layers are included (even future ones).
+
+        Other Parameters
+        ----------------
+        flex : float, default=1
+            ???
+        append : bool or [list of] int or str
+            Append the layout to an existing stack.
+            If an integer or list of integer, they are used to navigate
+            through the nested stacks of layouts.
+            Only one of append or insert can be used.
+        insert : int or [list of] int or str
+            Insert the layout into an existing stack.
+            If an integer or list of integer, they are used to navigate
+            through the nested stacks of layouts.
+            Only one of append or insert can be used.
+        remove : int or [list of] int or str
+            Remove the layout in an existing stack.
+            If an integer or list of integer, they are used to navigate
+            through the nested stacks of layouts.
+            If `remove` is used, `layout` should be `None`.
+
+        Returns
+        -------
+        layout : object
+            Current JSON layout
+        """  # noqa: E501
+        if not layout and (remove is None):
+            with self.viewer.txn() as state:
+                print(state.layout)
+                return state.layout
+
+        layout = ensure_list(layout or [])
+
+        layer = ensure_list(layer or [])
+        if (len(layout) > 1 or stack) and not layer:
+            with self.viewer.txn() as state:
+                layer = [_.name for _ in state.layers]
+
+        if layer:
+            layout = [ng.LayerGroupViewer(
+                layers=layer,
+                layout=L,
+                flex=flex,
+            ) for L in layout]
+
+        if len(layout) > 1 and not stack:
+            stack = 'row'
+        if not stack and len(layout) == 1:
+            layout = layout[0]
+        if stack:
+            layout = ng.StackLayout(
+                type=stack,
+                children=layout,
+                # flex=flex,
+            )
+
+        indices = []
+        do_append = append is not None
+        if do_append:
+            indices = ensure_list(append or [])
+            append = do_append
+
+        if insert:
+            indices = ensure_list(insert or [])
+            insert = indices.pop(-1)
+        else:
+            insert = False
+
+        if remove:
+            indices = ensure_list(remove or [])
+            remove = indices.pop(-1)
+        else:
+            remove = False
+
+        if bool(append) + bool(insert) + bool(remove) > 1:
+            raise ValueError('Cannot use both append and insert')
+        if layout and remove:
+            raise ValueError('Do not set `layout` and `remove`')
+
+        with self.viewer.txn() as state:
+            if append or (insert is not False) or (remove is not False):
+                parent = state.layout
+                while indices:
+                    parent = layout.children[indices.pop(0)]
+                if layout and not isinstance(layout, ng.LayerGroupViewer):
+                    if not layer:
+                        if len(parent.children):
+                            layer = [L for L in parent.children[-1].layers]
+                        else:
+                            layer = [_.name for _ in state.layers]
+                    layout = ng.LayerGroupViewer(
+                        layers=layer,
+                        layout=layout,
+                        flex=flex,
+                    )
+                if append:
+                    parent.children.append(layout)
+                elif insert:
+                    parent.children.insert(insert, layout)
+                elif remove:
+                    del parent.children[remove]
+            else:
+                state.layout = layout
+            return state.layout
 
     @action
     def help(self, action=None):
