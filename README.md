@@ -28,17 +28,16 @@ neuroglancer
 ```
 in your shell. It will open a neuroglancer window, and a shell-like
 interface:
-```shell
-fileserver:   http://127.0.0.1:9123/
+<pre><code>fileserver:   http://127.0.0.1:9123/
 neuroglancer: http://127.0.0.1:9321/v/1/
 
-Type help to list available commands, or help <command> for specific help.
-[1]
-```
+Type <b>help</b> to list available commands, or <b>help &lt;command&gt;</b> for specific help.
+Type <b>Ctrl+C</b> to interrupt the current command and <b>Ctrl+D</b> to exit the app.
+<b>[1]</b>
+</code></pre>
 
 Let's start with the list of commands
-```shell
-[1] help
+<pre><code><b>[1] <ins>help</ins></b>
 usage: [-h] {help,load,unload,transform,shader,state,display,exit,quit} ...
 
 positional arguments:
@@ -54,28 +53,25 @@ positional arguments:
 
 optional arguments:
   -h, --help            show this help message and exit
-```
+</code></pre>
+
 We can load a bunch of files
-```shell
-[2] load /path/to/local_file.nii.gz
-[3] load tiff:///path/to/file_without_extension
-[4] load zarr://https://url.to/remote/zarr_asset --name my_image
-```
+<pre><code><b>[2] <ins>load</ins></b> /path/to/local_file.nii.gz
+<b>[3] <ins>load</ins></b> tiff:///path/to/file_without_extension
+<b>[4] <ins>load</ins></b> zarr://https://url.to/remote/zarr_asset <b>--name</b> my_image
+</code></pre>
 change their colormaps
-```shell
-[5] shader blackred   --layer local_file.nii.gz
-[6] shader blackgreen --layer file_without_extension
-[7] shader blackblue  --layer my_image
-```
+<pre><code><b>[5] <ins>shader</ins></b> blackred   <b>--layer</b> local_file.nii.gz
+<b>[6] <ins>shader</ins></b> blackgreen <b>--layer</b> file_without_extension
+<b>[7] <ins>shader</ins></b> blackblue  <b>--layer</b> my_image
+</code></pre>
 and apply an affine transform
-```shell
-[8] transform /path/to/affine.lta --layer local_file.nii.gz
-```
+<pre><code><b>[8] <ins>transform</ins></b> /path/to/affine.lta <b>--layer</b> local_file.nii.gz
+</code></pre>
 Finally, we use an LIP frame (left, inferior, posterior)  to display
 the data
-```shell
-[9] display LIP
-```
+<pre><code><b>[9] <ins>display</ins></b> LIP
+</code></pre>
 
 Note that even though we are using our own neuroglancer instance,
 its state can be transferred to a remote instance. Assuming that only
@@ -83,9 +79,8 @@ remote files were loaded (or that the local fileserver is still running),
 states will be compatible, and the remote instance will display the exact
 same scene. The state can be obtained in JSON form, or in URL form
 (which is simply the quoted version of the JSON)
-```shel
-[10] state
-state
+<pre><code><b>[10] <ins>state</ins></b></code></pre>
+```json
 {
     "dimensions": {
         "x": [
@@ -126,6 +121,7 @@ state
     ],
     "layout": "4panel"
 }
-[11] state --url
-https://neuroglancer-demo.appspot.com/#!%7B%22dimensions%22%3A%20%7B%22x%22%3A%20%5B0.001%2C%20%22m%22%5D%2C%20%22y%22%3A%20%5B0.001%2C%20%22m%22%5D%2C%20%22z%22%3A%20%5B0.001%2C%20%22m%22%5D%7D%2C%20%22displayDimensions%22%3A%20%5B%22x%22%2C%20%22y%22%2C%20%22z%22%5D%2C%20%22position%22%3A%20%5B2.5%2C%201.5%2C%2022.5%5D%2C%20%22crossSectionScale%22%3A%201%2C%20%22projectionScale%22%3A%20256%2C%20%22layers%22%3A%20%5B%7B%22type%22%3A%20%22image%22%2C%20%22source%22%3A%20%22nifti%3A//http%3A//127.0.0.1%3A9123/root%3A///Users/yb947/Dropbox/data/niizarr/sub-control01_T1w.nii.gz%22%2C%20%22tab%22%3A%20%22source%22%2C%20%22shaderControls%22%3A%20%7B%22normalized%22%3A%20%7B%22range%22%3A%20%5B0%2C%201140%5D%7D%7D%2C%20%22name%22%3A%20%22sub-control01_T1w.nii.gz%22%7D%5D%2C%20%22layout%22%3A%20%224panel%22%7D
 ```
+<pre><code><b>[11] <ins>state</ins></b> --url
+https://neuroglancer-demo.appspot.com/#!%7B%22dimensions%22%3A%20%7B%22x%22%3A%20%5B0.001%2C%20%22m%22%5D%2C%20%22y%22%3A%20%5B0.001%2C%20%22m%22%5D%2C%20%22z%22%3A%20%5B0.001%2C%20%22m%22%5D%7D%2C%20%22displayDimensions%22%3A%20%5B%22x%22%2C%20%22y%22%2C%20%22z%22%5D%2C%20%22position%22%3A%20%5B2.5%2C%201.5%2C%2022.5%5D%2C%20%22crossSectionScale%22%3A%201%2C%20%22projectionScale%22%3A%20256%2C%20%22layers%22%3A%20%5B%7B%22type%22%3A%20%22image%22%2C%20%22source%22%3A%20%22nifti%3A//http%3A//127.0.0.1%3A9123/root%3A///Users/yb947/Dropbox/data/niizarr/sub-control01_T1w.nii.gz%22%2C%20%22tab%22%3A%20%22source%22%2C%20%22shaderControls%22%3A%20%7B%22normalized%22%3A%20%7B%22range%22%3A%20%5B0%2C%201140%5D%7D%7D%2C%20%22name%22%3A%20%22sub-control01_T1w.nii.gz%22%7D%5D%2C%20%22layout%22%3A%20%224panel%22%7D
+</code></pre>
