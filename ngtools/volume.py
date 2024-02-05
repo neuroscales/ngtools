@@ -114,6 +114,12 @@ class RemoteZarr(RemoteSource):
             binheader = base64.b64decode(group.attrs['nifti']['base64'])
             self.affine = nib.Nifti1Header.from_fileobj(
                 io.BytesIO(binheader), check=False).get_sform()
+            # fix half voxel shift
+            #   the reason for this shift is that nifti assumes that the
+            #   input space's zero is the center of the first voxel,
+            #   whereas neuroglancer assumes it is its corner.
+            vx = np.sqrt(np.sum(np.square(self.affine[:3, :3]), 0))
+            self.affine[:3, -1] += 0.5 * self.affine[:3, :3] @ vx
 
     @property
     def dimensions(self):
@@ -141,8 +147,8 @@ class RemoteZarr(RemoteSource):
         affine = np.copy(self.affine)
         affine[:3, :3] /= self.scales[-3:]
         fullaffine = np.eye(len(self.names)+1)[:-1]
-        fullaffine[-3:, -4:-1] = self.affine[:3, :3][:, ::-1]
-        fullaffine[-3:, -1] = self.affine[:3, -1]
+        fullaffine[-3:, -4:-1] = affine[:3, :3][:, ::-1]
+        fullaffine[-3:, -1] = affine[:3, -1]
         return ng.CoordinateSpaceTransform(
             matrix=fullaffine,
             input_dimensions=self.dimensions,

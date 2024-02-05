@@ -1,0 +1,37 @@
+voxels:
+  description: Raster data
+  intensity:
+    description: Raster data, interpreted as intensity (images)
+  labels:
+    description: Integer raster data, interpreted as labels (segmentations)
+
+scatter:
+  description: Unordered set of values
+  children:
+    points:
+      description: Point cloud / coordinates
+    value:
+      description: Continuous values associated with a coordinate
+    labels:
+      description: Discrete values associated with a coordinate
+
+graph:
+  description: Points + Topology
+  children:
+    skeleton:
+      description: Points + Segments
+      children:
+        tracts:
+          description: Set of piecewise curves
+        polygon:
+          description: Closed set of points
+    surface:
+      description: Triangular mesh (Points + Triangles)
+    tetra:
+      description: Tetrahedral mesh (Points + Tetrahedra)
+
+transform:
+  description: Spatial transform
+  children:
+    affine:
+      description: Affine transform

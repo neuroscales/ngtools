@@ -1,0 +1,209 @@
+remote:
+  # This section lists formats natively supported by NeuroGlancer
+  boss:
+    description: bossDB - Block & Object storage system
+    spec: [https://bossdb.org]
+    layers: [volume, labels]
+    class: volume.RemoteSource
+  brainmap:
+    description: Google Brain Maps
+    class: volume.RemoteSource
+  deepzoom:
+    description: Deep Zoom file-backed data source
+    spec:
+    - http://msdn.microsoft.com/en-us/library/cc645077(v=vs.95).aspx
+    - https://github.com/google/neuroglancer/tree/master/src/datasource/deepzoom
+    - https://www.openzoom.org
+    - https://www.gasi.ch/blog/inside-deep-zoom-2
+    ext: [.dzi, .xml]
+    layers: [volume, labels]
+    class: volume.RemoteSource
+  dvid:
+    description: Distributed, Versioned, Image-oriented Dataservice
+    spec:
+    - https://dvid.io
+    - https://github.com/janelia-flyem/dvid
+    layers:
+    - volume
+    - labels
+    - points
+    - graph
+    - roi
+    class: volume.RemoteSource
+  graphene:
+    description: Graphene Zoom file-backed data source
+    class: volume.RemoteSource
+  local:
+    description: Local in-memory
+    class: volume.RemoteSource
+  n5:
+    description: N5 data source
+    spec:
+    - https://github.com/saalfeldlab/n5
+    ext: [.n5]
+    layers:
+    - volume
+    - labels
+    class: volume.RemoteSource
+  nggraph:
+    description: nggraph data source
+    class: volume.RemoteSource
+  nifti:
+    description: Single NIfTI file
+    spec:
+    - https://nifti.nimh.nih.gov
+    ext: [.nii, .nii.gz]
+    layers: [volume, labels]
+    class: volume.RemoteNifti
+  obj:
+    description: Wavefront OBJ mesh file
+    spec:
+    - https://www.loc.gov/preservation/digital/formats/fdd/fdd000507.shtml
+    - https://paulbourke.net/dataformats/obj/
+    - https://en.wikipedia.org/wiki/Wavefront_.obj_file
+    ext: [.obj]
+    layers: [surface]
+  class: volume.RemoteSource
+  precomputed:
+    description: Neuroglancer Precomputed file-backed data source
+    spec:
+    - https://github.com/google/neuroglancer/tree/master/src/datasource/precomputed
+    layers: [volume, labels, graph, surface, points, roi]
+    class: volume.RemoteSource
+  render:
+    description: Render transformed image tiles
+    spec:
+    - https://github.com/saalfeldlab/render
+    - https://github.com/saalfeldlab/render/blob/master/docs/src/site/markdown/data-model.md
+    layers: [volume]
+    class: volume.RemoteSource
+  vtk:
+    description: VTK mesh file
+    spec:
+    - https://docs.vtk.org/en/latest/design_documents/VTKFileFormats.html
+    ext: [.vtk]
+    class: volume.RemoteSource
+  zarr:
+    description': Zarr data source
+    class: volume.RemoteZarr
+  zarr2:
+    description': Zarr v2 data source
+    class: volume.RemoteZarr
+  zarr3:
+    description': Zarr v3 data source
+    class: volume.RemoteZarr
+
+local:
+  # This section lists formats that are not natively supported by
+  # NeuroGlancer, but that our local app (or our local fileserver)
+  # know how to handl and/or convert.
+  mgh:
+    description: Freesurfer volume format
+    spec:
+    - https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/MghFormat
+    ext: [.mgh, .mgz]
+    layers: [volume, labels]
+    class: volume.LocalMGH
+  mgz:
+    description: Freesurfer volume format (compressed)
+    spec:
+    - https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/MghFormat
+    ext: [.mgz]
+    layers: [volume, labels]
+    class: volume.LocalMGH
+  trk:
+    description: Freesurfer/TrackVis streamlines
+    spec:
+    - https://trackvis.org/docs/?subsect=fileformat
+    ext: [.trk]
+    layers: [tracts]
+  lta:
+    description: Freesurfer affine transform
+    spec:
+    - https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/LtaFormat
+    ext: [.lta]
+    layers: [affine]
+  surf:
+    description: Freesurfer surface format
+    spec:
+    - http://www.grahamwideman.com/gw/brain/fs/surfacefileformats.htm
+    layers: [surface]
+  annot:
+    description: Freesurfer surface annotation
+  tck:
+    description: MRtrix streamlines
+    spec:
+    - https://mrtrix.readthedocs.io/en/dev/getting_started/image_data.html#mrtrix-tracks-format
+    ext: [.trk]
+    layers: [tracts]
+  mif:
+    description: MRtrix streamlines
+    spec:
+    - https://mrtrix.readthedocs.io/en/dev/getting_started/image_data.html#mrtrix-image-formats
+    ext: [.mif]
+    layers: [volume, labels]
+  gii:
+    description: Gifti
+    spec:
+    - https://www.nitrc.org/projects/gifti/
+    - https://www.nitrc.org/frs/download.php/2871/GIFTI_Surface_Format.pdf
+    ext: [.gii]
+    layers: [volume, labels, surface, points, annot, roi]
+  coordgii:
+    description: Gifti coordinate file
+    spec:
+    - https://www.nitrc.org/projects/gifti/
+    - https://www.nitrc.org/frs/download.php/2871/GIFTI_Surface_Format.pdf
+    ext: [.coord.gii]
+    layers: [points]
+ labelgii:
+    description: Gifti label file
+    spec:
+    - https://www.nitrc.org/projects/gifti/
+    - https://www.nitrc.org/frs/download.php/2871/GIFTI_Surface_Format.pdf
+    ext: [.label.gii]
+    layers: [labels]
+ shapegii:
+    description: Gifti shape file
+    spec:
+    - https://www.nitrc.org/projects/gifti/
+    - https://www.nitrc.org/frs/download.php/2871/GIFTI_Surface_Format.pdf
+    ext: [.shape.gii]
+    layers: [annot]
+  surfgii:
+    description: Gifti surface file
+    spec:
+    - https://www.nitrc.org/projects/gifti/
+    - https://www.nitrc.org/frs/download.php/2871/GIFTI_Surface_Format.pdf
+    ext: [.surf.gii]
+    layers: [surface]
+  vecgii:
+    description: Gifti vector file
+    spec:
+    - https://www.nitrc.org/projects/gifti/
+    - https://www.nitrc.org/frs/download.php/2871/GIFTI_Surface_Format.pdf
+    ext: [.vector.gii]
+    layers: [volume]
+  tengii:
+    description: Gifti tensor file
+    spec:
+    - https://www.nitrc.org/projects/gifti/
+    - https://www.nitrc.org/frs/download.php/2871/GIFTI_Surface_Format.pdf
+    ext: [.tensor.gii]
+    layers: [volume]
+  tiff:
+    description: Tiff volume format
+    spec:
+    - https://en.wikipedia.org/wiki/TIFF
+    - https://www.itu.int/itudoc/itu-t/com16/tiff-fx/docs/tiff6.pdf
+    ext: [.tif, .tiff]
+    layers: [volume, labels]
+  ometiff:
+    description: OME-Tiff volume format
+    spec:
+    - https://docs.openmicroscopy.org/ome-model/5.6.3/ome-tiff/
+    ext: [ome.tif, ome.tiff]
+    layers: [volume, labels]
+  niftyreg:
+    description: NiftyReg affine transform
+    layers: [affine]

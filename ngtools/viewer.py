@@ -9,6 +9,7 @@ from urllib.parse import urlparse, unquote as urlunquote, quote as urlquote
 from neuroglancer.server import global_server_args
 from .fileserver import LocalFileServerInBackground
 from .volume import LocalSource, RemoteSource
+from .tracts import TractSource
 from .spaces import (
     neurotransforms, letter2full, compose, to_square)
 from .shaders import shaders, colormaps, pretty_colormap_list
@@ -73,15 +74,22 @@ class LocalNeuroglancer:
             * If `False`, do not create one -- only remote files can be loaded.
         """
         if fileserver is True:
-            fileserver = LocalFileServerInBackground()
+            fileserver = LocalFileServerInBackground(interrupt=EOFError)
         self.fileserver = fileserver
         if self.fileserver:
             self.fileserver.start_and_serve_forever()
         self.port = port
         global_server_args['bind_port'] = str(port)
         self.viewer = ng.Viewer(token=str(token))
-        self.parser = self.make_parser()
+        # self.viewer.shared_state.add_changed_callback(self.on_state_change)
+        self.parser = self._make_parser()
         self.display_dimensions = ['x', 'y', 'z']
+
+    # ==================================================================
+    #
+    #                   COMMANDLINE APPLICATION
+    #
+    # ==================================================================
 
     def await_input(self):
         try:
@@ -90,21 +98,21 @@ class LocalNeuroglancer:
             # cleanup the fileserver process
             del self.fileserver
 
-    def make_parser(self):
+    def _make_parser(self):
         mainparser = ParserApp('', debug=True)
         parsers = mainparser.add_subparsers()
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   HELP
-        # ==============================================================
+        # --------------------------------------------------------------
         help = parsers.add_parser('help', help='Display help')
         help.set_defaults(func=self.help)
         help.add_argument(
             dest='action', nargs='?', help='Command for which to display help')
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   LOAD
-        # ==============================================================
+        # --------------------------------------------------------------
         load = parsers.add_parser('load', help='Load a file')
         load.set_defaults(func=self.load)
         load.add_argument(
@@ -114,17 +122,17 @@ class LocalNeuroglancer:
         load.add_argument(
             '--transform', help='Apply a transform')
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   UNLOAD
-        # ==============================================================
+        # --------------------------------------------------------------
         unload = parsers.add_parser('unload', help='Unload a file')
         unload.set_defaults(func=self.unload)
         unload.add_argument(
             dest='layer', nargs='+', help='Layer(s) to unload')
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   TRANSFORM
-        # ==============================================================
+        # --------------------------------------------------------------
         transform = parsers.add_parser('transform', help='Apply a transform')
         transform.set_defaults(func=self.transform)
         transform.add_argument(
@@ -141,9 +149,9 @@ class LocalNeuroglancer:
         transform.add_argument(
             '--fix', help='Fixed image (required by some formats)')
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   SHADER
-        # ==============================================================
+        # --------------------------------------------------------------
         description = textwrap.dedent(
             """
             Applies a colormap, or a more advanced shading function to all
@@ -162,17 +170,17 @@ class LocalNeuroglancer:
         shader.add_argument(
             '--layer', nargs='+', help='Layer(s) to apply shader to')
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   DISPLAY
-        # ==============================================================
+        # --------------------------------------------------------------
         display = parsers.add_parser('display', help='Dimensions to display')
         display.set_defaults(func=self.display)
         display.add_argument(
             dest='dimension', nargs='*', help='Dimensions to display')
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   LAYOUT
-        # ==============================================================
+        # --------------------------------------------------------------
         LAYOUTS = ["xy", "yz", "xz", "xy-3d", "yz-3d", "xz-3d", "4panel", "3d"]
         layout = parsers.add_parser('layout', help='Layout')
         layout.set_defaults(func=self.layout)
@@ -200,9 +208,9 @@ class LocalNeuroglancer:
             help="Remove from an existing (nested) layout"
         )
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   STATE
-        # ==============================================================
+        # --------------------------------------------------------------
         state = parsers.add_parser('state', help='Return the viewer\'s state')
         state.set_defaults(func=self.state)
         state.add_argument(
@@ -219,13 +227,19 @@ class LocalNeuroglancer:
             '--url', action='store_true', default=False,
             help='Load (or print) the url form of the state')
 
-        # ==============================================================
+        # --------------------------------------------------------------
         #   EXIT
-        # ==============================================================
+        # --------------------------------------------------------------
         exit = parsers.add_parser('exit', aliases=['quit'],
                                   help='Exit neuroglancer')
         exit.set_defaults(func=self.exit)
         return mainparser
+
+    # ==================================================================
+    #
+    #                              ACTIONS
+    #
+    # ==================================================================
 
     @action
     def display(self, dimension=None):
@@ -350,13 +364,13 @@ class LocalNeuroglancer:
             state.displayDimensions = self.display_dimensions
 
     @action
-    def load(self, filename, name=None, transform=None):
+    def load(self, filename, name=None, transform=None, **kwargs):
         """
         Load file(s)
 
         Parameters
         ----------
-        filenames : str or list[str]
+        filename : str or list[str]
             Paths or URL, eventually prepended with "type" and "format"
             protocols. Ex: `"labels://nifti://http://cloud.com/path/to/nii.gz"`
         name : str, optional
@@ -395,6 +409,28 @@ class LocalNeuroglancer:
                         transform=getattr(source, 'transform', None),
                     ),
                     shaderControls=controls,
+                )
+
+            elif layertype == 'tracts':
+                source = TractSource(filename)
+                source._load()
+                maxtracts = len(source.tractfile.streamlines)
+                nbtracts = min(maxtracts, kwargs.get('nb_tracts', 1000))
+                source.max_tracts = nbtracts
+                source._filter()
+                controls = {
+                    "nbtracts": {
+                        "min": 0,
+                        "max": maxtracts,
+                        "default": nbtracts,
+                    }
+                }
+                layer = ng.SegmentationLayer(
+                    source=[source],
+                    skeleton_shader=shaders.trkorient,
+                    selected_alpha=0,
+                    not_selected_alpha=0,
+                    segments=[1],
                 )
 
             elif format in self.EXTRA_FORMATS:
@@ -796,6 +832,38 @@ class LocalNeuroglancer:
         del self.fileserver
         sys.exit()
 
+    # ==================================================================
+    #
+    #                            CALLBACKS
+    #
+    # ==================================================================
+
+    def on_state_change(self):
+        old_state = self.saved_state
+        with self.viewer.txn() as state:
+            self.saved_state = state
+            for layer in state.layers:
+                name = layer.name
+                layer = layer.layer
+                if isinstance(layer.source, ng.SkeletonSource):
+                    if (layer.shaderControls.nbtracts
+                            != old_state.shaderControls.nbtracts):
+                        self.update_tracts_nb(name)
+
+    def update_tracts_nb(self, name):
+        with self.viewer.txn() as state:
+            layer = state.layers[name]
+            print(type(layer))
+            layer.source.max_tracts = layer.shaderControls.nbtracts
+            layer.source._filter()
+            layer.invalidate()
+
+    # ==================================================================
+    #
+    #                            FILEUTILS
+    #
+    # ==================================================================
+
     def ensure_url(self, filename):
         if not filename.startswith(remote_protocols()):
             if filename.startswith('/'):
@@ -809,6 +877,7 @@ class LocalNeuroglancer:
         'volume',           # Raster data (image or volume)
         'labels',           # Integer raster data, interpreted as labels
         'surface',          # Triangular mesh
+        'mesh',             # Other types of mesh ???
         'tracts',           # Set of piecewise curves
         'roi',              # Region of interest ???
         'points',           # Pointcloud
@@ -852,11 +921,39 @@ class LocalNeuroglancer:
     ]
 
     def parse_filename(self, filename):
+        """
+        Parse a filename that may contain protocol hints
 
-        datatype = None
+        Parameters
+        ----------
+        filename : str
+            A filename, that may be prepended by:
+
+            1) A layer type protocol, which indicates the kind of object
+               that the file contains.
+               Examples: `volume://`, `labels://`, `tracts://`.
+            2) A format protocol, which indicates the exact file format.
+               Examples: `nifti://`, `zarr://`, `mgh://`.
+            3) An access protocol, which indices the protocol used to
+               access the files.
+               Examples: `https://`, `s3://`, `dandi://`.
+
+            All of these protocols are optional. If absent, a guess is
+            made using the file extension.
+
+        Returns
+        -------
+        layertype : str
+            Data type protocol. Can be None.
+        format : str
+            File format protocol. Can be None.
+        filename : str
+            File path, eventually prepended with an access protocol.
+        """
+        layertype = None
         for dt in self.LAYERTYPES:
             if filename.startswith(dt + '://'):
-                datatype = dt
+                layertype = dt
                 filename = filename[len(dt)+3:]
                 break
 
@@ -895,4 +992,12 @@ class LocalNeuroglancer:
             elif filename.endswith(('.n5', '.n5/')):
                 format = 'n5'
 
-        return datatype, format, filename
+        if layertype is None:
+            if format in ('tck', 'trk'):
+                layertype = 'tracts'
+            elif format in ('vtk', 'obj'):
+                layertype = 'mesh'
+            elif format in ('lta',):
+                layertype = 'affine'
+
+        return layertype, format, filename

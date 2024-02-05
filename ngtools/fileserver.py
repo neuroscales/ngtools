@@ -33,16 +33,27 @@ class LocalFileServer:
         self.cwd = cwd or os.getcwd()
         self.port = port
         self.ip = ip
+
+        if interrupt is True:
+            interrupt = KeyboardInterrupt
+        if not interrupt:
+            interrupt = tuple()
+        if not isinstance(interrupt, (list, tuple)):
+            interrupt = (interrupt,)
+        interrupt = tuple(interrupt)
         self.interrupt = interrupt
+
         self.server = make_server(self.ip, self.port, self.serve,
                                   handler_class=NoLoggingWSGIRequestHandler)
 
     def serve_forever(self):
-        try:
-            self.server.serve_forever()
-        except KeyboardInterrupt as e:
-            if self.interrupt:
+        while True:
+            try:
+                self.server.serve_forever()
+            except self.interrupt as e:
                 raise e
+            finally:
+                continue
 
     @staticmethod
     def file_not_found(dest, start_response):
@@ -72,6 +83,12 @@ class LocalFileServer:
              ).encode("utf-8")
         ]
 
+    FORMATS = {
+        'tracts': 'tracts',
+        'trk': 'tracts',
+        'tck': 'tracts',
+    }
+
     def serve(self, environ, start_response):
         path_info = environ['PATH_INFO']
 
@@ -84,6 +101,9 @@ class LocalFileServer:
             range = range.split('=')[1].strip().split('-')
         else:
             range = None
+
+        # There may be a leading protocol indicating file format
+        # TODO
 
         # There is always a leading /, this means that relative paths
         # have the form
@@ -145,7 +165,7 @@ class LocalFileServerInBackground:
     A fileserver that runs in a background process
     """
 
-    def __init__(self, cwd=None, port=9123, ip='127.0.01'):
+    def __init__(self, cwd=None, port=9123, ip='127.0.01', interrupt=False):
         """
         Parameters
         ----------
@@ -161,16 +181,19 @@ class LocalFileServerInBackground:
         self.port = port
         self.ip = ip
         self.process = None
+        self.interrupt = interrupt
 
     @classmethod
-    def _start_and_server_forever(cls, cwd, port, ip):
-        server = LocalFileServer(cwd, port, ip, interrupt=False)
+    def _start_and_server_forever(cls, cwd, port, ip, interupt):
+        server = LocalFileServer(cwd, port, ip, interrupt=interupt)
         server.serve_forever()
 
     def start_and_serve_forever(self):
         if not self.process:
-            self.process = Process(target=self._start_and_server_forever,
-                                   args=(self.cwd, self.port, self.ip))
+            self.process = Process(
+                target=self._start_and_server_forever,
+                args=(self.cwd, self.port, self.ip, self.interrupt)
+            )
         if not self.process.is_alive():
             self.process.start()
 

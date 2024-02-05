@@ -25,7 +25,8 @@ def cli(args=None):
     # instantiate file server
     if args.port_fileserver != 0:
         fileserver = LocalFileServerInBackground(
-            cwd=args.cwd, port=args.port_fileserver, ip=args.ip)
+            cwd=args.cwd, port=args.port_fileserver, ip=args.ip,
+            interrupt=EOFError)
         print('fileserver:  ', f'http://{fileserver.ip}:{fileserver.port}/')
     else:
         fileserver = False

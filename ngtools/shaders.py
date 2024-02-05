@@ -177,6 +177,18 @@ class shaders:
         }
         """).lstrip()
 
+    trkorient = colormaps.orientation + '\n' + dedent(
+        """
+        #uicontrol uint nbtracts slider
+        #uicontrol bool orient_color checkbox(default=true)
+        void main() {
+            if (orient_color)
+                emitRGB(colormapOrient(orientation));
+            else
+                emitDefault();
+        }
+        """).lstrip()
+
     @staticmethod
     def colormap(cmap):
         return getattr(colormaps, cmap) + '\n' + dedent(
