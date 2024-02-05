@@ -1,12 +1,8 @@
 import sys
-import re
 import json
 import os.path
 import argparse
 import textwrap
-import shlex                    # parse user input as if a shell commandline
-import readline                 # autocomplete/history in user input
-import atexit                   # do stuff whe exiting (save history...)
 import numpy as np
 import neuroglancer as ng
 from urllib.parse import urlparse, unquote as urlunquote, quote as urlquote
@@ -18,7 +14,7 @@ from .spaces import (
 from .shaders import shaders, colormaps, pretty_colormap_list
 from .transforms import load_affine
 from .opener import remote_protocols
-from .utils import bcolors
+from .parserapp import ParserApp
 
 
 _print = print
@@ -39,7 +35,9 @@ def action(func):
             parsedargs.update(kwargs)
             parsedargs.pop('func', None)
             kwargs = parsedargs
-        return func(self, *args, **kwargs)
+        result = func(self, *args, **kwargs)
+        self.redisplay()
+        return result
 
     return wrapper
 
@@ -83,64 +81,18 @@ class LocalNeuroglancer:
         global_server_args['bind_port'] = str(port)
         self.viewer = ng.Viewer(token=str(token))
         self.parser = self.make_parser()
-        self.comp = UserInputCompleter([
-            # Any chance we can get these from self.parser?
-            'help',
-            'load',
-            'unload',
-            'transform',
-            'shader',
-            'display',
-            'exit',
-        ])
         self.display_dimensions = ['x', 'y', 'z']
 
     def await_input(self):
-        print(
-            f'\nType {bcolors.bold}help{bcolors.endc} to list available '
-            f'commands, or {bcolors.bold}help <command>{bcolors.endc} '
-            f'for specific help.'
-        )
-        count = 1
         try:
-            while True:
-                # Query input
-                args = input(f'{bcolors.fg.green}[{count}] {bcolors.endc}')
-                if not args.strip():
-                    continue
-                count += 1
-
-                # Parse
-                try:
-                    args = self.parser.parse_args(shlex.split(args))
-                    if not vars(args):
-                        raise ValueError("Unknown command")
-                except KeyboardInterrupt as e:
-                    raise e
-                except Exception as e:
-                    print(f"{bcolors.fail}(PARSE ERROR)", e, bcolors.endc,
-                          file=sys.stderr)
-                    continue
-
-                # Execute
-                try:
-                    if hasattr(args, 'func'):
-                        args.func(args)
-                    self.display()
-                except KeyboardInterrupt as e:
-                    raise e
-                except Exception as e:
-                    print(f"{bcolors.fail}(EXEC ERROR)", e, bcolors.endc,
-                          file=sys.stderr)
-                    raise e
-                    continue
-
-        except KeyboardInterrupt:
-            print('exit')
+            return self.parser.await_input()
+        except SystemExit:
+            # cleanup the fileserver process
+            del self.fileserver
 
     def make_parser(self):
-        mainparser = NoExitArgParse('')
-        parsers = mainparser.add_subparsers(required=True)
+        mainparser = ParserApp('', debug=True)
+        parsers = mainparser.add_subparsers()
 
         # ==============================================================
         #   HELP
@@ -944,87 +896,3 @@ class LocalNeuroglancer:
                 format = 'n5'
 
         return datatype, format, filename
-
-
-class NoExitArgParse(argparse.ArgumentParser):
-    def exit(self, status=0, message=None):
-        pass
-
-    def error(self, message):
-        pass
-
-
-class UserInputCompleter:
-
-    RE_SPACE = re.compile(r'.*\s+$', re.M)
-    HISTORY = os.path.expanduser('~/.neuroglancer_history')
-
-    def __init__(self, commands=tuple(), ):
-        self.commands = commands
-        readline.set_completer_delims(' \t\n;')
-        readline.parse_and_bind('tab: complete')
-        readline.set_completer(self.complete)
-        if not os.path.exists(self.HISTORY):
-            with open(self.HISTORY, 'wt'):
-                pass
-        readline.read_history_file(self.HISTORY)
-        atexit.register(self._save_history, self.HISTORY)
-
-    def _save_history(self, histfile):
-        readline.set_history_length(1000)
-        readline.write_history_file(histfile)
-
-    def _listdir(self, root):
-        "List directory 'root' appending the path separator to subdirs."
-        res = []
-        for name in os.listdir(root):
-            path = os.path.join(root, name)
-            if os.path.isdir(path):
-                name += os.sep
-            res.append(name)
-        return res
-
-    def _complete_path(self, path=None):
-        "Perform completion of filesystem path."
-        if not path:
-            return self._listdir('.')
-        dirname, rest = os.path.split(path)
-        tmp = dirname if dirname else '.'
-        res = [os.path.join(dirname, p)
-               for p in self._listdir(tmp) if p.startswith(rest)]
-        # more than one match, or single match which does not exist (typo)
-        if len(res) > 1 or not os.path.exists(path):
-            return res
-        # resolved to a single directory, so return list of files below it
-        if os.path.isdir(path):
-            return [os.path.join(path, p) for p in self._listdir(path)]
-        # exact file match terminates this completion
-        return [path + ' ']
-
-    def complete_default(self, args):
-        if not args:
-            return self._complete_path('.')
-        # treat the last arg as a path and complete it
-        return self._complete_path(os.path.expanduser(args[-1]))
-
-    def complete(self, text, state):
-        "Generic readline completion entry point."
-        buffer = readline.get_line_buffer()
-        line = readline.get_line_buffer().split()
-        # show all commands
-        if not line:
-            return [c + ' ' for c in self.commands][state]
-        # account for last argument ending in a space
-        if self.RE_SPACE.match(buffer):
-            line.append('')
-        # resolve command to the implementation function
-        cmd = line[0].strip()
-        if cmd in self.commands:
-            impl = getattr(self, 'complete_%s' % cmd, self.complete_default)
-            args = line[1:]
-            if args:
-                return (impl(args) + [None])[state]
-            return [cmd + ' '][state]
-        results = [c + ' ' for c in self.commands if c.startswith(cmd)]
-        results += [None]
-        return results[state]
