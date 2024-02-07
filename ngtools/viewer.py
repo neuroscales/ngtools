@@ -16,6 +16,7 @@ from .shaders import shaders, colormaps, pretty_colormap_list
 from .transforms import load_affine
 from .opener import remote_protocols
 from .parserapp import ParserApp
+from .utils import bcolors
 
 
 _print = print
@@ -55,11 +56,11 @@ class LocalNeuroglancer:
     """
     A local instance of neuroglancer that can launch its own local fileserver.
 
-    It also comes with a shell-like interfact that allows loading,
+    It also comes with a shell-like interface that allows loading,
     unloading, applying transforms, etc.
     """
 
-    def __init__(self, port=9321, token=1, fileserver=True):
+    def __init__(self, port=9321, token=1, fileserver=True, debug=False):
         """
         Parameters
         ----------
@@ -82,8 +83,11 @@ class LocalNeuroglancer:
         global_server_args['bind_port'] = str(port)
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
-        self.parser = self._make_parser()
+        self.parser = self._make_parser(debug)
         self.display_dimensions = ['x', 'y', 'z']
+        self.to_world = None
+
+    _WORLD = object()
 
     # ==================================================================
     #
@@ -92,20 +96,26 @@ class LocalNeuroglancer:
     # ==================================================================
 
     def await_input(self):
+        """Launch shell-like interface"""
         try:
             return self.parser.await_input()
         except SystemExit:
             # cleanup the fileserver process
             del self.fileserver
 
-    def _make_parser(self):
-        mainparser = ParserApp('', debug=True)
+    def _make_parser(self, debug=False):
+        mainparser = ParserApp('', debug=debug)
         parsers = mainparser.add_subparsers()
+        F = dict(formatter_class=argparse.RawDescriptionHelpFormatter)
+
+        def add_parser(cmd, *args, **kwargs):
+            kwargs.setdefault('description', getattr(_clihelp, cmd, None))
+            return parsers.add_parser(cmd, *args, **kwargs, **F)
 
         # --------------------------------------------------------------
         #   HELP
         # --------------------------------------------------------------
-        help = parsers.add_parser('help', help='Display help')
+        help = add_parser('help', help='Display help')
         help.set_defaults(func=self.help)
         help.add_argument(
             dest='action', nargs='?', help='Command for which to display help')
@@ -113,19 +123,19 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         #   LOAD
         # --------------------------------------------------------------
-        load = parsers.add_parser('load', help='Load a file')
+        load = add_parser('load', help='Load a file')
         load.set_defaults(func=self.load)
         load.add_argument(
             dest='filename', nargs='+', help='Filename(s) with protocols')
         load.add_argument(
-            '--name', help='A name for the image layer')
+            '--name', nargs='+', help='A name for the image layer')
         load.add_argument(
-            '--transform', help='Apply a transform')
+            '--transform', nargs='+', help='Apply a transform')
 
         # --------------------------------------------------------------
         #   UNLOAD
         # --------------------------------------------------------------
-        unload = parsers.add_parser('unload', help='Unload a file')
+        unload = add_parser('unload', help='Unload a file')
         unload.set_defaults(func=self.unload)
         unload.add_argument(
             dest='layer', nargs='+', help='Layer(s) to unload')
@@ -133,7 +143,7 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         #   TRANSFORM
         # --------------------------------------------------------------
-        transform = parsers.add_parser('transform', help='Apply a transform')
+        transform = add_parser('transform', help='Apply a transform')
         transform.set_defaults(func=self.transform)
         transform.add_argument(
             dest='transform', nargs='+',
@@ -152,18 +162,7 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         #   SHADER
         # --------------------------------------------------------------
-        description = textwrap.dedent(
-            """
-            Applies a colormap, or a more advanced shading function to all
-            or some of the layers.
-
-            List of builtin colormaps
-            -------------------------
-            """
-        ) + textwrap.indent(pretty_colormap_list(), ' ')
-        shader = parsers.add_parser(
-            'shader', help='Apply a shader', description=description,
-            formatter_class=argparse.RawDescriptionHelpFormatter)
+        shader = add_parser('shader', help='Apply a shader')
         shader.set_defaults(func=self.shader)
         shader.add_argument(
             dest='shader', help='Shader name or GLSL shader code')
@@ -173,16 +172,21 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         #   DISPLAY
         # --------------------------------------------------------------
-        display = parsers.add_parser('display', help='Dimensions to display')
+        display = add_parser('display', help='Dimensions to display')
         display.set_defaults(func=self.display)
         display.add_argument(
-            dest='dimension', nargs='*', help='Dimensions to display')
+            dest='dimensions', nargs='*', help='Dimensions to display')
+        display.add_argument(
+            '--layer', help='Show in this layer\'s canonical space')
+        display.add_argument(
+            '--world', dest='layer', action='store_const', const=self._WORLD,
+            help='Show in world space')
 
         # --------------------------------------------------------------
         #   LAYOUT
         # --------------------------------------------------------------
         LAYOUTS = ["xy", "yz", "xz", "xy-3d", "yz-3d", "xz-3d", "4panel", "3d"]
-        layout = parsers.add_parser('layout', help='Layout')
+        layout = add_parser('layout', help='Layout')
         layout.set_defaults(func=self.layout)
         layout.add_argument(
             dest='layout', nargs='*', choices=LAYOUTS, help='Layout')
@@ -211,7 +215,7 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         #   STATE
         # --------------------------------------------------------------
-        state = parsers.add_parser('state', help='Return the viewer\'s state')
+        state = add_parser('state', help='Return the viewer\'s state')
         state.set_defaults(func=self.state)
         state.add_argument(
             '--no-print', action='store_false', default=True, dest='print',
@@ -228,10 +232,37 @@ class LocalNeuroglancer:
             help='Load (or print) the url form of the state')
 
         # --------------------------------------------------------------
+        #   ZORDER
+        # --------------------------------------------------------------
+        zorder = add_parser('zorder', help='Reorder layers')
+        zorder.set_defaults(func=self.zorder)
+        zorder.add_argument(
+            dest='layer', nargs='+', help='Layer(s) name(s)')
+        zorder.add_argument(
+            '--up', '-u', '-^', action='count', default=0,
+            help='Move upwards')
+        zorder.add_argument(
+            '--down', '-d', '-v', action='count', default=0,
+            help='Move downwards')
+
+        # --------------------------------------------------------------
+        #   NAVIGATION
+        # --------------------------------------------------------------
+        cd = add_parser('cd', help='Change directory')
+        cd.set_defaults(func=self.cd)
+        cd.add_argument(dest='path')
+
+        ls = add_parser('ls', help='List files')
+        ls.set_defaults(func=self.ls)
+        ls.add_argument(dest='path', nargs='?', default='.')
+
+        pwd = add_parser('pwd', help='Path to working directory')
+        pwd.set_defaults(func=self.pwd)
+
+        # --------------------------------------------------------------
         #   EXIT
         # --------------------------------------------------------------
-        exit = parsers.add_parser('exit', aliases=['quit'],
-                                  help='Exit neuroglancer')
+        exit = add_parser('exit', aliases=['quit'], help='Exit neuroglancer')
         exit.set_defaults(func=self.exit)
         return mainparser
 
@@ -242,126 +273,23 @@ class LocalNeuroglancer:
     # ==================================================================
 
     @action
-    def display(self, dimension=None):
-        """
-        Change displayed dimensions.
+    def cd(self, path):
+        """Change directory"""
+        os.chdir(os.path.expanduser(path))
+        return os.getcwd()
 
-        Parameters
-        ----------
-        dimension : str or list[str]
-            The three dimensions to display.
-            Each dimension can be one of:
+    @action
+    def ls(self, path):
+        """List files"""
+        files = os.listdir(os.path.expanduser(path))
+        print(*files)
+        return files
 
-            * `"left"` or `"right"`
-            * `"posterior"` or `"anterior"`
-            * `"inferior"` or `"superior"`
-
-            Otherwise, dimensions can be native axis names of the loaded
-            data, such as `"x"`, `"y"`, `"z"`.
-
-            A compact representation (`"RAS"`, or `"zyx"`) can also be
-            provided.
-
-        """
-        dimensions = ensure_list(dimension or [])
-        if dimensions:
-            if len(dimensions) == 1:
-                dimensions = list(dimensions[0])
-            if len(dimensions) != 3:
-                raise ValueError('display takes three axis names')
-            dimensions = [letter2full.get(letter.lower(), letter)
-                          for letter in dimensions]
-            self.display_dimensions = dimensions
-
-        def compactNames(names):
-            names = list(map(lambda x: x[0].lower(), names))
-            names = ''.join([d for d in names if d not in 'ct'])
-            return names
-
-        names = compactNames(self.display_dimensions)
-
-        def getDimensions(source, _reentrant=False):
-            if getattr(source, 'transform', None):
-                transform = source.transform
-                if transform.inputDimensions:
-                    return transform.inputDimensions
-            if getattr(source, 'dimensions', None):
-                return source.dimensions
-            if not _reentrant and not isinstance(source, ng.LocalVolume):
-                mysource = RemoteSource.from_filename(source.url)
-                return getDimensions(mysource, True)
-            return None
-
-        def getTransform(source):
-            if getattr(source, 'transform', None):
-                return source.transform
-            if not isinstance(source, ng.LocalVolume):
-                mysource = RemoteSource.from_filename(source.url)
-                if getattr(mysource, 'transform', None):
-                    return mysource.transform
-            return None
-
-        def reorientUsingTransform(source):
-            transform = getTransform(source)
-            idims = getDimensions(source)
-            matrix = transform.matrix
-            if matrix is None:
-                matrix = np.eye(4)
-            odims = transform.outputDimensions
-            onames = transform.outputDimensions.names
-            onames = compactNames(onames)
-            if all(name in onames for name in names):
-                return False
-            T0 = ng.CoordinateSpaceTransform(
-                matrix=matrix,
-                input_dimensions=idims,
-                output_dimensions=odims,
-            )
-            T = neurotransforms[(onames, names)]
-            source.transform = compose(T, T0)
-            return True
-
-        def reorientUsingDimensions(source):
-            idims = getDimensions(source)
-            if not idims:
-                return False
-            inames = compactNames(idims.names)
-            if all(name in inames for name in names):
-                return True
-            T0 = ng.CoordinateSpaceTransform(
-                input_dimensions=idims,
-                output_dimensions=idims,
-            )
-            T = neurotransforms[(inames, names)]
-            source.transform = compose(T, T0)
-            return True
-
-        with self.viewer.txn() as state:
-            for layer in state.layers:
-                layer = layer.layer
-                if isinstance(layer, ng.ImageLayer):
-                    for source in layer.source:
-                        if getTransform(source):
-                            reorientUsingTransform(source)
-                        else:
-                            reorientUsingDimensions(source)
-
-        self.redisplay()
-
-    def redisplay(self, *args):
-        """
-        Resets `displayDimensions` to its current value, or to a new value.
-        This function does not transform the data accordingly. It only
-        sets the state's `displayDimensions`.
-
-        Parameters
-        ----------
-        dimensions : None or list[str], optional
-        """
-        if args:
-            self.display_dimensions = args[0]
-        with self.viewer.txn() as state:
-            state.displayDimensions = self.display_dimensions
+    @action
+    def pwd(self):
+        """Path to working directory"""
+        print(os.getcwd())
+        return os.getcwd()
 
     @action
     def load(self, filename, name=None, transform=None, **kwargs):
@@ -373,22 +301,24 @@ class LocalNeuroglancer:
         filename : str or list[str]
             Paths or URL, eventually prepended with "type" and "format"
             protocols. Ex: `"labels://nifti://http://cloud.com/path/to/nii.gz"`
-        name : str, optional
-            A name for the layer.
+        name : str or list[str], optional
+            Layer(s) name(s).
         transform : array_like or list[float] or str, optional
             Affine transform to apply to the loaded volume.
         """
         filenames = ensure_list(filename or [])
-        if name and len(filenames) > 1:
-            raise ValueError('Cannot give a single name to multiple layers. '
-                             'Use separate `load` calls.')
-        name0 = name
+        names = ensure_list(name or [])
+        if names and len(filenames) != len(names):
+            raise ValueError(
+                'The number of names should match the number of files')
         display_dimensions = self.display_dimensions
         self.redisplay(None)
 
-        for filename in filenames or []:
+        onames = []
+        for n, filename in enumerate(filenames):
             layertype, format, filename = self.parse_filename(filename)
-            name = name0 or os.path.basename(filename)
+            name = names[n] if names else os.path.basename(filename)
+            onames.append(name)
 
             if format in self.NG_FORMATS:
                 # Remote source
@@ -463,7 +393,7 @@ class LocalNeuroglancer:
                 state.layers.append(name=name, layer=layer)
 
         if transform:
-            self.transform(transform, name=name0)
+            self.transform(transform, name=onames)
         self.redisplay(display_dimensions)
 
     @action
@@ -486,8 +416,164 @@ class LocalNeuroglancer:
                 del state.layers[name]
 
     @action
+    def display(self, dimensions=None, layer=None):
+        """
+        Change displayed dimensions.
+
+        Parameters
+        ----------
+        dimensions : str or list[str]
+            The three dimensions to display.
+            Each dimension can be one of:
+
+            * `"left"` or `"right"`
+            * `"posterior"` or `"anterior"`
+            * `"inferior"` or `"superior"`
+
+            Otherwise, dimensions can be native axis names of the loaded
+            data, such as `"x"`, `"y"`, `"z"`.
+
+            A compact representation (`"RAS"`, or `"zyx"`) can also be
+            provided.
+
+        layer : str
+            If provided, display in this layer's canonical frame,
+            instead of world space.
+        """
+        def getDimensions(source, _reentrant=False):
+            if getattr(source, 'transform', None):
+                transform = source.transform
+                if transform.inputDimensions:
+                    return transform.inputDimensions
+            if getattr(source, 'dimensions', None):
+                return source.dimensions
+            if not _reentrant and not isinstance(source, ng.LocalVolume):
+                mysource = RemoteSource.from_filename(source.url)
+                return getDimensions(mysource, True)
+            return None
+
+        def getTransform(source):
+            if getattr(source, 'transform', None):
+                return source.transform
+            if not isinstance(source, ng.LocalVolume):
+                mysource = RemoteSource.from_filename(source.url)
+                if getattr(mysource, 'transform', None):
+                    return mysource.transform
+            return None
+
+        if layer is self._WORLD:
+            # move to world axes
+            if self.to_world is not None:
+                rot = np.eye(4)
+                rot[:-1, :-1] = self.to_world
+                self.transform(rot, _mode='')
+                self.to_world = None
+        elif layer is not None:
+            # move to canonical axes
+            with self.viewer.txn() as state:
+                layer = state.layers[layer]
+                matrix = getTransform(layer.source[0]).matrix
+            # TODO select only spatial axes of matrix
+            if matrix is None:
+                matrix = np.eye(4)[:-1]
+            matrix = matrix[:, :-1]
+            u, _, vh = np.linalg.svd(matrix)
+            rot = u @ vh
+            orient = rot.round()
+            rot4 = np.eye(4)
+            rot4[:-1, :-1] = orient @ rot @ np.linalg.inv(orient)
+            self.transform(rot4.T, _mode='')
+            if self.to_world is None:
+                self.to_world = rot
+            else:
+                print(self.to_world, rot)
+                self.to_world = self.to_world @ rot
+
+        if not dimensions:
+            self.redisplay()
+            return
+
+        dimensions = ensure_list(dimensions)
+        if len(dimensions) == 1:
+            dimensions = list(dimensions[0])
+        if len(dimensions) != 3:
+            raise ValueError('display takes three axis names')
+        dimensions = [letter2full.get(letter.lower(), letter)
+                      for letter in dimensions]
+        self.display_dimensions = dimensions
+
+        def compactNames(names):
+            names = list(map(lambda x: x[0].lower(), names))
+            names = ''.join([d for d in names if d not in 'ct'])
+            return names
+
+        names = compactNames(self.display_dimensions)
+
+        def reorientUsingTransform(source):
+            transform = getTransform(source)
+            idims = getDimensions(source)
+            matrix = transform.matrix
+            if matrix is None:
+                matrix = np.eye(4)
+            odims = transform.outputDimensions
+            onames = transform.outputDimensions.names
+            onames = compactNames(onames)
+            if all(name in onames for name in names):
+                return False
+            T0 = ng.CoordinateSpaceTransform(
+                matrix=matrix,
+                input_dimensions=idims,
+                output_dimensions=odims,
+            )
+            T = neurotransforms[(onames, names)]
+            source.transform = compose(T, T0)
+            return True
+
+        def reorientUsingDimensions(source):
+            idims = getDimensions(source)
+            if not idims:
+                return False
+            inames = compactNames(idims.names)
+            if all(name in inames for name in names):
+                return True
+            T0 = ng.CoordinateSpaceTransform(
+                input_dimensions=idims,
+                output_dimensions=idims,
+            )
+            T = neurotransforms[(inames, names)]
+            source.transform = compose(T, T0)
+            return True
+
+        with self.viewer.txn() as state:
+            for layer in state.layers:
+                layer = layer.layer
+                if isinstance(layer, ng.ImageLayer):
+                    for source in layer.source:
+                        if getTransform(source):
+                            reorientUsingTransform(source)
+                        else:
+                            reorientUsingDimensions(source)
+
+        self.redisplay()
+
+    def redisplay(self, *args):
+        """
+        Resets `displayDimensions` to its current value, or to a new value.
+        This function does not transform the data accordingly. It only
+        sets the state's `displayDimensions`.
+
+        Parameters
+        ----------
+        dimensions : None or list[str], optional
+        """
+        if args:
+            self.display_dimensions = args[0]
+        with self.viewer.txn() as state:
+            state.displayDimensions = self.display_dimensions
+
+    @action
     def transform(self, transform, layer=None, inv=False,
-                  *, mov=None, fix=None):
+                  *, mov=None, fix=None, _mode='ras2ras'):
         """
         Apply an affine transform
 
@@ -510,8 +596,11 @@ class LocalNeuroglancer:
         layer_names = layer or []
         if not isinstance(layer_names, (list, tuple)):
             layer_names = [layer_names]
-        display_dimensions = self.display_dimensions
-        self.display('ras')
+
+        if _mode == 'ras2ras':
+            display_dimensions = self.display_dimensions
+            to_world = self.to_world
+            self.display('ras', 'world')
 
         # prepare transformation matrix
         transform = ensure_list(transform)
@@ -533,7 +622,7 @@ class LocalNeuroglancer:
         transform = to_square(transform)
         if inv:
             transform = np.linalg.inv(transform)
-        transform = transform[:-1]
+        matrix1 = transform = transform[:-1]
 
         # make ng transform
         T = ng.CoordinateSpaceTransform(
@@ -583,7 +672,16 @@ class LocalNeuroglancer:
                 input_dimensions=idims,
                 output_dimensions=odims,
             )
-            source.transform = compose(T, T0)
+            if _mode != 'ras2ras':
+                # TODO: deal with nonspatial dimensions
+                T1 = ng.CoordinateSpaceTransform(
+                    matrix=matrix1,
+                    input_dimensions=odims,
+                    output_dimensions=odims,
+                )
+            else:
+                T1 = T
+            source.transform = compose(T1, T0)
             return True
 
         def applyTransform(source):
@@ -594,7 +692,16 @@ class LocalNeuroglancer:
                 input_dimensions=idims,
                 output_dimensions=idims,
             )
-            source.transform = compose(T, T0)
+            if _mode != 'ras2ras':
+                # TODO: deal with nonspatial dimensions
+                T1 = ng.CoordinateSpaceTransform(
+                    matrix=matrix1,
+                    input_dimensions=idims,
+                    output_dimensions=idims,
+                )
+            else:
+                T1 = T
+            source.transform = compose(T1, T0)
             return True
 
         with self.viewer.txn() as state:
@@ -609,7 +716,11 @@ class LocalNeuroglancer:
                         else:
                             applyTransform(source)
 
-        self.display(display_dimensions)
+        if _mode == 'ras2ras':
+            if to_world is not None:
+                self.transform(to_world.T, _mode='')
+            self.to_world = to_world
+            self.display(display_dimensions)
 
     @action
     def shader(self, shader, layer=None):
@@ -812,6 +923,67 @@ class LocalNeuroglancer:
             return state.layout
 
     @action
+    def zorder(self, layer, steps=None, **kwargs):
+        """
+        Move or reorder layers.
+
+        In neuroglancer, layers are listed in the order they are loaded,
+        with the latest layer appearing on top of the other ones in the
+        scene. Counter-intuitively, the latest/topmost layer is listed
+        at the bottom of the layer list, while the earliest/bottommost
+        layer is listed at the top of the layer list. In this function,
+        we list layers in their expected z-order, top to bottom.
+
+        Parameters
+        ----------
+        layer : str or list[str]
+            Name of layers to move.
+            If `steps=None`, layers are given the provided order.
+            Else, the selected layers are moved by `steps` steps.
+        steps : int
+            Number of steps to take. Positive steps move layers towards
+            the top and negative steps move layers towards the bottom.
+        """
+        up = kwargs.get('up', 0)
+        down = kwargs.get('down', 0)
+        if up or down:
+            if steps is None:
+                steps = 0
+            steps += up
+            steps -= down
+
+        names = ensure_list(layer)
+        print(names, steps)
+        with self.viewer.txn() as state:
+            if steps is None:
+                # permutation
+                names += list(reversed([layer.name for layer in state.layers
+                                        if layer.name not in names]))
+                layers = {layer.name: layer.layer for layer in state.layers}
+                for name in names:
+                    del state.layers[name]
+                print(list(reversed(names)))
+                for name in reversed(names):
+                    state.layers[name] = layers[name]
+            elif steps == 0:
+                return
+            else:
+                # move up/down
+                layers = {layer.name: layer.layer for layer in state.layers}
+                indices = {name: n for n, name in enumerate(layers)}
+                for name in layers.keys():
+                    indices[name] += steps * (1 if name in names else -1)
+                layers = {
+                    name: layers[name]
+                    for name in sorted(layers.keys(), key=lambda x: indices[x])
+                }
+                for name in layers.keys():
+                    del state.layers[name]
+                print(list(layers.keys()))
+                for name, layer in layers.items():
+                    state.layers[name] = layer
+
+    @action
     def help(self, action=None):
         """
         Display help
@@ -866,8 +1038,9 @@ class LocalNeuroglancer:
 
     def ensure_url(self, filename):
         if not filename.startswith(remote_protocols()):
-            if filename.startswith('/'):
-                filename = 'root://' + filename
+            filename = os.path.abspath(filename)
+            while filename.endswith('/'):
+                filename = filename[:-1]
             prefix = f'http://{self.fileserver.ip}:{self.fileserver.port}/'
             filename = prefix + filename
         return filename
@@ -1001,3 +1174,144 @@ class LocalNeuroglancer:
                 layertype = 'affine'
 
         return layertype, format, filename
+
+
+_clihelp = type('_clihelp', (object,), {})
+B = bcolors.bold
+E = bcolors.endc
+r, g, b = bcolors.fg.red, bcolors.fg.green, bcolors.fg.blue
+
+_clihelp.load = textwrap.dedent(
+f"""
+Load a file, which can be local or remote.
+
+{B}Paths and URLs{E}
+{B}--------------{E}
+Each path or url may be prepended by:
+
+1)  A layer type protocol, which indicates the kind of object that the file
+    contains.
+    Examples: {B}volume://{E}, {B}labels://{E}, {B}tracts://{E}.
+
+2)  A format protocol, which indicates the exact file format.
+    Examples: {B}nifti://{E}, {B}zarr://{E}, {B}mgh://{E}.
+
+3)  An access protocol, which indices the protocol used to  access the files.
+    Examples: {B}https://{E}, {B}s3://{E}, {B}dandi://{E}.
+
+All of these protocols are optional. If absent, a guess is made using the
+file extension.
+
+{B}Layer names{E}
+{B}-----------{E}
+Neuroglancer layers are named. The name of the layer can be specified with
+the {B}--name{E} option. Otherwise, the base name of the file is used (that
+is, without the folder hierarchy).
+
+If multiple files are loaded _and_ the --name option is used, then there
+should be as many names as files.
+
+{B}Transforms{E}
+{B}----------{E}
+A spatial transform (common to all files) can be applied to the loaded
+volume. The transform is specified with the {B}--transform{E} option, which
+can be a flattened affine matrix (row major) or the path to a transform file.
+Type {B}help transform{E} for more information.
+"""  # noqa: E122
+)
+
+_clihelp.unload = "Unload layers"
+
+_clihelp.shader = textwrap.dedent(
+f"""
+Applies a colormap, or a more advanced shading function to all or some of
+the layers.
+
+{B}List of builtin colormaps{E}
+{B}-------------------------{E}
+"""  # noqa: E122
+) + textwrap.indent(pretty_colormap_list(), ' ')
+
+_clihelp.zorder = textwrap.dedent(
+f"""
+Modifies the z-order of the layers.
+
+In neuroglancer, layers are listed in the order they are loaded, with the
+latest layer appearing on top of the other ones in the scene.
+
+Counter-intuitively, the latest/topmost layer is listed at the bottom of
+the layer list, while the earliest/bottommost layer is listed at the top of
+the layer list. In this command, layers should be listed in their expected
+z-order, top to bottom.
+
+There are two ways of using this command:
+
+1)  Provide the new order (top-to-bottom) of the layers
+
+2)  Provide a positive ({B}--up{E}) or negative ({B}--down{E}) number of
+    steps by which to move the listed layers.
+    In this case, more than one up or down step can be provided, using
+    repeats of the option.
+    Examples: {B}-vvvv{E} moves downward 4 times
+              {B}-^^^^{E} moves upwards 4 times
+"""  # noqa: E122
+)
+
+_clihelp.display = textwrap.dedent(
+f"""
+Display the data in a different space (world or canonical), or in a
+different orientation (RAS, LPI, and permutations thereof)
+
+By default, neuroglancer displays data in their "native" space, where
+native means a "XYZ" coordinate frame, whose mapping from and to voxels
+is format-spacific. In {B}nifti://{E} volumes, XYZ always corresponds to
+the RAS+ world space, whereas in {B}zarr://{E}, XYZ correspond to canonical
+axes ordered according to the OME metadata.
+
+Because of our neuroimaging bias, we choose to interpret XYZ as RAS+ (which
+is consistant with the nifti behavior).
+
+The simplest usage of this command is therefore to switch between
+different representations of the world coordinate system:
+    . {B}display RAS{E}  (alias: {B} display right anterior superior{E})
+      maps the {r}red{E}, {g}green{E} and {b}blue{E} axes to {r}right{E}, {g}anterior{E}, {b}superior{E}.
+    . {B}display LPI{E}  (alias: {B} display left posterior inferior{E})
+      maps the {r}red{E}, {g}green{E} and {b}blue{E} axes to {r}left{E}, {g}posterior{E}, {b}inferior{E}.
+
+A second usage allows switching between displaying the data in the world
+frame and displaying the data in the canonical frame of one of the layers
+(that is, the frame axes are aligned with the voxel dimensions).
+    . {B}display --layer <name>{E} maps the {r}red{E}/{g}green{E}/{b}blue{E}
+      axes to the canonical axes of the layer <name>
+    . {B}display --world{E} maps (back) the {r}red{E}/{g}green{E}/{b}blue{E}
+      axes to the axes of world frame.
+
+Of course, both usages can be combined:
+    . {B}display RAS --layer <name>{E}
+    . {B}display LPI --world{E}
+
+"""  # noqa: E122, E501
+)
+
+_clihelp.layout = textwrap.dedent(
+f"""
+Change the viewer's layout (i.e., the quadrants and their layers)
+
+Neuroglancer has 8 different window types:
+. xy     : {r}X{E}{g}Y{E} cross-section
+. yz     : {g}Y{E}{b}Z{E} cross-section
+. xz     : {r}X{E}{b}Z{E} cross-section
+. xy-3d  : {r}X{E}{g}Y{E} cross-section in a {B}3D{E} window
+. yz-3d  : {g}Y{E}{b}Z{E} cross-section in a {B}3D{E} window
+. xz-3d  : {r}X{E}{b}Z{E} cross-section in a {B}3D{E} window
+. 4panel : Four quadrants ({r}X{E}{g}Y{E}, {r}X{E}{b}Z{E}, {B}3D{E}, {g}Y{E}{b}Z{E})
+. 3d     : {B}3D{E} window
+
+It is possible to build a user-defined layout by stacking these basic
+windows into a row or a column -- or even nested rows and columns --
+using the {B}--stack{E} option. The {B}--layer{E} option allows assigning
+specific layers to a specific window. We also define {B}--append{E} and
+{B}--insert{E} to add a new window into an existing stack of windows.
+
+"""  # noqa: E122, E501
+)

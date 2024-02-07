@@ -5,6 +5,7 @@ import shlex                    # parse user input as if a shell commandline
 import atexit                   # do stuff whe exiting (save history...)
 import readline                 # autocomplete/history in user input
 import argparse
+import traceback
 from .utils import bcolors
 
 
@@ -41,9 +42,13 @@ class ParserApp(argparse.ArgumentParser):
                 break
         return parsers
 
+    class InterruptParsing(Exception):
+        pass
+
     def exit(self, status=0, message=None):
         """Overload ArgumentParser.exit to disable it"""
         pass
+        raise self.InterruptParsing
         # if self.exit_on_help:
         #     return super().exit(status, message)
         # if message:
@@ -66,7 +71,6 @@ class ParserApp(argparse.ArgumentParser):
         #   ^[B : arrow down
         #   ^[C : arrow right
         #   ^[D : arrow left
-        #
         # https://www.gnu.org/software/bash/manual/html_node/Commands-For-History.html
         readline.set_completer_delims(' \t\n;')
         readline.parse_and_bind("tab: complete")
@@ -119,12 +123,16 @@ class ParserApp(argparse.ArgumentParser):
                 except EOFError as e:
                     # Ctrl+D -> propagate anc catch later
                     raise e
+                except self.InterruptParsing:
+                    # Caught "exit" call in parser. Silent it.
+                    continue
                 except Exception as e:
                     # Other exceptions -> print + new input field
+                    if self.debug:
+                        print(traceback.print_tb(e.__traceback__),
+                              file=sys.stderr)
                     print(f"{bcolors.fail}(PARSE ERROR)", e, bcolors.endc,
                           file=sys.stderr)
-                    if self.debug:
-                        raise e
                     continue
 
                 try:
@@ -134,12 +142,16 @@ class ParserApp(argparse.ArgumentParser):
                 except EOFError as e:
                     # Ctrl+D -> propagate anc catch later
                     raise e
+                except self.InterruptParsing:
+                    # Caught "exit" call in parser. Silent it.
+                    continue
                 except Exception as e:
                     # Other exceptions -> print + new input field
+                    if self.debug:
+                        print(traceback.print_tb(e.__traceback__),
+                              file=sys.stderr)
                     print(f"{bcolors.fail}(EXEC ERROR)", e, bcolors.endc,
                           file=sys.stderr)
-                    if self.debug:
-                        raise e
                     continue
 
         except EOFError:
@@ -183,32 +195,35 @@ class ParserApp(argparse.ArgumentParser):
         # exact file match terminates this completion
         return [path + ' ']
 
-    def complete_default(self, args):
-        if not args:
-            return self._complete_path('.')
-        # treat the last arg as a path and complete it
-        return self._complete_path(os.path.expanduser(args[-1]))
+    def complete_default(self, context):
+        return self._complete_path(os.path.expanduser(context))
 
     RE_SPACE = re.compile(r'.*\s+$', re.M)
 
-    def complete(self, text, state):
+    def complete(self, context, state):
         "Generic readline completion entry point."
-        buffer = readline.get_line_buffer()
-        line = readline.get_line_buffer().split()
-        # show all commands
-        if not line:
-            return [c + ' ' for c in self.subcommands][state]
-        # account for last argument ending in a space
-        if self.RE_SPACE.match(buffer):
-            line.append('')
+        line = readline.get_line_buffer()
+        begidx, endidx = readline.get_begidx(), readline.get_endidx()
+        args = shlex.split(line)
+
+        # show matching commands
+        if not args or begidx <= len(args[0]):
+            addspace = len(line) <= endidx or line[endidx] != ' '
+            addspace = ' ' if addspace else ''
+            result = [c + addspace for c in self.subcommands
+                      if c.startswith(context)]
+
         # resolve command to the implementation function
-        cmd = line[0].strip()
-        if cmd in self.subcommands:
-            impl = getattr(self, 'complete_%s' % cmd, self.complete_default)
-            args = line[1:]
-            if args:
-                return (impl(args) + [None])[state]
-            return [cmd + ' '][state]
-        results = [c + ' ' for c in self.subcommands if c.startswith(cmd)]
-        results += [None]
-        return results[state]
+        else:
+            cmd = args[0].strip()
+            if cmd in self.subcommands:
+                template = 'complete_' + cmd
+                impl = getattr(self, template, self.complete_default)
+            else:
+                impl = self.complete_default
+            result = impl(context)
+
+        try:
+            return result[state]
+        except IndexError:
+            return None

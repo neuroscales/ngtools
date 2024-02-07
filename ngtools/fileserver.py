@@ -11,16 +11,15 @@ class NoLoggingWSGIRequestHandler(WSGIRequestHandler):
 
 class LocalFileServer:
     """
-    A fileserver that serves local files
+    A fileserver that serves local files.
+
+    All paths should be absolute!
     """
 
-    def __init__(self, cwd=None, port=9123, ip='127.0.01', interrupt=True):
+    def __init__(self, port=9123, ip='127.0.01', interrupt=True):
         """
         Parameters
         ----------
-        cwd : str or Path
-            Current working directory.
-            All relative paths will be relative to this directory.
         port : int
             Port number to use
         ip : str
@@ -30,7 +29,6 @@ class LocalFileServer:
             If instanrtiated inside a background process, useful to set
             to False so that the exception is handled in the main thread.
         """
-        self.cwd = cwd or os.getcwd()
         self.port = port
         self.ip = ip
 
@@ -102,23 +100,7 @@ class LocalFileServer:
         else:
             range = None
 
-        # There may be a leading protocol indicating file format
-        # TODO
-
-        # There is always a leading /, this means that relative paths
-        # have the form
-        #   /relative/path/from/cwd/file.ext
-        # while absolute paths have the form
-        #   //absolute/path/from/systemroot/file.ext
-        # We remove the leading /, and prepend cwd if there is no more /
-        if path_info.startswith('/'):
-            path_info = path_info[1:]
-        if path_info.startswith('root://'):
-            # absolute path, keep one leading /
-            path_info = path_info[6:]
-        else:
-            # relative path, prepend working dir
-            path_info = os.path.join(self.cwd, path_info)
+        # TODO There may be a leading protocol indicating file format
 
         if path_info.endswith(('.zarr', '.zarr/')):
             path_info = os.path.join(path_info, '.zgroup')
@@ -165,34 +147,34 @@ class LocalFileServerInBackground:
     A fileserver that runs in a background process
     """
 
-    def __init__(self, cwd=None, port=9123, ip='127.0.01', interrupt=False):
+    def __init__(self, port=9123, ip='127.0.01', interrupt=False):
         """
         Parameters
         ----------
-        cwd : str or Path
-            Current working directory.
-            All relative paths will be relative to this directory.
         port : int
             Port number to use
         ip : str
             IP address
+        interrupt : bool or [tuple of] type
+            Exceptions that do interrupt the fileserver.
+            If any other exception happens, the fileserver is restarted.
+            If True, interupt on KeyboardInterrupt.
         """
-        self.cwd = cwd or os.getcwd()
         self.port = port
         self.ip = ip
         self.process = None
         self.interrupt = interrupt
 
     @classmethod
-    def _start_and_server_forever(cls, cwd, port, ip, interupt):
-        server = LocalFileServer(cwd, port, ip, interrupt=interupt)
+    def _start_and_server_forever(cls, port, ip, interupt):
+        server = LocalFileServer(port, ip, interrupt=interupt)
         server.serve_forever()
 
     def start_and_serve_forever(self):
         if not self.process:
             self.process = Process(
                 target=self._start_and_server_forever,
-                args=(self.cwd, self.port, self.ip, self.interrupt)
+                args=(self.port, self.ip, self.interrupt)
             )
         if not self.process.is_alive():
             self.process.start()

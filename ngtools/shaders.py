@@ -77,7 +77,8 @@ class colormaps:
                 result.a = (alpha ? x : 1.0);
                 return clamp(result, 0.0, 1.0);
             }
-            """ % (name, n, str(data), n)).strip()
+            """ % (name, n, str(data), n)
+        ).strip()
 
     @staticmethod
     def make_segmented(name, data=None, n=_DEFAULT_LENGTH):

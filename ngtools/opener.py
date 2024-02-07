@@ -125,39 +125,3 @@ class open:
         fileobj = fileobj.open()
         self.fileobjs.append(fileobj)
         return fileobj
-
-
-# @contextmanager
-# def _open(self):
-#     fileobj, mode, compression = self.fileobj, self.mode, self.compression
-#     fileobj = stringify_path(self.fileobj)
-#     if not hasattr(fileobj, 'read'):
-#         opt = dict()
-#         if not (compression == 'infer' and 'r' in mode):
-#             opt['compression'], compression = compression, None
-#         # if fileobj.startswith(remote_protocols()):
-#         #     opt['block_size'] = 0
-#         with fsspec.open(fileobj, mode, **opt) as f:
-#             with open(f, mode, compression) as ff:
-#                 yield ff
-#         return
-
-#     if compression == 'infer' and 'r' in mode:
-#         with self.context_infer(fileobj) as f:
-#             yield f
-
-#         pos = fileobj.tell()
-#         magic = fileobj.read(2)
-#         fileobj.seek(pos)
-#         if magic == b'\x1f\x8b':
-#             print('gzip')
-#             with IndexedGzipFile(fileobj) as f:
-#                 yield f
-#             return
-#         if magic == b'BZh':
-#             print('bzip2')
-#             with BZ2File(fileobj) as f:
-#                 yield f
-#             return
-
-#     yield fileobj

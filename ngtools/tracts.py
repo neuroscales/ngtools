@@ -8,9 +8,6 @@ import random
 import fsspec
 
 
-DEFAULT_MAX_TRACTS = 10000
-
-
 class TractSource(SkeletonSource):
     """
     This class reads a TRK stremalines file (using nibabel)
@@ -48,7 +45,10 @@ class TractSource(SkeletonSource):
         src/neuroglancer/datasource/precomputed/skeletons.md
     """
 
-    def __init__(self, fileobj, max_tracts=DEFAULT_MAX_TRACTS, **kwargs):
+    DEFAULT_MAX_TRACTS = 1000
+
+    def __init__(self, fileobj, max_tracts=DEFAULT_MAX_TRACTS, format=None,
+                 **kwargs):
         """
         Parameters
         ----------
@@ -56,13 +56,27 @@ class TractSource(SkeletonSource):
             TCK or TRK file
         max_tracts : int
             Maximum number of tracts to display
+        format : [list of] {'tck', 'trk'}
+            Format hint
         """
         self.fileobj = fileobj
         self.max_tracts = max_tracts
+
+        format = format or ['trk', 'tck']
+        if not isinstance(format, (list, tuple)):
+            format = [format]
+        format = list(format)
+        if 'trk' not in format:
+            format += ['trk']
+        if 'tck' not in format:
+            format += ['tck']
+        self.format = format
+
         self.tractfile = None
         self.displayed_ids = None
         self.displayed_tracts = None
         self.displayed_orientations = None
+
         self._load(lazy=True)
         super().__init__(CoordinateSpace(
             names=["x", "y", "z"],
@@ -76,33 +90,34 @@ class TractSource(SkeletonSource):
 
     def __getitem__(self, id):
         """Get a single tract"""
-        if not self._is_fully_loaded():
-            self._load()
+        self._ensure_loaded()
         return self.tractfile.streamlines[id]
 
     def __len__(self):
         """Total number of tracts"""
-        if not self._is_fully_loaded():
-            self._load()
+        self._ensure_loaded()
         return len(self.tractfile.streamlines)
 
-    def _load(self, lazy=False):
+    def _ensure_loaded(self, lazy=False):
         """Load tracts from file (if `lazy=True`, only load metadata)"""
+        if self._is_fully_loaded(lazy):
+            return
+
+        klasses = dict(tck=TckFile, trk=TrkFile)
+
         def load(f):
-            trk_error = tck_error = None
-            try:
-                self.tractfile = TrkFile.load(f, lazy_load=lazy)
-                return
-            except Exception as e:
-                trk_error = e
-            try:
-                self.tractfile = TckFile.load(f, lazy_load=lazy)
-                return
-            except Exception as e:
-                tck_error = e
-            print('error', trk_error, tck_error)
-            raise RuntimeError(f'trk: {trk_error.message}\n'
-                               f'tck: {tck_error.message}')
+            for format in self.format:
+                klass = klasses[format]
+                errors = {}
+                try:
+                    self.tractfile = klass.load(f, lazy_load=lazy)
+                    return
+                except Exception as e:
+                    errors[format] = e
+
+            print('error', *errors.values())
+            raise RuntimeError('\n'.join(
+                [f'{format}: {errors[format]}' for format in self.format]))
 
         if isinstance(self.fileobj, str):
             with fsspec.open(self.fileobj) as f:
@@ -110,9 +125,15 @@ class TractSource(SkeletonSource):
         else:
             load(f)
 
-    def _is_fully_loaded(self):
-        return (self.tractfile and
-                not isinstance(self.tractfile.streamlines, generator))
+    def _is_loaded(self, lazy=False):
+        """Check if file is loaded"""
+        if not self.tractfile:
+            # not loaded at all
+            return False
+        if isinstance(self.tractfile.streamlines, generator):
+            # lazilty loaded
+            return lazy
+        return True
 
     def _filter(self):
         """Select `max_tracts` random tracts"""
