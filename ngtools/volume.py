@@ -71,13 +71,16 @@ class RemoteZarr(RemoteSource):
     """A remote zarr source"""
 
     def aszarr(self):
+        print('aszarr... ', end='')
         url = '://'.join(self.url.split('://')[1:])
         store = zarr.storage.FSStore(url)
         group = zarr.group(store=store)
+        print('done')
         return group
 
     def quantiles(self, q):
         group = self.aszarr()
+        print('quantiles... ', end='')
         multiscales = group.attrs['multiscales'][0]
         nb_levels = len(multiscales['datasets'])
 
@@ -89,11 +92,13 @@ class RemoteZarr(RemoteSource):
                 break
 
         data = dask.array.from_zarr(group[f'{level}'])
+        print('done')
         return _quantiles(q, data)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         group = self.aszarr()
+        print('init... ', end='')
         multiscales = group.attrs['multiscales'][0]
         axistypes = [axis['type'] for axis in multiscales['axes']]
         self.names = [axis['name'] for axis in multiscales['axes']]
@@ -120,6 +125,7 @@ class RemoteZarr(RemoteSource):
             #   whereas neuroglancer assumes it is its corner.
             vx = np.sqrt(np.sum(np.square(self.affine[:3, :3]), 0))
             self.affine[:3, -1] += 0.5 * self.affine[:3, :3] @ vx
+        print('done')
 
     @property
     def dimensions(self):

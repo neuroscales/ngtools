@@ -18,6 +18,7 @@ from .transforms import load_affine
 from .opener import remote_protocols
 from .parserapp import ParserApp
 from .utils import bcolors
+from .dandifs import RemoteDandiFileSystem
 
 
 _print = print
@@ -1064,6 +1065,17 @@ class LocalNeuroglancer:
     # ==================================================================
 
     def ensure_url(self, filename):
+        DANDIHINTS = (
+            'dandi://',
+            'DANDI:',
+            'https://identifiers.org/DANDI:',
+            'https://dandiarchive.org/',
+            'https://gui.dandiarchive.org/',
+            'https://api.dandiarchive.org/',
+        )
+        if filename.startswith(DANDIHINTS):
+            return RemoteDandiFileSystem().s3_url(filename)
+
         if not filename.startswith(remote_protocols()):
             filename = os.path.abspath(filename)
             while filename.endswith('/'):

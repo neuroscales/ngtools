@@ -176,7 +176,7 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         dandiset, asset = self.get_dandiset(path)
         if not isinstance(asset, RemoteAsset):
             asset = dandiset.get_asset_by_path(asset)
-        info = requests.request(url=asset.api_path_url, method='get').json()
+        info = requests.request(url=asset.api_url, method='get').json()
         url = ''
         for url in info['contentUrl']:
             if url.startswith('https://dandiarchive.s3.amazonaws.com'):
