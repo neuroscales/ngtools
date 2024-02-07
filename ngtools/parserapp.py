@@ -88,6 +88,7 @@ class ParserApp(argparse.ArgumentParser):
     def exit_console(self):
         """Save history"""
         if self.history_file and self.history_size:
+            readline.set_history_length(self.history_size)
             readline.write_history_file(self.history_file)
 
     def await_input(self):
@@ -106,7 +107,8 @@ class ParserApp(argparse.ArgumentParser):
             while True:
                 try:
                     # Query input
-                    args = input(f'{bcolors.fg.green}[{count}] {bcolors.endc}')
+                    counter = f'{bcolors.fg.green}[{count}] {bcolors.endc}'
+                    args = input(counter)
                     if not args.strip():
                         continue
                     count += 1

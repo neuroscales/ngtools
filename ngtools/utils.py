@@ -1,30 +1,40 @@
 class bcolors:
 
-    endc = '\033[0m'
-    bold = '\033[1m'
-    faint = '\033[2m'
-    underline = '\033[4m'
-    blink = '\033[5m'
+    # To add color in the input prompt, all delimiter must be wrapped
+    # in \001 \002. See:
+    # https://bugs.python.org/issue12972
+    # https://stackoverflow.com/questions/9468435/
+    RL_PROMPT_START_IGNORE = '\001'
+    RL_PROMPT_END_IGNORE = '\002'
+
+    # I should do this more programatically (only save the number, and
+    # generate the full string automatically)
+
+    endc = '\001\033[0m\002'
+    bold = '\001\033[1m\002'
+    faint = '\001\033[2m\002'
+    underline = '\001\033[4m\002'
+    blink = '\001\033[5m\002'
 
     class fg:
-        black = '\033[30m'
-        red = '\033[31m'
-        green = '\033[32m'
-        yellow = '\033[33m'
-        blue = '\033[34m'
-        magenta = '\033[35m'
-        cyan = '\033[36m'
-        white = '\033[37m'
+        black = '\001\033[30m\002'
+        red = '\001\033[31m\002'
+        green = '\001\033[32m\002'
+        yellow = '\001\033[33m\002'
+        blue = '\001\033[34m\002'
+        magenta = '\001\033[35m\002'
+        cyan = '\001\033[36m\002'
+        white = '\001\033[37m\002'
 
         class bright:
-            black = '\033[90m'
-            red = '\033[91m'
-            green = '\033[92m'
-            yellow = '\033[93m'
-            blue = '\033[94m'
-            magenta = '\033[95m'
-            cyan = '\033[96m'
-            white = '\033[97m'
+            black = '\001\033[90m\002'
+            red = '\001\033[91m\002'
+            green = '\001\033[92m\002'
+            yellow = '\001\033[93m\002'
+            blue = '\001\033[94m\002'
+            magenta = '\001\033[95m\002'
+            cyan = '\001\033[96m\002'
+            white = '\001\033[97m\002'
 
     class bg:
         black = '\033[40m'

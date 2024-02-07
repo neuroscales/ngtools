@@ -36,15 +36,15 @@ def action(needstate=False):
             args = list(args)
             if args and isinstance(args[0], argparse.Namespace):
                 if len(args) > 1:
-                    raise ValueError('Only one positional argument accepted '
-                                     'when an action is applied to an argparse '
-                                     'object')
+                    raise ValueError(
+                        'Only one positional argument accepted when an '
+                        'action is applied to an argparse object')
                 parsedargs = vars(args.pop(0))
                 parsedargs.update(kwargs)
                 parsedargs.pop('func', None)
                 kwargs = parsedargs
 
-            if needstate and 'state' not in kwargs:
+            if needstate and not kwargs.get('state', None):
                 with self.viewer.txn(overwrite=True) as state:
                     kwargs['state'] = state
                     result = func(self, *args, **kwargs)
@@ -125,6 +125,8 @@ class LocalNeuroglancer:
         F = dict(formatter_class=argparse.RawDescriptionHelpFormatter)
 
         def add_parser(cmd, *args, **kwargs):
+            # We define long descriptions in the _clihelp class at the
+            # end of this file.
             kwargs.setdefault('description', getattr(_clihelp, cmd, None))
             return parsers.add_parser(cmd, *args, **kwargs, **F)
 
@@ -154,7 +156,7 @@ class LocalNeuroglancer:
         unload = add_parser('unload', help='Unload a file')
         unload.set_defaults(func=self.unload)
         unload.add_argument(
-            dest='layer', nargs='+', help='Layer(s) to unload')
+            dest='layer', nargs='+', help='Name(s) of layer(s) to unload')
 
         # --------------------------------------------------------------
         #   TRANSFORM
@@ -166,7 +168,7 @@ class LocalNeuroglancer:
             help='Path to transform file or flattened transformation '
                  'matrix (row major)')
         transform.add_argument(
-            '--layer', nargs='+', help='Layer(s) to transform')
+            '--layer', nargs='+', help='Name(s) of layer(s) to transform')
         transform.add_argument(
             '--inv', action='store_true', default=False,
             help='Invert the transform before applying it')
@@ -1242,7 +1244,9 @@ A spatial transform (common to all files) can be applied to the loaded
 volume. The transform is specified with the {B}--transform{E} option, which
 can be a flattened affine matrix (row major) or the path to a transform file.
 Type {B}help transform{E} for more information.
-"""  # noqa: E122
+
+{B}Arguments{E}
+{B}----------{E}"""  # noqa: E122
 )
 
 _clihelp.unload = "Unload layers"
