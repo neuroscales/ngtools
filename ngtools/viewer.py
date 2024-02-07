@@ -11,7 +11,8 @@ from .fileserver import LocalFileServerInBackground
 from .volume import LocalSource, RemoteSource
 from .tracts import TractSource
 from .spaces import (
-    neurotransforms, letter2full, compose, to_square)
+    neurotransforms, letter2full, to_square, compose,
+    ensure_same_scaling, subtransform)
 from .shaders import shaders, colormaps, pretty_colormap_list
 from .transforms import load_affine
 from .opener import remote_protocols
@@ -22,26 +23,41 @@ from .utils import bcolors
 _print = print
 
 
-def action(func):
+def action(needstate=False):
     """
     Decorator for neuroglancer actions (that can be triggered  by argparse)
     """
-    def wrapper(self, *args, **kwargs):
-        args = list(args)
-        if args and isinstance(args[0], argparse.Namespace):
-            if len(args) > 1:
-                raise ValueError('Only one positional argument accepted '
-                                 'when an action is applied to an argparse '
-                                 'object')
-            parsedargs = vars(args.pop(0))
-            parsedargs.update(kwargs)
-            parsedargs.pop('func', None)
-            kwargs = parsedargs
-        result = func(self, *args, **kwargs)
-        self.redisplay()
-        return result
+    if callable(needstate):
+        return action()(needstate)
 
-    return wrapper
+    def decorator(func):
+
+        def wrapper(self, *args, **kwargs):
+            args = list(args)
+            if args and isinstance(args[0], argparse.Namespace):
+                if len(args) > 1:
+                    raise ValueError('Only one positional argument accepted '
+                                     'when an action is applied to an argparse '
+                                     'object')
+                parsedargs = vars(args.pop(0))
+                parsedargs.update(kwargs)
+                parsedargs.pop('func', None)
+                kwargs = parsedargs
+
+            if needstate and 'state' not in kwargs:
+                with self.viewer.txn(overwrite=True) as state:
+                    kwargs['state'] = state
+                    result = func(self, *args, **kwargs)
+                    self.redisplay(state=state)
+                return result
+            else:
+                result = func(self, *args, **kwargs)
+                self.redisplay(state=kwargs.get('state', None))
+                return result
+
+        return wrapper
+
+    return decorator
 
 
 def ensure_list(x):
@@ -177,10 +193,11 @@ class LocalNeuroglancer:
         display.add_argument(
             dest='dimensions', nargs='*', help='Dimensions to display')
         display.add_argument(
-            '--layer', help='Show in this layer\'s canonical space')
+            '--layer', default=None,
+            help='Show in this layer\'s canonical space')
         display.add_argument(
             '--world', dest='layer', action='store_const', const=self._WORLD,
-            help='Show in world space')
+            help='Show in world space', default=None)
 
         # --------------------------------------------------------------
         #   LAYOUT
@@ -291,8 +308,9 @@ class LocalNeuroglancer:
         print(os.getcwd())
         return os.getcwd()
 
-    @action
-    def load(self, filename, name=None, transform=None, **kwargs):
+    @action(needstate=True)
+    def load(self, filename, name=None, transform=None,
+             *, state=None, **kwargs):
         """
         Load file(s)
 
@@ -312,7 +330,7 @@ class LocalNeuroglancer:
             raise ValueError(
                 'The number of names should match the number of files')
         display_dimensions = self.display_dimensions
-        self.redisplay(None)
+        self.redisplay(None, state=state)
 
         onames = []
         for n, filename in enumerate(filenames):
@@ -389,15 +407,14 @@ class LocalNeuroglancer:
                     'protocol syntax.'
                 )
 
-            with self.viewer.txn() as state:
-                state.layers.append(name=name, layer=layer)
+            state.layers.append(name=name, layer=layer)
 
         if transform:
-            self.transform(transform, name=onames)
-        self.redisplay(display_dimensions)
+            self.transform(transform, name=onames, state=state)
+        self.redisplay(display_dimensions, state=state)
 
-    @action
-    def unload(self, layer=None):
+    @action(needstate=True)
+    def unload(self, layer=None, *, state=None):
         """
         Unload layers
 
@@ -406,17 +423,12 @@ class LocalNeuroglancer:
         layer : str or list[str]
             Layer(s) to unload
         """
-        layers = layer
-        if not layers:
-            with self.viewer.txn() as state:
-                layers = [layer.name for layer in state.layers]
-        layers = ensure_list(layers)
-        with self.viewer.txn() as state:
-            for name in layers:
-                del state.layers[name]
+        layers = layer or [layer.name for layer in state.layers]
+        for name in ensure_list(layers):
+            del state.layers[name]
 
-    @action
-    def display(self, dimensions=None, layer=None):
+    @action(needstate=True)
+    def display(self, dimensions=None, layer=None, *, state=None):
         """
         Change displayed dimensions.
 
@@ -440,6 +452,7 @@ class LocalNeuroglancer:
             If provided, display in this layer's canonical frame,
             instead of world space.
         """
+
         def getDimensions(source, _reentrant=False):
             if getattr(source, 'transform', None):
                 transform = source.transform
@@ -453,44 +466,65 @@ class LocalNeuroglancer:
             return None
 
         def getTransform(source):
+            transform = None
             if getattr(source, 'transform', None):
-                return source.transform
-            if not isinstance(source, ng.LocalVolume):
+                transform = source.transform
+            elif not isinstance(source, ng.LocalVolume):
                 mysource = RemoteSource.from_filename(source.url)
                 if getattr(mysource, 'transform', None):
-                    return mysource.transform
-            return None
+                    transform = mysource.transform
+            if transform and not transform.input_dimensions:
+                transform = ng.CoordinateSpaceTransform(
+                    matrix=transform.matrix,
+                    input_dimensions=getDimensions(source),
+                    output_dimensions=transform.output_dimensions,
+                )
+            if transform and transform.matrix is None:
+                matrix = np.eye(len(transform.output_dimensions.names))[:-1]
+                transform = ng.CoordinateSpaceTransform(
+                    matrix=matrix,
+                    input_dimensions=transform.input_dimensions,
+                    output_dimensions=transform.output_dimensions,
+                )
+            return transform
+
+        def lin2aff(x):
+            matrix = np.eye(len(x)+1)
+            matrix[:-1, :-1] = x
+            return matrix
 
         if layer is self._WORLD:
             # move to world axes
             if self.to_world is not None:
-                rot = np.eye(4)
-                rot[:-1, :-1] = self.to_world
-                self.transform(rot, _mode='')
+                self.transform(lin2aff(self.to_world), _mode='', state=state)
                 self.to_world = None
         elif layer is not None:
             # move to canonical axes
-            with self.viewer.txn() as state:
-                layer = state.layers[layer]
-                matrix = getTransform(layer.source[0]).matrix
-            # TODO select only spatial axes of matrix
+            layer = state.layers[layer]
+            transform = subtransform(getTransform(layer.source[0]), 'm')
+            transform = ensure_same_scaling(transform)
+            matrix = transform.matrix
             if matrix is None:
-                matrix = np.eye(4)[:-1]
-            matrix = matrix[:, :-1]
+                matrix = np.eye(len(transform.output_dimensions.names))
+            matrix = to_square(matrix)[:-1, :-1]
+            # remove scales and shears
             u, _, vh = np.linalg.svd(matrix)
             rot = u @ vh
-            orient = rot.round()
-            rot4 = np.eye(4)
-            rot4[:-1, :-1] = orient @ rot @ np.linalg.inv(orient)
-            self.transform(rot4.T, _mode='')
+            # preserve permutations and flips
+            orient = rot.round()  # may not work if exactly 45 deg rotation
+            assert np.allclose(orient @ orient.T, np.eye(len(orient)))
+            # orient, _, _ = np.linalg.svd(orient)
+            # rot2 = orient @ rot @ orient.T
+            # apply transform
+            rot = rot @ orient.T
+            self.transform(lin2aff(rot.T), _mode='', state=state)
             if self.to_world is None:
                 self.to_world = rot
             else:
-                print(self.to_world, rot)
                 self.to_world = self.to_world @ rot
 
         if not dimensions:
-            self.redisplay()
+            self.redisplay(state=state)
             return
 
         dimensions = ensure_list(dimensions)
@@ -511,8 +545,7 @@ class LocalNeuroglancer:
 
         def reorientUsingTransform(source):
             transform = getTransform(source)
-            idims = getDimensions(source)
-            matrix = transform.matrix
+            matrix = to_square(transform.matrix)
             if matrix is None:
                 matrix = np.eye(4)
             odims = transform.outputDimensions
@@ -521,8 +554,8 @@ class LocalNeuroglancer:
             if all(name in onames for name in names):
                 return False
             T0 = ng.CoordinateSpaceTransform(
-                matrix=matrix,
-                input_dimensions=idims,
+                matrix=matrix[:-1],
+                input_dimensions=getDimensions(source),
                 output_dimensions=odims,
             )
             T = neurotransforms[(onames, names)]
@@ -544,19 +577,18 @@ class LocalNeuroglancer:
             source.transform = compose(T, T0)
             return True
 
-        with self.viewer.txn() as state:
-            for layer in state.layers:
-                layer = layer.layer
-                if isinstance(layer, ng.ImageLayer):
-                    for source in layer.source:
-                        if getTransform(source):
-                            reorientUsingTransform(source)
-                        else:
-                            reorientUsingDimensions(source)
+        for layer in state.layers:
+            layer = layer.layer
+            if isinstance(layer, ng.ImageLayer):
+                for source in layer.source:
+                    if getTransform(source):
+                        reorientUsingTransform(source)
+                    else:
+                        reorientUsingDimensions(source)
 
-        self.redisplay()
+        self.redisplay(state=state)
 
-    def redisplay(self, *args):
+    def redisplay(self, *args, state=None):
         """
         Resets `displayDimensions` to its current value, or to a new value.
         This function does not transform the data accordingly. It only
@@ -566,14 +598,16 @@ class LocalNeuroglancer:
         ----------
         dimensions : None or list[str], optional
         """
+        if state is None:
+            with self.viewer.txn() as state:
+                return self.redisplay(*args, state=state)
         if args:
             self.display_dimensions = args[0]
-        with self.viewer.txn() as state:
-            state.displayDimensions = self.display_dimensions
+        state.displayDimensions = self.display_dimensions
 
-    @action
+    @action(needstate=True)
     def transform(self, transform, layer=None, inv=False,
-                  *, mov=None, fix=None, _mode='ras2ras'):
+                  *, mov=None, fix=None, _mode='ras2ras', state=None):
         """
         Apply an affine transform
 
@@ -600,7 +634,7 @@ class LocalNeuroglancer:
         if _mode == 'ras2ras':
             display_dimensions = self.display_dimensions
             to_world = self.to_world
-            self.display('ras', 'world')
+            self.display('ras', self._WORLD, state=state)
 
         # prepare transformation matrix
         transform = ensure_list(transform)
@@ -704,26 +738,25 @@ class LocalNeuroglancer:
             source.transform = compose(T1, T0)
             return True
 
-        with self.viewer.txn() as state:
-            for layer in state.layers:
-                if layer_names and layer.name not in layer_names:
-                    continue
-                layer = layer.layer
-                if isinstance(layer, ng.ImageLayer):
-                    for source in layer.source:
-                        if getTransform(source):
-                            composeTransform(source)
-                        else:
-                            applyTransform(source)
+        for layer in state.layers:
+            if layer_names and layer.name not in layer_names:
+                continue
+            layer = layer.layer
+            if isinstance(layer, ng.ImageLayer):
+                for source in layer.source:
+                    if getTransform(source):
+                        composeTransform(source)
+                    else:
+                        applyTransform(source)
 
         if _mode == 'ras2ras':
             if to_world is not None:
-                self.transform(to_world.T, _mode='')
+                self.transform(to_world.T, _mode='', state=state)
             self.to_world = to_world
-            self.display(display_dimensions)
+            self.display(display_dimensions, state=state)
 
-    @action
-    def shader(self, shader, layer=None):
+    @action(needstate=True)
+    def shader(self, shader, layer=None, *, state=None):
         """
         Apply a shader (that is, a colormap or lookup table)
 
@@ -742,15 +775,15 @@ class LocalNeuroglancer:
             shader = getattr(shaders, shader)
         elif hasattr(colormaps, shader):
             shader = shaders.colormap(shader)
-        with self.viewer.txn() as state:
-            for layer in state.layers:
-                if layer_names and layer.name not in layer_names:
-                    continue
-                layer = layer.layer
-                layer.shader = shader
+        for layer in state.layers:
+            if layer_names and layer.name not in layer_names:
+                continue
+            layer = layer.layer
+            layer.shader = shader
 
-    @action
-    def state(self, load=None, save=None, url=False, print=True):
+    @action(needstate=True)
+    def state(self, load=None, save=None, url=False, print=True,
+              *, state=None):
         """
         Print or save or load the viewer's JSON state
 
@@ -770,6 +803,7 @@ class LocalNeuroglancer:
         state : dict
             JSON state
         """
+        ngstate = state
         if load:
             if os.path.exists(load) or load.startswith(remote_protocols()):
                 with open(load) as f:
@@ -783,11 +817,9 @@ class LocalNeuroglancer:
                 state = json.loads(urlunquote(url))
             else:
                 state = json.loads(url)
-            with self.viewer.txn() as ngstate:
-                ngstate.set_state(state)
+            ngstate.set_state(state)
         else:
-            with self.viewer.txn() as ngstate:
-                state = ngstate.to_json()
+            state = ngstate.to_json()
 
         if save:
             with open(save, 'wb') as f:
@@ -802,9 +834,9 @@ class LocalNeuroglancer:
                 _print(json.dumps(state, indent=4))
         return state
 
-    @action
+    @action(needstate=True)
     def layout(self, layout=None, stack=None, layer=None, *,
-               flex=1, append=None, insert=None, remove=None):
+               flex=1, append=None, insert=None, remove=None, state=None):
         """
         Change layout.
 
@@ -844,16 +876,14 @@ class LocalNeuroglancer:
             Current JSON layout
         """  # noqa: E501
         if not layout and (remove is None):
-            with self.viewer.txn() as state:
-                print(state.layout)
-                return state.layout
+            print(state.layout)
+            return state.layout
 
         layout = ensure_list(layout or [])
 
         layer = ensure_list(layer or [])
         if (len(layout) > 1 or stack) and not layer:
-            with self.viewer.txn() as state:
-                layer = [_.name for _ in state.layers]
+            layer = [_.name for _ in state.layers]
 
         if layer:
             layout = [ng.LayerGroupViewer(
@@ -896,34 +926,33 @@ class LocalNeuroglancer:
         if layout and remove:
             raise ValueError('Do not set `layout` and `remove`')
 
-        with self.viewer.txn() as state:
-            if append or (insert is not False) or (remove is not False):
-                parent = state.layout
-                while indices:
-                    parent = layout.children[indices.pop(0)]
-                if layout and not isinstance(layout, ng.LayerGroupViewer):
-                    if not layer:
-                        if len(parent.children):
-                            layer = [L for L in parent.children[-1].layers]
-                        else:
-                            layer = [_.name for _ in state.layers]
-                    layout = ng.LayerGroupViewer(
-                        layers=layer,
-                        layout=layout,
-                        flex=flex,
-                    )
-                if append:
-                    parent.children.append(layout)
-                elif insert:
-                    parent.children.insert(insert, layout)
-                elif remove:
-                    del parent.children[remove]
-            else:
-                state.layout = layout
-            return state.layout
+        if append or (insert is not False) or (remove is not False):
+            parent = state.layout
+            while indices:
+                parent = layout.children[indices.pop(0)]
+            if layout and not isinstance(layout, ng.LayerGroupViewer):
+                if not layer:
+                    if len(parent.children):
+                        layer = [L for L in parent.children[-1].layers]
+                    else:
+                        layer = [_.name for _ in state.layers]
+                layout = ng.LayerGroupViewer(
+                    layers=layer,
+                    layout=layout,
+                    flex=flex,
+                )
+            if append:
+                parent.children.append(layout)
+            elif insert:
+                parent.children.insert(insert, layout)
+            elif remove:
+                del parent.children[remove]
+        else:
+            state.layout = layout
+        return state.layout
 
-    @action
-    def zorder(self, layer, steps=None, **kwargs):
+    @action(needstate=True)
+    def zorder(self, layer, steps=None, *, state=None, **kwargs):
         """
         Move or reorder layers.
 
@@ -953,35 +982,31 @@ class LocalNeuroglancer:
             steps -= down
 
         names = ensure_list(layer)
-        print(names, steps)
-        with self.viewer.txn() as state:
-            if steps is None:
-                # permutation
-                names += list(reversed([layer.name for layer in state.layers
-                                        if layer.name not in names]))
-                layers = {layer.name: layer.layer for layer in state.layers}
-                for name in names:
-                    del state.layers[name]
-                print(list(reversed(names)))
-                for name in reversed(names):
-                    state.layers[name] = layers[name]
-            elif steps == 0:
-                return
-            else:
-                # move up/down
-                layers = {layer.name: layer.layer for layer in state.layers}
-                indices = {name: n for n, name in enumerate(layers)}
-                for name in layers.keys():
-                    indices[name] += steps * (1 if name in names else -1)
-                layers = {
-                    name: layers[name]
-                    for name in sorted(layers.keys(), key=lambda x: indices[x])
-                }
-                for name in layers.keys():
-                    del state.layers[name]
-                print(list(layers.keys()))
-                for name, layer in layers.items():
-                    state.layers[name] = layer
+        if steps is None:
+            # permutation
+            names += list(reversed([layer.name for layer in state.layers
+                                    if layer.name not in names]))
+            layers = {layer.name: layer.layer for layer in state.layers}
+            for name in names:
+                del state.layers[name]
+            for name in reversed(names):
+                state.layers[name] = layers[name]
+        elif steps == 0:
+            return
+        else:
+            # move up/down
+            layers = {layer.name: layer.layer for layer in state.layers}
+            indices = {name: n for n, name in enumerate(layers)}
+            for name in layers.keys():
+                indices[name] += steps * (1 if name in names else -1)
+            layers = {
+                name: layers[name]
+                for name in sorted(layers.keys(), key=lambda x: indices[x])
+            }
+            for name in layers.keys():
+                del state.layers[name]
+            for name, layer in layers.items():
+                state.layers[name] = layer
 
     @action
     def help(self, action=None):

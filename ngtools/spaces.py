@@ -1,6 +1,60 @@
+"""
+Utilities to manipulate spaces (`ng.CoordinateSpace`) and spatial
+transforms (`ng.CoordinateSpaceTransform`) in neuroglancer.
+
+Functions
+---------
+compose
+    Compose two `ng.CoordinateSpaceTransform`.
+convert
+    Convert the units of a transform, while keeping the tranform equivalent.
+ensure_same_scaling
+    Convert the units of a transform, so that all axes have the same
+    unit and scale, while keeping the tranform equivalent
+subtransform
+    Keep only axes whose units are of a given kind
+to_square
+    Ensure that an affine matrix is square (with its homogeneous row).
+split_unit
+    Split the prefix and unit type of a neuroglancer unit.
+
+Attributes
+----------
+neuronames : list[str]
+    List of all existing neuroimaging orientations (RAS, LPI, etc).
+neurospaces : dict[str, ng.CoordinateSpace]
+    Mapping to all known neuroimaging-oriented spaced (RAS, LPI, etc),
+    as well as all neuroglancer standard spaces (xyz, zyx, etc).
+neurotransforms : dict((str, str), ng.CoordinateSpaceTransform)
+    Mapping to transforms between neuroimaging spaces.
+    The keys are either pairs of `str`, or pairs of `ng.CoordinateSpace`
+    instances from the `neurospaces` dictionnary.
+letter2full : dict[str, str]
+    A mapping from single letter neuroaxis name (e.g. `"r"`) to full
+    neuroaxis name (e.g. `"right"`)
+si_units : list[str]
+    Neuroglancer unit types.
+si_prefixes : dict[str, int]
+    Mapping from neuroglancer unit prefix to the corresponding
+    base 10 exponent.
+"""
+__all__ = [
+    'to_square',
+    'split_unit',
+    'si_prefixes',
+    'si_units',
+    'neuronames',
+    'neurospaces',
+    'neurotransforms',
+    'compose',
+    'convert',
+    'ensure_same_scaling',
+    'subtransform',
+]
 import neuroglancer as ng
 import numpy as np
 import itertools
+import math
 
 
 def to_square(affine):
@@ -350,7 +404,7 @@ def convert(transform, unit, scale=None, name=None, space='input+output'):
                     f'Incompatible units: "{dunit}" and "{new_unit}"')
             relprefix = si_prefixes[dprefix] - si_prefixes[new_prefix]
             new_scle = dscle * 10**relprefix
-            if convert_scles[i] is not None:
+            if convert_scles[j] is not None:
                 matrix[:, i] *= new_scle / convert_scles[j]
                 new_scle = convert_scles[j]
             new_scles.append(new_scle)
@@ -369,6 +423,85 @@ def convert(transform, unit, scale=None, name=None, space='input+output'):
 
     new_transform.matrix = matrix
     return new_transform
+
+
+def ensure_same_scaling(transform):
+    """
+    Ensure that all axes and both input and output spaces use the same
+    unit and the same scaling.
+    """
+    unitmap = {}
+    scalemap = {}
+
+    # find all scales and prefixes in the input/output spaces
+    for dimensions in (transform.outputDimensions, transform.inputDimensions):
+        for unit, scale in zip(dimensions.units, dimensions.scales):
+            prefix, unit = split_unit(unit)
+            logprefix = si_prefixes[prefix]
+            logprefix += int(round(math.log10(scale)))
+            unitmap.setdefault(unit, [])
+            unitmap[unit].append(logprefix)
+
+    # choose the unit and scale that are closest/most common
+    for unit, logprefixes in dict(unitmap).items():
+        logprefix, count = None, 0
+        for p in set(logprefixes):
+            if logprefixes.count(p) > count:
+                logprefix = p
+        prefix, dist = None, float('inf')
+        for p, logp in si_prefixes.items():
+            if abs(logprefix - logp) < abs(dist):
+                dist = logprefix - logp
+                prefix = p
+        unitmap[unit] = prefix + unit
+        scalemap[unit] = 10 ** dist
+
+    # convert the transform
+    for unit in unitmap.keys():
+        transform = convert(transform, unitmap[unit], scalemap[unit])
+    return transform
+
+
+def subtransform(transform, unit):
+    """
+    Generate a subtransform by keeping only axes whose unit os of kind `unit`
+    """
+    kind = split_unit(unit)[1]
+    idim = transform.input_dimensions
+    odim = transform.output_dimensions
+    matrix = transform.matrix
+    if matrix is None:
+        matrix = np.eye(len(idim.names))[:-1]
+    # filter input axes
+    ikeep = []
+    for i, unit in enumerate(idim.units):
+        unit = split_unit(unit)[1]
+        if unit == kind:
+            ikeep.append(i)
+    idim = ng.CoordinateSpace(
+        names=[idim.names[i] for i in ikeep],
+        scales=[idim.scales[i] for i in ikeep],
+        units=[idim.units[i] for i in ikeep],
+    )
+    matrix = matrix[:, ikeep + [-1]]
+    # filter output axes
+    okeep = []
+    for i, unit in enumerate(odim.units):
+        unit = split_unit(unit)[1]
+        if unit == kind:
+            okeep.append(i)
+    odim = ng.CoordinateSpace(
+        names=[odim.names[i] for i in okeep],
+        scales=[odim.scales[i] for i in okeep],
+        units=[odim.units[i] for i in okeep],
+    )
+    matrix = matrix[okeep, :]
+
+    return ng.CoordinateSpaceTransform(
+        matrix=matrix,
+        input_dimensions=idim,
+        output_dimensions=odim,
+    )
 
 
 def ensure_list(x, n=None, **kwargs):
