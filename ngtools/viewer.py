@@ -903,7 +903,7 @@ class LocalNeuroglancer:
             layout = ng.StackLayout(
                 type=stack,
                 children=layout,
-                # flex=flex,
+                flex=flex,
             )
 
         indices = []
