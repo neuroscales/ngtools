@@ -1,4 +1,5 @@
 import os
+import sys
 import socket
 from multiprocessing import Process
 from wsgiref.simple_server import make_server
@@ -38,11 +39,14 @@ class LocalFileServer:
             port = s.getsockname()[1]
             s.close()
         except OSError:
+            port0 = port
             s = socket.socket()
             s.bind((ip, 0))
             ip = s.getsockname()[0]
             port = s.getsockname()[1]
             s.close()
+            print(f'Port {port0} already in use. Use port {port} instead.',
+                  file=sys.stderr)
 
         self.port = port
         self.ip = ip
@@ -182,11 +186,14 @@ class LocalFileServerInBackground:
             port = s.getsockname()[1]
             s.close()
         except OSError:
+            port0 = port
             s = socket.socket()
             s.bind((ip, 0))
             ip = s.getsockname()[0]
             port = s.getsockname()[1]
             s.close()
+            print(f'Port {port0} already in use. Use port {port} instead.',
+                  file=sys.stderr)
 
         self.port = port
         self.ip = ip

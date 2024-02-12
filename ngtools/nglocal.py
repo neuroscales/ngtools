@@ -29,7 +29,6 @@ def cli(args=None):
     if not args.no_fileserver:
         fileserver = LocalFileServerInBackground(
             port=args.port_fileserver, ip=args.ip, interrupt=EOFError)
-        print('fileserver:  ', f'http://{fileserver.ip}:{fileserver.port}/')
     else:
         fileserver = False
 
@@ -37,6 +36,9 @@ def cli(args=None):
     neuroglancer = LocalNeuroglancer(
         port=args.port_viewer, ip=args.ip, token=args.token,
         fileserver=fileserver, debug=args.debug)
+
+    if neuroglancer.fileserver:
+        print('fileserver:  ', f'http://{fileserver.ip}:{fileserver.port}/')
     print('neuroglancer:', neuroglancer.viewer.get_viewer_url())
 
     if not args.no_window:

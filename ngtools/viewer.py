@@ -103,11 +103,14 @@ class LocalNeuroglancer:
             port = s.getsockname()[1]
             s.close()
         except OSError:
+            port0 = port
             s = socket.socket()
             s.bind((ip, 0))
             ip = s.getsockname()[0]
             port = s.getsockname()[1]
             s.close()
+            print(f'Port {port0} already in use. Use port {port} instead.',
+                  file=sys.stderr)
 
         global_server_args['bind_address'] = str(ip)
         global_server_args['bind_port'] = str(port)
