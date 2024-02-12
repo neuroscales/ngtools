@@ -516,8 +516,6 @@ class LocalNeuroglancer:
             # preserve permutations and flips
             orient = rot.round()  # may not work if exactly 45 deg rotation
             assert np.allclose(orient @ orient.T, np.eye(len(orient)))
-            # orient, _, _ = np.linalg.svd(orient)
-            # rot2 = orient @ rot @ orient.T
             # apply transform
             rot = rot @ orient.T
             self.transform(lin2aff(rot.T), _mode='', state=state)
@@ -710,12 +708,11 @@ class LocalNeuroglancer:
                 output_dimensions=odims,
             )
             if _mode != 'ras2ras':
-                # TODO: deal with nonspatial dimensions
-                T1 = ng.CoordinateSpaceTransform(
-                    matrix=matrix1,
+                T1 = subtransform(ng.CoordinateSpaceTransform(
                     input_dimensions=odims,
                     output_dimensions=odims,
-                )
+                ), unit='m')
+                T1.matrix = matrix1
             else:
                 T1 = T
             source.transform = compose(T1, T0)
