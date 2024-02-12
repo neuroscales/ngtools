@@ -471,7 +471,7 @@ def subtransform(transform, unit):
     odim = transform.output_dimensions
     matrix = transform.matrix
     if matrix is None:
-        matrix = np.eye(len(idim.names))[:-1]
+        matrix = np.eye(len(idim.names)+1)[:-1]
     # filter input axes
     ikeep = []
     for i, unit in enumerate(idim.units):
