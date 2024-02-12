@@ -1,4 +1,5 @@
 import os
+import socket
 from multiprocessing import Process
 from wsgiref.simple_server import make_server
 from wsgiref.simple_server import WSGIRequestHandler
@@ -16,7 +17,7 @@ class LocalFileServer:
     All paths should be absolute!
     """
 
-    def __init__(self, port=9123, ip='127.0.01', interrupt=True):
+    def __init__(self, port=0, ip='', interrupt=True):
         """
         Parameters
         ----------
@@ -29,6 +30,20 @@ class LocalFileServer:
             If instanrtiated inside a background process, useful to set
             to False so that the exception is handled in the main thread.
         """
+
+        try:
+            s = socket.socket()
+            s.bind((ip, port))
+            ip = s.getsockname()[0]
+            port = s.getsockname()[1]
+            s.close()
+        except OSError:
+            s = socket.socket()
+            s.bind((ip, 0))
+            ip = s.getsockname()[0]
+            port = s.getsockname()[1]
+            s.close()
+
         self.port = port
         self.ip = ip
 
@@ -147,7 +162,7 @@ class LocalFileServerInBackground:
     A fileserver that runs in a background process
     """
 
-    def __init__(self, port=9123, ip='127.0.01', interrupt=False):
+    def __init__(self, port=0, ip='', interrupt=False):
         """
         Parameters
         ----------
@@ -160,6 +175,19 @@ class LocalFileServerInBackground:
             If any other exception happens, the fileserver is restarted.
             If True, interupt on KeyboardInterrupt.
         """
+        try:
+            s = socket.socket()
+            s.bind((ip, port))
+            ip = s.getsockname()[0]
+            port = s.getsockname()[1]
+            s.close()
+        except OSError:
+            s = socket.socket()
+            s.bind((ip, 0))
+            ip = s.getsockname()[0]
+            port = s.getsockname()[1]
+            s.close()
+
         self.port = port
         self.ip = ip
         self.process = None

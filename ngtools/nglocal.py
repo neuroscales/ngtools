@@ -12,17 +12,21 @@ def cli(args=None):
     args = args or sys.argv[1:]
 
     parser = argparse.ArgumentParser('Run a local neuroglancer')
-    parser.add_argument('--ip', default='127.0.0.1')
-    parser.add_argument('--port-fileserver', type=int, default=9123)
-    parser.add_argument('--port-viewer', type=int, default=9321)
     parser.add_argument('--token', type=str, default='1')
+    parser.add_argument('--ip', default='127.0.0.1')
+    parser.add_argument('--port-viewer', type=int, default=9321)
+    parser.add_argument('--port-fileserver', type=int, default=9123)
+    parser.add_argument('--no-fileserver', action='store_true', default=False)
     parser.add_argument('--no-window', action='store_true', default=False)
     parser.add_argument('--debug', action='store_true', default=False)
     parser.add_argument(nargs='*', dest='filenames', help='Files to load')
     args = parser.parse_args(args)
 
+    if args.ip == 'auto':
+        args.ip = ''
+
     # instantiate file server
-    if args.port_fileserver != 0:
+    if not args.no_fileserver:
         fileserver = LocalFileServerInBackground(
             port=args.port_fileserver, ip=args.ip, interrupt=EOFError)
         print('fileserver:  ', f'http://{fileserver.ip}:{fileserver.port}/')
@@ -31,8 +35,8 @@ def cli(args=None):
 
     # instantiate neuroglancer
     neuroglancer = LocalNeuroglancer(
-        port=args.port_viewer, token=args.token, fileserver=fileserver,
-        debug=args.debug)
+        port=args.port_viewer, ip=args.ip, token=args.token,
+        fileserver=fileserver, debug=args.debug)
     print('neuroglancer:', neuroglancer.viewer.get_viewer_url())
 
     if not args.no_window:

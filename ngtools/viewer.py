@@ -1,5 +1,6 @@
 import sys
 import json
+import socket
 import os.path
 import argparse
 import textwrap
@@ -49,11 +50,9 @@ def action(needstate=False):
                 with self.viewer.txn(overwrite=True) as state:
                     kwargs['state'] = state
                     result = func(self, *args, **kwargs)
-                    self.redisplay(state=state)
                 return result
             else:
                 result = func(self, *args, **kwargs)
-                self.redisplay(state=kwargs.get('state', None))
                 return result
 
         return wrapper
@@ -77,7 +76,7 @@ class LocalNeuroglancer:
     unloading, applying transforms, etc.
     """
 
-    def __init__(self, port=9321, token=1, fileserver=True, debug=False):
+    def __init__(self, port=0, ip='', token=1, fileserver=True, debug=False):
         """
         Parameters
         ----------
@@ -96,12 +95,25 @@ class LocalNeuroglancer:
         self.fileserver = fileserver
         if self.fileserver:
             self.fileserver.start_and_serve_forever()
-        self.port = port
+
+        try:
+            s = socket.socket()
+            s.bind((ip, port))
+            ip = s.getsockname()[0]
+            port = s.getsockname()[1]
+            s.close()
+        except OSError:
+            s = socket.socket()
+            s.bind((ip, 0))
+            ip = s.getsockname()[0]
+            port = s.getsockname()[1]
+            s.close()
+
+        global_server_args['bind_address'] = str(ip)
         global_server_args['bind_port'] = str(port)
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
         self.parser = self._make_parser(debug)
-        self.display_dimensions = ['x', 'y', 'z']
         self.to_world = None
 
     _WORLD = object()
@@ -117,8 +129,8 @@ class LocalNeuroglancer:
         try:
             return self.parser.await_input()
         except SystemExit:
-            # cleanup the fileserver process
-            del self.fileserver
+            # exit gracefully (cleanup the fileserver process, etc)
+            self.exit()
 
     def _make_parser(self, debug=False):
         mainparser = ParserApp('', debug=debug)
@@ -332,7 +344,7 @@ class LocalNeuroglancer:
         if names and len(filenames) != len(names):
             raise ValueError(
                 'The number of names should match the number of files')
-        display_dimensions = self.display_dimensions
+        display_dimensions = state.display_dimensions
         self.redisplay(None, state=state)
 
         onames = []
@@ -525,7 +537,6 @@ class LocalNeuroglancer:
                 self.to_world = self.to_world @ rot
 
         if not dimensions:
-            self.redisplay(state=state)
             return
 
         dimensions = ensure_list(dimensions)
@@ -535,14 +546,14 @@ class LocalNeuroglancer:
             raise ValueError('display takes three axis names')
         dimensions = [letter2full.get(letter.lower(), letter)
                       for letter in dimensions]
-        self.display_dimensions = dimensions
+        display_dimensions = dimensions
 
         def compactNames(names):
             names = list(map(lambda x: x[0].lower(), names))
             names = ''.join([d for d in names if d not in 'ct'])
             return names
 
-        names = compactNames(self.display_dimensions)
+        names = compactNames(display_dimensions)
 
         def reorientUsingTransform(source):
             transform = getTransform(source)
@@ -587,9 +598,9 @@ class LocalNeuroglancer:
                     else:
                         reorientUsingDimensions(source)
 
-        self.redisplay(state=state)
+        self.redisplay(display_dimensions, state=state)
 
-    def redisplay(self, *args, state=None):
+    def redisplay(self, display_dimensions, state=None):
         """
         Resets `displayDimensions` to its current value, or to a new value.
         This function does not transform the data accordingly. It only
@@ -601,10 +612,8 @@ class LocalNeuroglancer:
         """
         if state is None:
             with self.viewer.txn() as state:
-                return self.redisplay(*args, state=state)
-        if args:
-            self.display_dimensions = args[0]
-        state.displayDimensions = self.display_dimensions
+                return self.redisplay(display_dimensions, state=state)
+        state.displayDimensions = display_dimensions
 
     @action(needstate=True)
     def transform(self, transform, layer=None, inv=False,
@@ -633,7 +642,7 @@ class LocalNeuroglancer:
             layer_names = [layer_names]
 
         if _mode == 'ras2ras':
-            display_dimensions = self.display_dimensions
+            display_dimensions = state.display_dimensions
             to_world = self.to_world
             self.display('ras', self._WORLD, state=state)
 
@@ -1026,7 +1035,8 @@ class LocalNeuroglancer:
     @action
     def exit(self):
         """Exit gracefully"""
-        del self.fileserver
+        if hasattr(self, 'fileserver'):
+            del self.fileserver
         sys.exit()
 
     # ==================================================================
@@ -1238,6 +1248,16 @@ Each path or url may be prepended by:
 All of these protocols are optional. If absent, a guess is made using the
 file extension.
 
+{B}Examples{E}
+{B}--------{E}
+
+- Absolute path to local file:  {B}/absolute/path/to/mri.nii.gz{E}
+- Relative path to local file:  {B}relative/path/to/mri.nii.gz{E}
+- Local file with format hint:  {B}mgh://relative/path/to/linkwithoutextension{E}
+- Remote file:                  {B}https://url.to/mri.nii.gz{E}
+- Remote file with format hint: {B}zarr://https://url.to/filewithoutextension{E}
+- File on dandiarchive:         {B}dandi://dandi/<dandiset>/sub-<id>/path/to/file.ome.zarr{E}
+
 {B}Layer names{E}
 {B}-----------{E}
 Neuroglancer layers are named. The name of the layer can be specified with
@@ -1255,7 +1275,7 @@ can be a flattened affine matrix (row major) or the path to a transform file.
 Type {B}help transform{E} for more information.
 
 {B}Arguments{E}
-{B}----------{E}"""  # noqa: E122
+{B}----------{E}"""  # noqa: E122, E501
 )
 
 _clihelp.unload = "Unload layers"

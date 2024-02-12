@@ -102,14 +102,18 @@ class ParserApp(argparse.ArgumentParser):
             f'current command and {bcolors.bold}Ctrl+D{bcolors.endc} to '
             f'exit the app.'
         )
+
+        def green(s):
+            return '\001' + bcolors.fg.green + str(s) + bcolors.endc + '\002'
+
         count = 1
         try:
             while True:
                 try:
                     # Query input
-                    counter = f'{bcolors.fg.green}[{count}] {bcolors.endc}'
-                    args = input(counter)
+                    args = input(green(f'[{count}] '))
                     if not args.strip():
+                        print('')
                         continue
                     count += 1
                 except KeyboardInterrupt:
