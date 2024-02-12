@@ -348,6 +348,8 @@ class LocalNeuroglancer:
             raise ValueError(
                 'The number of names should match the number of files')
         display_dimensions = state.display_dimensions
+        if display_dimensions:
+            display_dimensions = list(map(str, display_dimensions))
         self.redisplay(None, state=state)
 
         onames = []
@@ -739,12 +741,11 @@ class LocalNeuroglancer:
                 output_dimensions=idims,
             )
             if _mode != 'ras2ras':
-                # TODO: deal with nonspatial dimensions
-                T1 = ng.CoordinateSpaceTransform(
+                T1 = subtransform(ng.CoordinateSpaceTransform(
                     matrix=matrix1,
                     input_dimensions=idims,
                     output_dimensions=idims,
-                )
+                ), unit='m')
             else:
                 T1 = T
             source.transform = compose(T1, T0)
