@@ -17,7 +17,7 @@ from .spaces import (
 from .shaders import shaders, colormaps, pretty_colormap_list
 from .transforms import load_affine
 from .opener import remote_protocols
-from .parserapp import ParserApp
+from .parserapp import ParserApp, _fixhelpformatter
 from .utils import bcolors
 from .dandifs import RemoteDandiFileSystem
 
@@ -138,7 +138,8 @@ class LocalNeuroglancer:
     def _make_parser(self, debug=False):
         mainparser = ParserApp('', debug=debug)
         parsers = mainparser.add_subparsers()
-        F = dict(formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter = _fixhelpformatter(argparse.RawDescriptionHelpFormatter)
+        F = dict(formatter_class=formatter)
 
         def add_parser(cmd, *args, **kwargs):
             # We define long descriptions in the _clihelp class at the
@@ -160,7 +161,8 @@ class LocalNeuroglancer:
         load = add_parser('load', help='Load a file')
         load.set_defaults(func=self.load)
         load.add_argument(
-            dest='filename', nargs='+', help='Filename(s) with protocols')
+            dest='filename', nargs='+', help='Filename(s) with protocols',
+            metavar='FILENAME')
         load.add_argument(
             '--name', nargs='+', help='A name for the image layer')
         load.add_argument(
@@ -180,7 +182,7 @@ class LocalNeuroglancer:
         transform = add_parser('transform', help='Apply a transform')
         transform.set_defaults(func=self.transform)
         transform.add_argument(
-            dest='transform', nargs='+',
+            dest='transform', nargs='+', metavar='TRANSFORM',
             help='Path to transform file or flattened transformation '
                  'matrix (row major)')
         transform.add_argument(
@@ -199,7 +201,8 @@ class LocalNeuroglancer:
         shader = add_parser('shader', help='Apply a shader')
         shader.set_defaults(func=self.shader)
         shader.add_argument(
-            dest='shader', help='Shader name or GLSL shader code')
+            dest='shader', metavar='SHADER',
+            help='Shader name or GLSL shader code')
         shader.add_argument(
             '--layer', nargs='+', help='Layer(s) to apply shader to')
 
@@ -209,7 +212,8 @@ class LocalNeuroglancer:
         display = add_parser('display', help='Dimensions to display')
         display.set_defaults(func=self.display)
         display.add_argument(
-            dest='dimensions', nargs='*', help='Dimensions to display')
+            dest='dimensions', nargs='*', metavar='DIMENSIONS',
+            help='Dimensions to display')
         display.add_argument(
             '--layer', default=None,
             help='Show in this layer\'s canonical space')
@@ -224,7 +228,8 @@ class LocalNeuroglancer:
         layout = add_parser('layout', help='Layout')
         layout.set_defaults(func=self.layout)
         layout.add_argument(
-            dest='layout', nargs='*', choices=LAYOUTS, help='Layout')
+            dest='layout', nargs='*', choices=LAYOUTS, metavar='LAYOUT',
+            help='Layout')
         layout.add_argument(
             '--stack', choices=("row", "column"), help="Stack direction"
         )
@@ -272,7 +277,8 @@ class LocalNeuroglancer:
         zorder = add_parser('zorder', help='Reorder layers')
         zorder.set_defaults(func=self.zorder)
         zorder.add_argument(
-            dest='layer', nargs='+', help='Layer(s) name(s)')
+            dest='layer', nargs='+', metavar='LAYER',
+            help='Layer(s) name(s)')
         zorder.add_argument(
             '--up', '-u', '-^', action='count', default=0,
             help='Move upwards')
@@ -285,11 +291,11 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         cd = add_parser('cd', help='Change directory')
         cd.set_defaults(func=self.cd)
-        cd.add_argument(dest='path')
+        cd.add_argument(dest='path', metavar='PATH')
 
         ls = add_parser('ls', help='List files')
         ls.set_defaults(func=self.ls)
-        ls.add_argument(dest='path', nargs='?', default='.')
+        ls.add_argument(dest='path', nargs='?', default='.', metavar='PATH')
 
         pwd = add_parser('pwd', help='Path to working directory')
         pwd.set_defaults(func=self.pwd)
