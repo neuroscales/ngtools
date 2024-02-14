@@ -8,12 +8,13 @@ import numpy as np
 import neuroglancer as ng
 from urllib.parse import urlparse, unquote as urlunquote, quote as urlquote
 from neuroglancer.server import global_server_args
+from typing import Sequence
 from .fileserver import LocalFileServerInBackground
 from .volume import LocalSource, RemoteSource
 from .tracts import TractSource
 from .spaces import (
     neurotransforms, letter2full, to_square, compose,
-    ensure_same_scaling, subtransform)
+    ensure_same_scaling, subtransform, si_convert, compact2full)
 from .shaders import shaders, colormaps, pretty_colormap_list
 from .transforms import load_affine
 from .opener import remote_protocols
@@ -161,8 +162,8 @@ class LocalNeuroglancer:
         load = add_parser('load', help='Load a file')
         load.set_defaults(func=self.load)
         load.add_argument(
-            dest='filename', nargs='+', help='Filename(s) with protocols',
-            metavar='FILENAME')
+            dest='filename', nargs='+', metavar='FILENAME',
+            help='Filename(s) with protocols')
         load.add_argument(
             '--name', nargs='+', help='A name for the image layer')
         load.add_argument(
@@ -174,7 +175,18 @@ class LocalNeuroglancer:
         unload = add_parser('unload', help='Unload a file')
         unload.set_defaults(func=self.unload)
         unload.add_argument(
-            dest='layer', nargs='+', help='Name(s) of layer(s) to unload')
+            dest='layer', nargs='+', metavar='LAYER',
+            help='Name(s) of layer(s) to unload')
+
+        # --------------------------------------------------------------
+        #   RENAME
+        # --------------------------------------------------------------
+        rename = add_parser('rename', help='Unload a file')
+        rename.set_defaults(func=self.rename)
+        rename.add_argument(
+            dest='src', metavar='SOURCE', help='Current layer name')
+        rename.add_argument(
+            dest='dst', metavar='DEST', help='New layer name')
 
         # --------------------------------------------------------------
         #   TRANSFORM
@@ -231,26 +243,20 @@ class LocalNeuroglancer:
             dest='layout', nargs='*', choices=LAYOUTS, metavar='LAYOUT',
             help='Layout')
         layout.add_argument(
-            '--stack', choices=("row", "column"), help="Stack direction"
-        )
+            '--stack', choices=("row", "column"), help="Stack direction" )
         layout.add_argument(
-            '--layer', nargs='*', help="Layer(s) to include"
-        )
+            '--layer', nargs='*', help="Layer(s) to include")
         layout.add_argument(
-            '--flex', type=float, default=1, help="Flex"
-        )
+            '--flex', type=float, default=1, help="Flex")
         layout.add_argument(
             '--append', type=int, nargs='*',
-            help="Append to existing (nested) layout"
-        )
+            help="Append to existing (nested) layout")
         layout.add_argument(
             '--insert', type=int, nargs='+',
-            help="Insert in existing (nested) layout"
-        )
+            help="Insert in existing (nested) layout")
         layout.add_argument(
             '--remove', type=int, nargs='+',
-            help="Remove from an existing (nested) layout"
-        )
+            help="Remove from an existing (nested) layout")
 
         # --------------------------------------------------------------
         #   STATE
@@ -261,15 +267,48 @@ class LocalNeuroglancer:
             '--no-print', action='store_false', default=True, dest='print',
             help='Do not print the state.')
         state.add_argument(
-            '--save', help='Save JSON state to this file.'
-        )
+            '--save', help='Save JSON state to this file.')
         state.add_argument(
             '--load', help='Load JSON state from this file. '
-                           'Can also be a JSON string or a URL.'
-        )
+                           'Can also be a JSON string or a URL.')
         state.add_argument(
             '--url', action='store_true', default=False,
             help='Load (or print) the url form of the state')
+
+        # --------------------------------------------------------------
+        #   POSITION
+        # --------------------------------------------------------------
+        # FIXME: comment out until fixed
+        # def _add_common_args(parser):
+        #     parser.add_argument(
+        #         '--dimensions', '-d', nargs='+', default=None,
+        #         help='Axis name for each coordinate (can be compact)')
+        #     parser.add_argument(
+        #         '--world', '-w', action='store_true', default=False,
+        #         help='Coordinates are expressed in the world frame')
+        #     parser.add_argument(
+        #         '--layer', '-l', nargs='*', default=None,
+        #         help='Coordinates are expressed in this frame')
+        #     parser.add_argument(
+        #         '--unit', '-u', help='Coordinates are expressed in this unit')
+        #     parser.add_argument(
+        #         '--reset', action='store_true', default=False,
+        #         help='Reset coordinates to zero')
+
+        # position = add_parser('position', help='Move cursor')
+        # position.set_defaults(func=self.position)
+        # position.add_argument(
+        #     dest='coord', nargs='*', metavar='COORD', type=float,
+        #     help='Cursor coordinates. If None, print current one.')
+        # _add_common_args(position)
+
+        # orient = add_parser(
+        #     'orient', help='Reorient the cross-section')
+        # orient.set_defaults(func=self.orient)
+        # orient.add_argument(
+        #     '--normal', nargs='*', type=float,
+        #     help='Normal vector of the cross-section plane.')
+        # _add_common_args(orient)
 
         # --------------------------------------------------------------
         #   ZORDER
@@ -360,6 +399,10 @@ class LocalNeuroglancer:
 
         onames = []
         for n, filename in enumerate(filenames):
+
+            while filename.endswith('/'):
+                filename = filename[:-1]
+
             layertype, format, filename = self.parse_filename(filename)
             name = names[n] if names else os.path.basename(filename)
             onames.append(name)
@@ -452,6 +495,24 @@ class LocalNeuroglancer:
         layers = layer or [layer.name for layer in state.layers]
         for name in ensure_list(layers):
             del state.layers[name]
+
+    @action(needstate=True)
+    def rename(self, src, dst, *, state=None):
+        """
+        Rename a layer
+
+        Parameters
+        ----------
+        src : str
+            Current name
+        dst : str
+            New name
+        """
+        for layer in state.layers:
+            if layer.name == src:
+                layer.name = dst
+                return
+        raise ValueError('No lauyer named', src)
 
     @action(needstate=True)
     def display(self, dimensions=None, layer=None, *, state=None):
@@ -773,6 +834,113 @@ class LocalNeuroglancer:
                 self.transform(to_world.T, _mode='', state=state)
             self.to_world = to_world
             self.display(display_dimensions, state=state)
+
+    @action(needstate=True)
+    def position(self, coord, dimensions=None, unit=None,
+                 world=False, layer=False, *, state=None, **kwargs):
+        """
+        Change cursor position
+
+        Parameters
+        ----------
+        coord : [list of] float
+            New position
+        dimensions : [list of] str
+            Axis of each coordinate. Can be a compact name like 'RAS'.
+            Default: Currently displayed axes.
+        unit : str
+            Units of the coordinates. Default: Unit of current axes.
+        world : bool
+            Coordinate is in world frame.
+            Cannot be used at the same time as `layer`.
+        layer : bool or str
+            Coordinate is in this layer's canonical frame.
+            Cannot be used at the same time as `world`.
+
+        Returns
+        -------
+        coord : list[float]
+            Current cursor position.
+        """
+        if kwargs.pop('reset', not isinstance(coord, Sequence) and coord == 0):
+            return coord([0] * len(state.dimensions))
+
+        if not state.dimensions:
+            raise RuntimeError(
+                'Dimensions not known. Are you running the app in windowless '
+                'mode? If yes, you must open a neuroglancer window to access '
+                'or modifiy the cursor position')
+
+        dim = state.dimensions
+
+        # No argument -> print current position
+        if not coord:
+            string = []
+            position = list(map(float, state.position))
+            for x, d, s, u in zip(position, dim.names, dim.scales, dim.units):
+                x = float(x) * float(s)
+                string += [f'{d}: {x:g} {u}']
+            print(', '.join(string))
+            return position
+
+        # Preproc dimensions
+        if isinstance(dimensions, str):
+            dimensions = [dimensions]
+        dimensions = dimensions or list(map(str, dim.names))
+        if len(dimensions) == 1 and len(dimensions[0]) > 1:
+            dimensions = compact2full(dimensions[0])
+        dimensions = dimensions[:len(coord)]
+
+        # Preproc layer
+        if world and layer:
+            raise ValueError('Cannot use both --world and --layer')
+        if world:
+            layer = self._WORLD
+        if layer is True:
+            layer = state.layers[0].name
+
+        # Change space
+        current_dimensions = list(map(str, dim.names))
+        change_space = False
+        to_world = None
+        if layer or any(d not in current_dimensions for d in dimensions):
+            to_world = self.to_world
+            self.display(dimensions, layer, state=state)
+            change_space = True
+
+        # Convert unit
+        unitmap = {n: u for u, n in zip(dim.units, dim.names)}
+        current_units = [unitmap[d] for d in dimensions]
+        coord = si_convert(coord, unit, current_units)
+
+        # Sort coordinate in same order as dim
+        coord = {n: x for x, n in zip(coord, dimensions)}
+        for x, n in zip(state.position, dim.names):
+            coord.setdefault(n, x)
+        coord = [coord[n] for n in dim.names]
+
+        # Assign new coord
+        state.position = list(coord.values())
+
+        # Change space back
+        if change_space:
+            self.display(current_dimensions, self._WORLD, state=state)
+
+            def lin2aff(x):
+                matrix = np.eye(len(x)+1)
+                matrix[:-1, :-1] = x
+                return matrix
+
+            if to_world is not None:
+                self.transform(lin2aff(to_world.T), _mode='', state=state)
+                self.to_world = to_world
+
+        return list(map(float, state.position))
+
+    @action(needstate=True)
+    def orient(self, position, dimensions=None, units=None,
+               world=False, layer=False, reset=False, *, state=None):
+        raise NotImplementedError('Not implemented yet (sorry!)')
 
     @action(needstate=True)
     def shader(self, shader, layer=None, *, state=None):

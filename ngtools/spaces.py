@@ -17,6 +17,11 @@ to_square
     Ensure that an affine matrix is square (with its homogeneous row).
 split_unit
     Split the prefix and unit type of a neuroglancer unit.
+si_convert
+    Convert a value or list of values between units.
+compact2full
+    Convert a compact axis name (`'RAS'`) to a list of full axis names
+    (`['anterior', 'posterior', 'superior']`).
 
 Attributes
 ----------
@@ -37,12 +42,16 @@ si_units : list[str]
 si_prefixes : dict[str, int]
     Mapping from neuroglancer unit prefix to the corresponding
     base 10 exponent.
+letter2full : dict[str, str]
+    Mapping from short axis names to long axis names.
 """
 __all__ = [
     'to_square',
     'split_unit',
     'si_prefixes',
     'si_units',
+    'letter2full',
+    'compact2full',
     'neuronames',
     'neurospaces',
     'neurotransforms',
@@ -55,6 +64,7 @@ import neuroglancer as ng
 import numpy as np
 import itertools
 import math
+from typing import Sequence
 
 
 def to_square(affine):
@@ -122,6 +132,20 @@ def split_unit(unit):
     raise ValueError(f'Unknown unit "{unit}"')
 
 
+def si_convert(x, src, dst):
+    """Convert a value or list of values from one unit to another"""
+    if isinstance(x, (list, tuple)):
+        src = ensure_list(src, len(x))
+        dst = ensure_list(dst, len(x))
+        return type(x)(map(lambda args: si_convert(*args), zip(x, src, dst)))
+
+    src_prefix, src_unit = split_unit(src)
+    dst_prefix, dst_unit = split_unit(dst)
+    if src_unit != dst_unit:
+        raise ValueError('Cannot convert between different kinds')
+    return x * 10 ** (si_prefixes[src_prefix] - si_prefixes[dst_prefix])
+
+
 letter2full = {
     'r': 'right',
     'l': 'left',
@@ -130,6 +154,21 @@ letter2full = {
     'i': 'inferior',
     's': 'superior',
 }
+
+
+def compact2full(name):
+    """
+    Convert compact axes name to long list of names
+
+    Examples
+    --------
+    `compact2full('ras') -> ['right', 'anterior', 'posterior']`
+    `compact2full('xyz') -> ['x', 'y', 'z']`
+    """
+    if isinstance(name, Sequence):
+        return name
+    name = list(name.lower())
+    return [letter2full.get(n, n) for n in name]
 
 
 def _get_neuronames():
