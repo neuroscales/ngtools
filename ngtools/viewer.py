@@ -181,7 +181,7 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         #   RENAME
         # --------------------------------------------------------------
-        rename = add_parser('rename', help='Unload a file')
+        rename = add_parser('rename', help='Rename a file')
         rename.set_defaults(func=self.rename)
         rename.add_argument(
             dest='src', metavar='SOURCE', help='Current layer name')
@@ -243,7 +243,7 @@ class LocalNeuroglancer:
             dest='layout', nargs='*', choices=LAYOUTS, metavar='LAYOUT',
             help='Layout')
         layout.add_argument(
-            '--stack', choices=("row", "column"), help="Stack direction" )
+            '--stack', choices=("row", "column"), help="Stack direction")
         layout.add_argument(
             '--layer', nargs='*', help="Layer(s) to include")
         layout.add_argument(
@@ -1457,6 +1457,8 @@ Type {B}help transform{E} for more information.
 )
 
 _clihelp.unload = "Unload layers"
+
+_clihelp.rename = "Rename a layer"
 
 _clihelp.shader = textwrap.dedent(
 f"""
