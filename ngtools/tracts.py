@@ -77,7 +77,7 @@ class TractSource(SkeletonSource):
         self.displayed_tracts = None
         self.displayed_orientations = None
 
-        self._load(lazy=True)
+        self._ensure_loaded(lazy=True)
         super().__init__(CoordinateSpace(
             names=["x", "y", "z"],
             units="mm",
@@ -100,7 +100,7 @@ class TractSource(SkeletonSource):
 
     def _ensure_loaded(self, lazy=False):
         """Load tracts from file (if `lazy=True`, only load metadata)"""
-        if self._is_fully_loaded(lazy):
+        if self._is_loaded(lazy):
             return
 
         klasses = dict(tck=TckFile, trk=TrkFile)
@@ -137,8 +137,7 @@ class TractSource(SkeletonSource):
 
     def _filter(self):
         """Select `max_tracts` random tracts"""
-        if not self._is_fully_loaded():
-            self._load()
+        self._ensure_loaded()
         num_tracts = len(self.tractfile.streamlines)
         ids = list(range(num_tracts))
         random.seed(1234)
@@ -253,8 +252,7 @@ class TractSource(SkeletonSource):
             https://github.com/google/neuroglancer/blob/master/
             src/neuroglancer/datasource/precomputed/skeletons.md
         """
-        if not self.tractfile:
-            self._load(lazy=True)
+        self._ensure_loaded(lazy=True)
 
         # No need for a transform, as nibabel automatically converts
         # TRK coordinates to mm RAS+
