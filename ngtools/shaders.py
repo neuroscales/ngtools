@@ -200,3 +200,18 @@ class shaders:
                 emitRGBA(%s(normalized(), alpha_depth));
             }
             """ % cmap).lstrip()
+
+    rgb = dedent(
+        """
+        #uicontrol float brightness slider(min=-1, max=1)
+        #uicontrol float contrast slider(min=-3, max=3, step=0.01)
+        void main() {
+        vec3 color = vec3(
+            toNormalized(getDataValue(0)),
+            toNormalized(getDataValue(1)),
+            toNormalized(getDataValue(2))
+        );
+        emitRGB((color + brightness) * exp(contrast));
+        }
+        """
+    )

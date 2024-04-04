@@ -1,9 +1,12 @@
 voxels:
   description: Raster data
-  intensity:
-    description: Raster data, interpreted as intensity (images)
-  labels:
-    description: Integer raster data, interpreted as labels (segmentations)
+  children:
+    intensity:
+      description: Raster data, interpreted as intensity (images)
+    rgb:
+      description: Multichannel raster data, with channels interpreted as RGB
+    labels:
+      description: Integer raster data, interpreted as labels (segmentations)
 
 scatter:
   description: Unordered set of values

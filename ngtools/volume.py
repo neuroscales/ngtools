@@ -110,8 +110,16 @@ class RemoteZarr(RemoteSource):
         self.scales = [x[0] for x in scales_units]
         self.units = [x[1] for x in scales_units]
         self.affine = None
-        if 'nifti' in group.attrs:
+        binheader = None
+        if 'nifti' in group:
+            # Newer nifti-zarr format, where the header is stored as an
+            # array, with key "nifti"
+            binheader = np.asarray(group['nifti']).tobytes()
+        elif 'nifti' in group.attrs:
+            # Old nifti-zarr format, where the header is stored as an
+            # attribute, with key "nifti"
             binheader = base64.b64decode(group.attrs['nifti']['base64'])
+        if binheader:
             self.affine = nib.Nifti1Header.from_fileobj(
                 io.BytesIO(binheader), check=False).get_sform()
             # fix half voxel shift
