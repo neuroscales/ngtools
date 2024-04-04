@@ -25,6 +25,21 @@ def pretty_colormap_list(linewidth=79):
     return rows.format(*names)
 
 
+def load_fs_lut(path):
+    if not hasattr(path, 'readlines'):
+        with open(path, 'rt') as f:
+            return load_fs_lut(f)
+    lut = {}
+    for line in path.readlines():
+        line = line.split('#')[0].strip()
+        if not line:
+            continue
+        label, name, r, g, b, a = line.split()
+        label, r, g, b, a = int(label), int(r), int(g), int(b), int(a)
+        lut[label] = (name, (r/255, g/255, b/255, (a or 255)/255))
+    return lut
+
+
 class colormaps:
 
     _DEFAULT_LENGTH = object()
@@ -190,17 +205,6 @@ class shaders:
         }
         """).lstrip()
 
-    @staticmethod
-    def colormap(cmap):
-        return getattr(colormaps, cmap) + '\n' + dedent(
-            """
-            #uicontrol invlerp normalized
-            #uicontrol bool alpha_depth checkbox(default=false)
-            void main() {
-                emitRGBA(%s(normalized(), alpha_depth));
-            }
-            """ % cmap).lstrip()
-
     rgb = dedent(
         """
         #uicontrol float brightness slider(min=-1, max=1)
@@ -215,3 +219,46 @@ class shaders:
         }
         """
     )
+
+    @staticmethod
+    def colormap(cmap):
+        return getattr(colormaps, cmap) + '\n' + dedent(
+            """
+            #uicontrol invlerp normalized
+            #uicontrol bool alpha_depth checkbox(default=false)
+            void main() {
+                emitRGBA(%s(normalized(), alpha_depth));
+            }
+            """ % cmap).lstrip()
+
+    @staticmethod
+    def lut(lut):
+        if not isinstance(lut, dict):
+            lut = load_fs_lut(lut)
+        labels, colors = list(lut.keys()), list(lut.values())
+        colors = [color[1] for color in colors]
+        shader = dedent(
+            """
+            void main() {
+            vec4 color;
+            int label = int(getDataValue(0).value);
+            if (label == int(%d))
+                color = vec4(%f, %f, %f, %f);
+            """ % (labels.pop(0), *colors.pop(0))
+        )
+        for label, color in zip(labels, colors):
+            shader += dedent(
+                """
+                else if (label == int(%d))
+                    color = vec4(%f, %f, %f, %f);
+                """ % (label, *color)
+            )
+        shader += dedent(
+            """
+            else
+                color = vec4(0.0, 0.0, 0.0, 0.0);
+            emitRGBA(color);
+            }
+            """
+        )
+        return shader

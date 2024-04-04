@@ -951,7 +951,7 @@ class LocalNeuroglancer:
         ----------
         shader : str
             A known shader name (from `ngtools.shaders`), or some
-            user-defined shader code.
+            user-defined shader code, or a LUT file.
         layer : str or list[str], optional
             Apply the shader to these layers. Default: all layers.
         """
@@ -962,6 +962,9 @@ class LocalNeuroglancer:
             shader = getattr(shaders, shader)
         elif hasattr(colormaps, shader):
             shader = shaders.colormap(shader)
+        elif 'main()' not in shader:
+            # assume it's a path
+            shader = shaders.lut(shader)
         for layer in state.layers:
             if layer_names and layer.name not in layer_names:
                 continue
