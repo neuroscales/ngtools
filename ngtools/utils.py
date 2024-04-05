@@ -1,3 +1,6 @@
+import json
+from urllib.parse import quote
+
 class bcolors:
 
     # To add color in the input prompt, all delimiter must be wrapped
@@ -62,3 +65,25 @@ class bcolors:
     okgreen = fg.bright.green
     warning = fg.bright.yellow
     fail = fg.bright.red
+
+
+def neuroglancer_state_to_neuroglancer_url(
+        state,
+        base_url="https://neuroglancer.lincbrain.org/cloudfront/frontend/index.html"
+):
+    """
+    Takes the current State of the Neuroglancer Viewer and converts it into a url-encoded value for the browser
+
+    """
+    ordered_dict = state._json_data
+    # Convert the OrderedDict to a regular dictionary
+    dict_data = json.loads(json.dumps(ordered_dict))
+
+    # Convert the dictionary to a JSON string
+    json_str = json.dumps(dict_data)
+
+    # URL-encode the JSON string
+    encoded_json = quote(json_str)
+
+    # Construct and return the full URL
+    return f"{base_url}#!{encoded_json}"
