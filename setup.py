@@ -22,4 +22,4 @@ except ImportError:
     setup_kw = {}
 
 if __name__ == "__main__":
-    setup(name="dandi", **setup_kw)
+    setup(name="ngtools", **setup_kw)
