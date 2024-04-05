@@ -75,12 +75,10 @@ def neuroglancer_state_to_neuroglancer_url(
     Takes the current State of the Neuroglancer Viewer and converts it into a url-encoded value for the browser
 
     """
-    ordered_dict = state._json_data
-    # Convert the OrderedDict to a regular dictionary
-    dict_data = json.loads(json.dumps(ordered_dict))
+    ordered_dict = state.to_json()
 
     # Convert the dictionary to a JSON string
-    json_str = json.dumps(dict_data)
+    json_str = json.dumps(ordered_dict)
 
     # URL-encode the JSON string
     encoded_json = quote(json_str)
