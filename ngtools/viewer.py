@@ -22,6 +22,12 @@ from .parserapp import ParserApp, _fixhelpformatter
 from .utils import bcolors
 from .dandifs import RemoteDandiFileSystem
 
+# hack-fix Layer state to expose channelDimensions
+from neuroglancer.viewer_state import Layer, CoordinateSpace, wrapped_property
+Layer.channel_dimensions = Layer.channelDimensions = wrapped_property(
+    "channelDimensions", CoordinateSpace
+)
+Layer.local_dimensions = Layer.localDimensions = Layer.layerDimensions
 
 _print = print
 
@@ -206,6 +212,23 @@ class LocalNeuroglancer:
             '--mov', help='Moving image (required by some formats)')
         transform.add_argument(
             '--fix', help='Fixed image (required by some formats)')
+
+        # --------------------------------------------------------------
+        #   AXIS MODE
+        # --------------------------------------------------------------
+        channelmode = add_parser(
+            'channel_mode', help='Change the way a dimension is interpreted')
+        channelmode.set_defaults(func=self.channel_mode)
+        channelmode.add_argument(
+            dest='mode', metavar='MODE',
+            choices=('local', 'channel', 'spatial'),
+            help='How to interpret the channel (or another) axis')
+        channelmode.add_argument(
+            '--layer', nargs='+', default=None,
+            help='Name(s) of layer(s) to transform')
+        channelmode.add_argument(
+            '--dimension', nargs='+', default=['c'],
+            help='Name(s) of axes to transform')
 
         # --------------------------------------------------------------
         #   SHADER
@@ -836,6 +859,133 @@ class LocalNeuroglancer:
             self.display(display_dimensions, state=state)
 
     @action(needstate=True)
+    def channel_mode(self, mode, layer=None, dimension='c', *, state=None):
+        """
+        Change the mode (local or intensity) of an axis.
+
+        Parameters
+        ----------
+        mode : {"local", "channel", "spatial"}
+            How to interpret this dimension:
+
+            - "local": enables a switch/slider to change which channel
+              is displayed (e.g., time).
+            - "channel": enables the joint use of all channels to
+              display a single intensity/color (e.g., RGB).
+            - "spatial": enables the display of this axis in the
+              cross-view.
+        layer : [list of] str
+            Names of layers to process
+        dimension : [list of] str
+            Names of dimensions to process
+        """
+        # NOTE
+        #  localDimensions is named localDimensions in the neuroglancer
+        #   python code
+        dimensions = ensure_list(dimension)
+        layers = ensure_list(layer or [])
+
+        mode = mode[0].lower()
+        if mode not in ('l', 'c', 's'):
+            raise ValueError('Unknown channel mode. Should be one of '
+                             '{local, channel, spatial}')
+
+        def rename_key(space, src, dst):
+            space = space.to_json()
+            newspace = {}
+            for key, val in space.items():
+                if key == src:
+                    key = dst
+                newspace[key] = val
+            return ng.CoordinateSpace(newspace)
+
+        for layer in state.layers:
+            if layers and layer.name not in layers:
+                continue
+            layer = layer.layer
+            if not hasattr(layer, 'localDimensions'):
+                layer.localDimensions = ng.CoordinateSpace()
+            if not hasattr(layer, 'channelDimensions'):
+                layer['channelDimensions'] = ng.CoordinateSpace()
+            for dimension in dimensions:
+                localDimensions = layer.localDimensions.to_json()
+                channelDimensions = layer.channelDimensions.to_json()
+                transform = None
+                for source in layer.source:
+                    if getattr(source, 'transform', {}):
+                        transform = source.transform
+                        break
+                if mode == 'l':
+                    if dimension + "'" in localDimensions:
+                        continue
+                    else:
+                        if dimension + "^" in channelDimensions:
+                            scale = channelDimensions[dimension + "^"]
+                            del channelDimensions[dimension + "^"]
+                        else:
+                            scale = [1, ""]
+                        localDimensions[dimension + "'"] = scale
+                    if transform:
+                        odims = list(transform.outputDimensions.to_json())
+                        if dimension + "^" in odims:
+                            transform.matrix[odims.index(dimension + "^"), -1] -= 0.5
+                        transform.outputDimensions = rename_key(
+                            transform.outputDimensions,
+                            dimension + "^",
+                            dimension + "'",
+                        )
+                        transform.outputDimensions = rename_key(
+                            transform.outputDimensions,
+                            dimension,
+                            dimension + "'",
+                        )
+                elif mode == 'c':
+                    if dimension + "^" in channelDimensions:
+                        continue
+                    else:
+                        if dimension + "'" in localDimensions:
+                            scale = localDimensions[dimension + "'"]
+                            del localDimensions[dimension + "'"]
+                        else:
+                            scale = [1, ""]
+                        channelDimensions[dimension + "^"] = scale
+                    if transform:
+                        transform.outputDimensions = rename_key(
+                            transform.outputDimensions,
+                            dimension + "'",
+                            dimension + "^",
+                        )
+                        transform.outputDimensions = rename_key(
+                            transform.outputDimensions,
+                            dimension,
+                            dimension + "^",
+                        )
+                        odims = list(transform.outputDimensions.to_json())
+                        if dimension + "^" in odims:
+                            transform.matrix[odims.index(dimension + "^"), -1] += 0.5
+                elif mode == 's':
+                    if dimension + "^" in channelDimensions:
+                        del channelDimensions[dimension + "^"]
+                    if dimension + "'" in localDimensions:
+                        del localDimensions[dimension + "'"]
+                    if transform:
+                        transform.outputDimensions = rename_key(
+                            transform.outputDimensions,
+                            dimension + "^",
+                            dimension,
+                        )
+                        transform.outputDimensions = rename_key(
+                            transform.outputDimensions,
+                            dimension + "'",
+                            dimension,
+                        )
+                        odims = list(transform.outputDimensions.to_json())
+                        if dimension + "^" in odims:
+                            transform.matrix[odims.index(dimension + "^"), -1] += 0.5
+                layer.localDimensions = CoordinateSpace(localDimensions)
+                layer.channelDimensions = CoordinateSpace(channelDimensions)
+
+    @action(needstate=True)
     def position(self, coord, dimensions=None, unit=None,
                  world=False, layer=False, *, state=None, **kwargs):
         """
@@ -955,9 +1105,17 @@ class LocalNeuroglancer:
         layer : str or list[str], optional
             Apply the shader to these layers. Default: all layers.
         """
-        layer_names = layer or []
-        if not isinstance(layer_names, (list, tuple)):
-            layer_names = [layer_names]
+        layer_names = ensure_list(layer or [])
+
+        if shader.lower() == 'rgb':
+            for layer in state.layers:
+                layer_name = layer.name
+                if layer_names and layer_name not in layer_names:
+                    continue
+                layer = layer.layer
+                if not layer.channelDimensions.to_json():
+                    self.channel_mode('channel', layer=layer_name, state=state)
+
         if hasattr(shaders, shader):
             shader = getattr(shaders, shader)
         elif hasattr(colormaps, shader):
