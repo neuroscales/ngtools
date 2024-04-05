@@ -1,6 +1,6 @@
 # ngtools
 
-Advanced tools for neuroglancer (conversion, tracts viusalization, ...)
+Advanced tools for neuroglancer (conversion, tracts visualization, ...)
 
 # Installation
 
@@ -10,9 +10,10 @@ pip install git+https://github.com/neuroscales/ngtools
 
 ## Local neuroglancer app
 
-This package implements an application built around a local neuroglancer
-instance. It comes with a set of shell-like commands that simplifies
-loading and manipulating layers, with a string focus on neuroimaging.
+This package implements an application built around a local
+[neuroglancer](https://github.com/google/neuroglancer) instance.
+It comes with a set of shell-like commands that simplifies loading and
+manipulating layers, with a strong focus on neuroimaging.
 
 In particular, it knows how to display data in neuroimaging cardinal axes
 (Right/Anterior/Superior and their permutations). To this end, it

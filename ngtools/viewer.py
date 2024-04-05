@@ -313,7 +313,8 @@ class LocalNeuroglancer:
         #         '--layer', '-l', nargs='*', default=None,
         #         help='Coordinates are expressed in this frame')
         #     parser.add_argument(
-        #         '--unit', '-u', help='Coordinates are expressed in this unit')
+        #         '--unit', '-u',
+        #         help='Coordinates are expressed in this unit')
         #     parser.add_argument(
         #         '--reset', action='store_true', default=False,
         #         help='Reset coordinates to zero')
@@ -903,11 +904,10 @@ class LocalNeuroglancer:
             if layers and layer.name not in layers:
                 continue
             layer = layer.layer
-            if not hasattr(layer, 'localDimensions'):
-                layer.localDimensions = ng.CoordinateSpace()
-            if not hasattr(layer, 'channelDimensions'):
-                layer['channelDimensions'] = ng.CoordinateSpace()
             for dimension in dimensions:
+                ldim = dimension + "'"
+                cdim = dimension + "^"
+                sdim = dimension
                 localDimensions = layer.localDimensions.to_json()
                 channelDimensions = layer.channelDimensions.to_json()
                 transform = None
@@ -916,72 +916,54 @@ class LocalNeuroglancer:
                         transform = source.transform
                         break
                 if mode == 'l':
-                    if dimension + "'" in localDimensions:
+                    if ldim in localDimensions:
                         continue
                     else:
-                        if dimension + "^" in channelDimensions:
-                            scale = channelDimensions[dimension + "^"]
-                            del channelDimensions[dimension + "^"]
+                        if cdim in channelDimensions:
+                            scale = channelDimensions[cdim]
+                            del channelDimensions[cdim]
                         else:
                             scale = [1, ""]
-                        localDimensions[dimension + "'"] = scale
+                        localDimensions[ldim] = scale
                     if transform:
                         odims = list(transform.outputDimensions.to_json())
-                        if dimension + "^" in odims:
-                            transform.matrix[odims.index(dimension + "^"), -1] -= 0.5
+                        if cdim in odims:
+                            transform.matrix[odims.index(cdim), -1] -= 0.5
                         transform.outputDimensions = rename_key(
-                            transform.outputDimensions,
-                            dimension + "^",
-                            dimension + "'",
-                        )
+                            transform.outputDimensions, cdim, ldim)
                         transform.outputDimensions = rename_key(
-                            transform.outputDimensions,
-                            dimension,
-                            dimension + "'",
-                        )
+                            transform.outputDimensions, sdim, ldim)
                 elif mode == 'c':
-                    if dimension + "^" in channelDimensions:
+                    if cdim in channelDimensions:
                         continue
                     else:
-                        if dimension + "'" in localDimensions:
-                            scale = localDimensions[dimension + "'"]
-                            del localDimensions[dimension + "'"]
+                        if ldim in localDimensions:
+                            scale = localDimensions[ldim]
+                            del localDimensions[ldim]
                         else:
                             scale = [1, ""]
-                        channelDimensions[dimension + "^"] = scale
+                        channelDimensions[cdim] = scale
                     if transform:
                         transform.outputDimensions = rename_key(
-                            transform.outputDimensions,
-                            dimension + "'",
-                            dimension + "^",
-                        )
+                            transform.outputDimensions, ldim, cdim)
                         transform.outputDimensions = rename_key(
-                            transform.outputDimensions,
-                            dimension,
-                            dimension + "^",
-                        )
+                            transform.outputDimensions, sdim, cdim)
                         odims = list(transform.outputDimensions.to_json())
                         if dimension + "^" in odims:
-                            transform.matrix[odims.index(dimension + "^"), -1] += 0.5
+                            transform.matrix[odims.index(cdim), -1] += 0.5
                 elif mode == 's':
-                    if dimension + "^" in channelDimensions:
-                        del channelDimensions[dimension + "^"]
-                    if dimension + "'" in localDimensions:
-                        del localDimensions[dimension + "'"]
+                    if cdim in channelDimensions:
+                        del channelDimensions[cdim]
+                    if ldim in localDimensions:
+                        del localDimensions[ldim]
                     if transform:
                         transform.outputDimensions = rename_key(
-                            transform.outputDimensions,
-                            dimension + "^",
-                            dimension,
-                        )
+                            transform.outputDimensions, cdim, sdim)
                         transform.outputDimensions = rename_key(
-                            transform.outputDimensions,
-                            dimension + "'",
-                            dimension,
-                        )
+                            transform.outputDimensions, ldim, sdim)
                         odims = list(transform.outputDimensions.to_json())
-                        if dimension + "^" in odims:
-                            transform.matrix[odims.index(dimension + "^"), -1] += 0.5
+                        if cdim in odims:
+                            transform.matrix[odims.index(cdim), -1] += 0.5
                 layer.localDimensions = CoordinateSpace(localDimensions)
                 layer.channelDimensions = CoordinateSpace(channelDimensions)
 
