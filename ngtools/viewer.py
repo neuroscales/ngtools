@@ -638,8 +638,8 @@ class LocalNeuroglancer:
         dimensions = ensure_list(dimensions)
         if len(dimensions) == 1:
             dimensions = list(dimensions[0])
-        if len(dimensions) != 3:
-            raise ValueError('display takes three axis names')
+        if len(dimensions) > 3:
+            raise ValueError('display takes at most three axis names')
         dimensions = [letter2full.get(letter.lower(), letter)
                       for letter in dimensions]
         display_dimensions = dimensions
@@ -900,6 +900,63 @@ class LocalNeuroglancer:
                 newspace[key] = val
             return ng.CoordinateSpace(newspace)
 
+        def update_transform(transform, olddim, newdim):
+            if newdim.endswith(("'", "^")):
+                sdim = newdim[:-1]
+            else:
+                sdim = newdim
+            cdim = sdim + '^'
+            transform.outputDimensions = rename_key(
+                transform.outputDimensions, olddim, newdim)
+            odims = list(transform.outputDimensions.to_json().keys())
+            if newdim == cdim:
+                # to channel dimension -> half unit shift
+                shift = 0.5
+            elif olddim == cdim:
+                # from channel dimension -> remove half unit shift
+                shift = -0.5
+            else:
+                shift = 0
+            if shift:
+                print(transform.matrix)
+                if transform.matrix is not None:
+                    transform.matrix[odims.index(newdim), -1] += shift
+                else:
+                    matrix = np.eye(len(odims)+1)[:-1]
+                    matrix[odims.index(newdim), -1] = shift
+                    transform.matrix = matrix
+                print(transform.matrix)
+            return transform
+
+        def create_transform(scale, olddim, newdim):
+            if newdim.endswith(("'", "^")):
+                sdim = newdim[:-1]
+            else:
+                sdim = newdim
+            cdim = sdim + '^'
+            if newdim == cdim:
+                # to channel dimension -> half unit shift
+                shift = 0.5
+            elif olddim == cdim:
+                # from channel dimension -> remove half unit shift
+                shift = -0.5
+            else:
+                shift = 0
+            transform = ng.CoordinateSpaceTransform(
+                matrix=np.asarray([[1, shift]]),
+                inputDimensions=ng.CoordinateSpace(
+                    names=[olddim],
+                    scales=[scale[0]],
+                    units=[scale[1]],
+                ),
+                outputDimensions=ng.CoordinateSpace(
+                    names=[newdim],
+                    scales=[scale[0]],
+                    units=[scale[1]],
+                )
+            )
+            return transform
+
         for layer in state.layers:
             if layers and layer.name not in layers:
                 continue
@@ -909,63 +966,90 @@ class LocalNeuroglancer:
                 cdim = dimension + "^"
                 sdim = dimension
                 localDimensions = layer.localDimensions.to_json()
+                if layer.localPosition:
+                    localPosition = layer.localPosition.tolist()
+                else:
+                    localPosition = []
                 channelDimensions = layer.channelDimensions.to_json()
                 transform = None
                 for source in layer.source:
                     if getattr(source, 'transform', {}):
                         transform = source.transform
                         break
-                if mode == 'l':
+                else:
+                    source = layer.source[0]
+
+                if mode == 'l':     # LOCAL
                     if ldim in localDimensions:
                         continue
+                    was_channel = False
+                    if cdim in channelDimensions:
+                        was_channel = True
+                        scale = channelDimensions.pop(cdim)
                     else:
-                        if cdim in channelDimensions:
-                            scale = channelDimensions[cdim]
-                            del channelDimensions[cdim]
-                        else:
-                            scale = [1, ""]
-                        localDimensions[ldim] = scale
+                        scale = [1, ""]
+                    localDimensions[ldim] = scale
+                    localPosition = [*(localPosition or []), 0]
                     if transform:
-                        odims = list(transform.outputDimensions.to_json())
-                        if cdim in odims:
-                            transform.matrix[odims.index(cdim), -1] -= 0.5
-                        transform.outputDimensions = rename_key(
-                            transform.outputDimensions, cdim, ldim)
-                        transform.outputDimensions = rename_key(
-                            transform.outputDimensions, sdim, ldim)
-                elif mode == 'c':
+                        update_transform(
+                            transform, cdim if was_channel else sdim, ldim)
+                    else:
+                        source.transform = create_transform(
+                            scale, cdim if was_channel else sdim, ldim)
+
+                elif mode == 'c':   # CHANNEL
                     if cdim in channelDimensions:
                         continue
-                    else:
-                        if ldim in localDimensions:
-                            scale = localDimensions[ldim]
-                            del localDimensions[ldim]
-                        else:
-                            scale = [1, ""]
-                        channelDimensions[cdim] = scale
-                    if transform:
-                        transform.outputDimensions = rename_key(
-                            transform.outputDimensions, ldim, cdim)
-                        transform.outputDimensions = rename_key(
-                            transform.outputDimensions, sdim, cdim)
-                        odims = list(transform.outputDimensions.to_json())
-                        if dimension + "^" in odims:
-                            transform.matrix[odims.index(cdim), -1] += 0.5
-                elif mode == 's':
-                    if cdim in channelDimensions:
-                        del channelDimensions[cdim]
+                    was_local = False
                     if ldim in localDimensions:
-                        del localDimensions[ldim]
+                        was_local = True
+                        for i, key in enumerate(localDimensions.keys()):
+                            if key == ldim:
+                                break
+                        scale = localDimensions.pop(ldim)
+                        if i < len(localPosition):
+                            localPosition.pop(i)
+                    else:
+                        scale = [1, ""]
+                    channelDimensions[cdim] = scale
                     if transform:
-                        transform.outputDimensions = rename_key(
-                            transform.outputDimensions, cdim, sdim)
-                        transform.outputDimensions = rename_key(
-                            transform.outputDimensions, ldim, sdim)
-                        odims = list(transform.outputDimensions.to_json())
-                        if cdim in odims:
-                            transform.matrix[odims.index(cdim), -1] += 0.5
+                        update_transform(
+                            transform, ldim if was_local else sdim, cdim)
+                    else:
+                        source.transform = create_transform(
+                            scale, ldim if was_local else sdim, cdim)
+
+                elif mode == 's':   # SPATIAL
+                    if cdim not in channelDimensions and \
+                            ldim not in localDimensions:
+                        continue
+                    scale = [1, ""]
+                    was_channel = False
+                    if cdim in channelDimensions:
+                        scale = channelDimensions.pop(cdim)
+                        was_channel = True
+                    if ldim in localDimensions:
+                        for i, key in enumerate(localDimensions.keys()):
+                            if key == ldim:
+                                break
+                        scale = localDimensions.pop(ldim)
+                        if i < len(localPosition):
+                            localPosition.pop(i)
+                    if transform:
+                        update_transform(
+                            transform, cdim if was_channel else ldim, sdim)
+                    else:
+                        source.transform = create_transform(
+                            scale, cdim if was_channel else ldim, sdim)
+                    if sdim not in state.dimensions.to_json():
+                        dimensions = state.dimensions.to_json()
+                        dimensions[sdim] = scale
+                        state.dimensions = CoordinateSpace(dimensions)
                 layer.localDimensions = CoordinateSpace(localDimensions)
+                layer.localPosition = np.asarray(localPosition)
                 layer.channelDimensions = CoordinateSpace(channelDimensions)
+
+        print(state)
 
     @action(needstate=True)
     def position(self, coord, dimensions=None, unit=None,

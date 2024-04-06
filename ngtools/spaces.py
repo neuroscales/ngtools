@@ -171,17 +171,50 @@ def compact2full(name):
     return [letter2full.get(n, n) for n in name]
 
 
-def _get_neuronames():
-    letters = (('r', 'l'), ('a', 'p'), ('i', 's'))
-    all_neurospaces = []
-    for perm in itertools.permutations(range(3)):
-        for flip in itertools.product([0, 1], repeat=3):
-            space = ''.join([letters[p][f] for p, f in zip(perm, flip)])
-            all_neurospaces.append(space)
-    return all_neurospaces
+def get_neuronames(ndim=None):
+    """
+    Return all short neuronames ("ras", "lpi", etc)
+
+    By default, return names for all possible number of dimensions (1, 2, 3).
+    Specify `ndim` to pnly return names for a specific number of dimensions.
+    """
+    if ndim is None:
+        range_letters = list(range(1, 4))
+    else:
+        range_letters = [ndim]
+    all_neuronames = []
+    all_letters = (('r', 'l'), ('a', 'p'), ('i', 's'))
+    for ndim in range_letters:
+        for letters in itertools.combinations(all_letters, ndim):
+            for perm in itertools.permutations(range(ndim)):
+                for flip in itertools.product([0, 1], repeat=ndim):
+                    space = [letters[p][f] for p, f in zip(perm, flip)]
+                    space = ''.join(space)
+                    all_neuronames.append(space)
+    return all_neuronames
 
 
-neuronames = _get_neuronames()
+def get_defaultnames(ndim=None):
+    """
+    Return all short default names ("xyz", "zyx", etc)
+
+    By default, return names for all possible number of dimensions (1, 2, 3).
+    Specify `ndim` to pnly return names for a specific number of dimensions.
+    """
+    if ndim is None:
+        range_letters = list(range(1, 4))
+    else:
+        range_letters = [ndim]
+    defaultnames = []
+    for ndim in range_letters:
+        for letters in itertools.combinations(['x', 'y', 'z'], ndim):
+            for name in itertools.permutations(letters):
+                defaultnames.append(''.join(name))
+    return defaultnames
+
+
+neuronames = get_neuronames()
+defaultnames = get_defaultnames()
 
 
 def _get_src2ras(src):
@@ -206,30 +239,49 @@ def _get_src2dst(src, dst):
     """Return a matrix mapping from `src` to `dst` space."""
     src_to_ras = _get_src2ras(src)
     dst_to_ras = _get_src2ras(dst)
-    return np.linalg.inv(dst_to_ras) @ src_to_ras
+    return np.linalg.pinv(dst_to_ras) @ src_to_ras
 
 
 # Build coordinate spaces
 neurospaces = {
     name: ng.CoordinateSpace(
         names=[letter2full[letter.lower()] for letter in name],
-        scales=[1]*3,
-        units=['mm']*3,
+        scales=[1]*len(name),
+        units=['mm']*len(name),
     )
     for name in neuronames
 }
 
-
 defaultspaces = {
-    ''.join(name): ng.CoordinateSpace(
-        names=name,
-        scales=[1]*3,
-        units=['mm']*3,
+    name: ng.CoordinateSpace(
+        names=list(name),
+        scales=[1]*len(name),
+        units=['mm']*len(name),
     )
-    for name in itertools.permutations(['x', 'y', 'z'])
+    for name in defaultnames
 }
 default = defaultspaces['xyz']
 neurospaces.update(defaultspaces)
+
+
+def space_is_compatible(src, dst):
+    to_xyz = {
+        'r': 'x',
+        'l': 'x',
+        'a': 'y',
+        'p': 'y',
+        's': 'z',
+        'i': 'z',
+    }
+    src = list(map(lambda x: to_xyz.get(x, x), src))
+    dst = list(map(lambda x: to_xyz.get(x, x), dst))
+    for x in src:
+        if x not in dst:
+            return False
+    for x in dst:
+        if x not in src:
+            return False
+    return True
 
 
 # Build coordinate transforms
@@ -242,29 +294,33 @@ neurotransforms = {
     )
     for src in neuronames
     for dst in neuronames
+    if len(src) == len(dst) and space_is_compatible(src, dst)
 }
 # 2) key = CoordinateSpace instances
 neurotransforms.update({
     (neurospaces[src], neurospaces[dst]): neurotransforms[src, dst]
     for src in neuronames
     for dst in neuronames
+    if len(src) == len(dst) and space_is_compatible(src, dst)
 })
 # 3) neurospace to/from xyz
-for name in itertools.permutations(['x', 'y', 'z']):
-    name = ''.join(name)
-    for neuroname in _get_neuronames():
+for name in defaultnames:
+    ndim = len(name)
+    for neuroname in get_neuronames(ndim):
+        if not space_is_compatible(name, neuroname):
+            continue
         matrix = _get_src2dst(neuroname, name)
         neurotransforms[(neuroname, name)] \
             = neurotransforms[(neurospaces[neuroname], defaultspaces[name])] \
             = ng.CoordinateSpaceTransform(
-                matrix=matrix[:3, :4],
+                matrix=matrix[:ndim, :ndim+1],
                 input_dimensions=neurospaces[neuroname],
                 output_dimensions=defaultspaces[name],
             )
         neurotransforms[(name, neuroname)] \
             = neurotransforms[(defaultspaces[name], neurospaces[neuroname])] \
             = ng.CoordinateSpaceTransform(
-                matrix=np.linalg.inv(matrix)[:3, :4],
+                matrix=np.linalg.inv(matrix)[:ndim, :ndim+1],
                 input_dimensions=defaultspaces[name],
                 output_dimensions=neurospaces[neuroname],
             )
