@@ -918,14 +918,12 @@ class LocalNeuroglancer:
             else:
                 shift = 0
             if shift:
-                print(transform.matrix)
                 if transform.matrix is not None:
                     transform.matrix[odims.index(newdim), -1] += shift
                 else:
                     matrix = np.eye(len(odims)+1)[:-1]
                     matrix[odims.index(newdim), -1] = shift
                     transform.matrix = matrix
-                print(transform.matrix)
             return transform
 
         def create_transform(scale, olddim, newdim):
@@ -1048,8 +1046,6 @@ class LocalNeuroglancer:
                 layer.localDimensions = CoordinateSpace(localDimensions)
                 layer.localPosition = np.asarray(localPosition)
                 layer.channelDimensions = CoordinateSpace(channelDimensions)
-
-        print(state)
 
     @action(needstate=True)
     def position(self, coord, dimensions=None, unit=None,
