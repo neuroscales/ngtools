@@ -120,7 +120,16 @@ class RemoteZarr(RemoteSource):
             # attribute, with key "nifti"
             binheader = base64.b64decode(group.attrs['nifti']['base64'])
         if binheader:
-            self.affine = nib.Nifti1Header.from_fileobj(
+            magic = np.frombuffer(binheader[:4], dtype='i4')
+            if magic == 348 or magic.newbyteorder() == 348:
+                assert binheader[346:347] == b'1'
+                NiftiHeader = nib.Nifti1Header
+            elif magic == 540 or magic.newbyteorder() == 540:
+                assert binheader[6:7] == b'2'
+                NiftiHeader = nib.Nifti2Header
+            else:
+                raise ValueError('Unrecognized header')
+            self.affine = NiftiHeader.from_fileobj(
                 io.BytesIO(binheader), check=False).get_sform()
             # fix half voxel shift
             #   the reason for this shift is that nifti assumes that the
@@ -140,11 +149,29 @@ class RemoteZarr(RemoteSource):
     @property
     def outputDimensions(self):
         if self.affine is not None:
-            return ng.CoordinateSpace(
-                names=self.names[:-3] + ["x", "y", "z"],
-                scales=self.scales[:-3] + [1]*3,
-                units=self.units[:-3] + ['mm']*3,
-            )
+            names, scales, units = [], [], []
+            for name, scale, unit in zip(self.names, self.scales, self.units):
+                if name in "xyz":
+                    continue
+                names.append(name)
+                scales.append(scale)
+                units.append(unit)
+            if "x" in self.names:
+                i = np.argmax(np.abs(self.affine[:, 0]))
+                names.append("xyz"[i])
+                scales.append(1)
+                units.append("mm")
+            if "y" in self.names:
+                i = np.argmax(np.abs(self.affine[:, 1]))
+                names.append("xyz"[i])
+                scales.append(1)
+                units.append("mm")
+            if "z" in self.names:
+                i = np.argmax(np.abs(self.affine[:, 2]))
+                names.append("xyz"[i])
+                scales.append(1)
+                units.append("mm")
+            return ng.CoordinateSpace(names=names, scales=scales, units=units)
         else:
             return self.dimensions
 
@@ -152,16 +179,23 @@ class RemoteZarr(RemoteSource):
     def transform(self):
         if self.affine is None:
             return None
+        ndim = len([d for d in self.dimensions.names if d in "xyz"])
         affine = np.copy(self.affine)
-        affine[:3, :3] /= self.scales[-3:]
+        affine[:ndim, :ndim] /= self.scales[-ndim:]
+        if ndim == 2:
+            index_missing = np.argmax(np.abs(affine[:, 2]))
+            affine = affine[np.arange(4) != index_missing, :]
+            affine = affine[:, [0, 1, 3]]
         fullaffine = np.eye(len(self.names)+1)[:-1]
-        fullaffine[-3:, -4:-1] = affine[:3, :3][:, ::-1]
-        fullaffine[-3:, -1] = affine[:3, -1]
-        return ng.CoordinateSpaceTransform(
+        fullaffine[-ndim:, -ndim-1:-1] = affine[:ndim, :ndim][:, ::-1]
+        fullaffine[-ndim:, -1] = affine[:ndim, -1]
+        T = ng.CoordinateSpaceTransform(
             matrix=fullaffine,
             input_dimensions=self.dimensions,
             output_dimensions=self.outputDimensions,
         )
+        print('T', T)
+        return T
 
     @staticmethod
     def units2ng(value, unit):

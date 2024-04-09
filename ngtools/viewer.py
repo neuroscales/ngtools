@@ -444,6 +444,7 @@ class LocalNeuroglancer:
                             "window": np.stack([mn, mx]),
                         }
                     }
+                print(type(source), getattr(source, 'transform', None))
                 layer = ng.ImageLayer(
                     source=ng.LayerDataSource(
                         url=format + '://' + filename,
