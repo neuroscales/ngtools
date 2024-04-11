@@ -194,7 +194,6 @@ class RemoteZarr(RemoteSource):
             input_dimensions=self.dimensions,
             output_dimensions=self.outputDimensions,
         )
-        print('T', T)
         return T
 
     @staticmethod
