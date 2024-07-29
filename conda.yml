@@ -8,8 +8,8 @@ dependencies:
   - fsspec
   - requests        # for fsspec[http]
   - aiohttp         # for fsspec[http]
-  - dandi >= 0.44
   - pip:
     - neuroglancer
+    - dandi >= 0.44
     - notebook      # def
   - ipython         # dev
