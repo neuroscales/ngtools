@@ -1,13 +1,27 @@
+"""
+Local fileserver to access local files through HTTP.
+
+This module implements local file servers, that can be used to server
+local files to a local neuroglancer instance.
+
+Classes
+-------
+LocalFileServer
+    A fileserver that serves local files
+LocalFileServerInBackground
+    A fileserver that runs in a background process
+"""
 import os
-import sys
 import socket
+import sys
 from multiprocessing import Process
-from wsgiref.simple_server import make_server
-from wsgiref.simple_server import WSGIRequestHandler
+from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 
-class NoLoggingWSGIRequestHandler(WSGIRequestHandler):
-    def log_message(self, format, *args):
+class _NoLoggingWSGIRequestHandler(WSGIRequestHandler):
+    """Overloaded handler that does not log anything."""
+
+    def log_message(self, format, *args):  # noqa: ANN001, ANN002, ANN202
         pass
 
 
@@ -18,7 +32,9 @@ class LocalFileServer:
     All paths should be absolute!
     """
 
-    def __init__(self, port=0, ip='', interrupt=True):
+    def __init__(
+        self, port: int = 0, ip: str = "", interrupt: bool = True
+    ) -> None:
         """
         Parameters
         ----------
@@ -28,10 +44,9 @@ class LocalFileServer:
             IP address
         interrupt : bool
             Whether we can keyboard-interrupt the server.
-            If instanrtiated inside a background process, useful to set
+            If instantiated inside a background process, useful to set
             to False so that the exception is handled in the main thread.
         """
-
         try:
             s = socket.socket()
             s.bind((ip, port))
@@ -60,10 +75,11 @@ class LocalFileServer:
         interrupt = tuple(interrupt)
         self.interrupt = interrupt
 
-        self.server = make_server(self.ip, self.port, self.serve,
-                                  handler_class=NoLoggingWSGIRequestHandler)
+        self.server = make_server(self.ip, self.port, self._serve,
+                                  handler_class=_NoLoggingWSGIRequestHandler)
 
-    def serve_forever(self):
+    def serve_forever(self) -> None:
+        """Run the server forever."""
         while True:
             try:
                 self.server.serve_forever()
@@ -73,7 +89,8 @@ class LocalFileServer:
                 continue
 
     @staticmethod
-    def file_not_found(dest, start_response):
+    def _file_not_found(dest: str, start_response: callable) -> list:
+        """Response when file is not found."""
         start_response(
             "404 Not found",
             [
@@ -86,7 +103,8 @@ class LocalFileServer:
         ]
 
     @staticmethod
-    def method_not_allowed(method, start_response):
+    def _method_not_allowed(method: str, start_response: callable) -> list:
+        """Response when method is not allowed."""
         start_response(
             "405 Method Not Allowed",
             [
@@ -106,12 +124,13 @@ class LocalFileServer:
         'tck': 'tracts',
     }
 
-    def serve(self, environ, start_response):
+    def _serve(self, environ: dict, start_response: callable) -> list:
+        """Serve function passed to the server."""
         path_info = environ['PATH_INFO']
 
         method = environ['REQUEST_METHOD']
         if method not in ('GET', 'HEAD'):
-            return self.method_not_allowed(method, start_response)
+            return self._method_not_allowed(method, start_response)
 
         range = environ.get('HTTP_RANGE', '')
         if range.startswith('bytes='):
@@ -125,7 +144,7 @@ class LocalFileServer:
             path_info = os.path.join(path_info, '.zgroup')
 
         if not os.path.isfile(path_info):
-            return self.file_not_found(path_info, start_response)
+            return self._file_not_found(path_info, start_response)
 
         length = lengthrange = os.path.getsize(path_info)
 
@@ -162,11 +181,11 @@ class LocalFileServer:
 
 
 class LocalFileServerInBackground:
-    """
-    A fileserver that runs in a background process
-    """
+    """A fileserver that runs in a background process."""
 
-    def __init__(self, port=0, ip='', interrupt=False):
+    def __init__(
+        self, port: int = 0, ip: str = "", interrupt: bool = False
+    ) -> None:
         """
         Parameters
         ----------
@@ -201,11 +220,14 @@ class LocalFileServerInBackground:
         self.interrupt = interrupt
 
     @classmethod
-    def _start_and_server_forever(cls, port, ip, interupt):
+    def _start_and_server_forever(
+        cls, port: int, ip: str, interupt: bool
+    ) -> None:
         server = LocalFileServer(port, ip, interrupt=interupt)
         server.serve_forever()
 
-    def start_and_serve_forever(self):
+    def start_and_serve_forever(self) -> None:
+        """Start server and server forever."""
         if not self.process:
             self.process = Process(
                 target=self._start_and_server_forever,
@@ -214,9 +236,10 @@ class LocalFileServerInBackground:
         if not self.process.is_alive():
             self.process.start()
 
-    def stop(self):
+    def stop(self) -> None:
+        """Stop server."""
         if self.process and self.process.is_alive():
             self.process.terminate()
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.stop()

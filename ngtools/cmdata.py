@@ -1,6 +1,5 @@
-
 """
-This file contains piecewise linear colormaps from Matplotlib
+Piecewise linear colormaps from Matplotlib.
 
 List  of List - Interpolated color
 Dict  of List - Interpolated color // keys are control points

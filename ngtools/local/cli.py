@@ -1,14 +1,16 @@
-import sys
+"""Entrypoint to a local neuroglancer instance and associated shell."""
+# stdlib
 import argparse
+import sys
 import webbrowser
-from .fileserver import LocalFileServerInBackground
-from .viewer import LocalNeuroglancer
+
+# internals
+from ngtools.local.fileserver import LocalFileServerInBackground
+from ngtools.local.viewer import LocalNeuroglancer
 
 
-def cli(args=None):
-    """
-    A commandline launcher for local Neuroglancer instances
-    """
+def main(args: list[str] | None = None) -> None:
+    """Commandline launcher for local Neuroglancer instances."""
     args = args or sys.argv[1:]
 
     parser = argparse.ArgumentParser('Run a local neuroglancer')

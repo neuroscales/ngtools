@@ -1,47 +1,64 @@
-import sys
-import json
-import socket
-import os.path
+"""Local neuroglancer instance with a shell-like interface."""
+# stdlib
 import argparse
+import json
+import os.path
+import socket
+import sys
 import textwrap
-import numpy as np
-import neuroglancer as ng
-from urllib.parse import urlparse, unquote as urlunquote, quote as urlquote
-from neuroglancer.server import global_server_args
-from typing import Sequence
-from .fileserver import LocalFileServerInBackground
-from .volume import LocalSource, RemoteSource
-from .tracts import TractSource
-from .spaces import (
-    neurotransforms, letter2full, to_square, compose,
-    ensure_same_scaling, subtransform, si_convert, compact2full)
-from .shaders import shaders, colormaps, pretty_colormap_list
-from .transforms import load_affine
-from .opener import remote_protocols
-from .parserapp import ParserApp, _fixhelpformatter
-from .utils import bcolors
-from .dandifs import RemoteDandiFileSystem
+from io import BytesIO
+from os import PathLike
+from typing import Literal, Sequence
+from urllib.parse import quote as urlquote
+from urllib.parse import unquote as urlunquote
+from urllib.parse import urlparse
 
-# hack-fix Layer state to expose channelDimensions
-from neuroglancer.viewer_state import Layer, CoordinateSpace, wrapped_property
-Layer.channel_dimensions = Layer.channelDimensions = wrapped_property(
-    "channelDimensions", CoordinateSpace
+# externals
+import neuroglancer as ng
+import numpy as np
+from neuroglancer.server import global_server_args
+from neuroglancer.viewer_state import wrapped_property
+from numpy.typing import ArrayLike
+
+# internals
+import ngtools.spaces as S
+import ngtools.transforms as T
+import ngtools.units as U
+from ngtools.dandifs import RemoteDandiFileSystem
+from ngtools.local.fileserver import LocalFileServerInBackground
+from ngtools.local.parserapp import ParserApp, _fixhelpformatter
+from ngtools.local.termcolors import bcolors
+from ngtools.local.tracts import TractSkeleton
+from ngtools.opener import remote_protocols
+from ngtools.shaders import colormaps, pretty_colormap_list, shaders
+from ngtools.volume import LocalSource, RemoteSource
+
+# monkey-patch Layer state to expose channelDimensions
+ng.Layer.channel_dimensions = ng.Layer.channelDimensions = wrapped_property(
+    "channelDimensions", ng.CoordinateSpace
 )
-Layer.local_dimensions = Layer.localDimensions = Layer.layerDimensions
+ng.Layer.local_dimensions = ng.Layer.localDimensions = ng.Layer.layerDimensions
 
 _print = print
 
 
-def action(needstate=False):
+SourceType = ng.LayerDataSource | ng.LocalVolume | ng.skeleton.SkeletonSource
+
+
+def action(needstate: bool = False) -> callable:
     """
-    Decorator for neuroglancer actions (that can be triggered  by argparse)
+    Decorate a neuroglancer action.
+
+    These actions can thereby be triggered by argparse.
     """
     if callable(needstate):
         return action()(needstate)
 
-    def decorator(func):
+    def decorator(func: callable) -> callable:
 
-        def wrapper(self, *args, **kwargs):
+        def wrapper(
+            self: LocalNeuroglancer, *args: tuple, **kwargs: dict
+        ) -> callable:
             args = list(args)
             if args and isinstance(args[0], argparse.Namespace):
                 if len(args) > 1:
@@ -67,7 +84,8 @@ def action(needstate=False):
     return decorator
 
 
-def ensure_list(x):
+def ensure_list(x: object) -> list:
+    """Ensure that an object is a list. Make one if needed."""
     if isinstance(x, np.ndarray):
         x = x.tolist()
     if not isinstance(x, (list, tuple)):
@@ -83,19 +101,30 @@ class LocalNeuroglancer:
     unloading, applying transforms, etc.
     """
 
-    def __init__(self, port=0, ip='', token=1, fileserver=True, debug=False):
+    def __init__(
+        self,
+        port: int = 0,
+        ip: str = '',
+        token: int = 1,
+        fileserver: bool | LocalFileServerInBackground = True,
+        debug: bool = False,
+    ) -> None:
         """
         Parameters
         ----------
         port : int
-            Port to use
+            Port to use.
+        ip : str
+            IP to use.
         token : str
-            Unique id for the instance
+            Unique id for the instance.
         filserver : LocalFileServerInBackground or bool
             A local file server.
 
             * If `True`, create a local file server.
             * If `False`, do not create one -- only remote files can be loaded.
+        debug : bool
+            Print full trace when an error is encountered.
         """
         if fileserver is True:
             fileserver = LocalFileServerInBackground(interrupt=EOFError)
@@ -134,21 +163,21 @@ class LocalNeuroglancer:
     #
     # ==================================================================
 
-    def await_input(self):
-        """Launch shell-like interface"""
+    def await_input(self) -> None:
+        """Launch shell-like interface."""
         try:
             return self.parser.await_input()
         except SystemExit:
             # exit gracefully (cleanup the fileserver process, etc)
             self.exit()
 
-    def _make_parser(self, debug=False):
+    def _make_parser(self, debug: bool = False) -> ParserApp:
         mainparser = ParserApp('', debug=debug)
         parsers = mainparser.add_subparsers()
         formatter = _fixhelpformatter(argparse.RawDescriptionHelpFormatter)
         F = dict(formatter_class=formatter)
 
-        def add_parser(cmd, *args, **kwargs):
+        def add_parser(cmd, *args, **kwargs):  # noqa: ANN001, ANN202
             # We define long descriptions in the _clihelp class at the
             # end of this file.
             kwargs.setdefault('description', getattr(_clihelp, cmd, None))
@@ -377,29 +406,36 @@ class LocalNeuroglancer:
     # ==================================================================
 
     @action
-    def cd(self, path):
-        """Change directory"""
+    def cd(self, path: str) -> str:
+        """Change directory."""
         os.chdir(os.path.expanduser(path))
         return os.getcwd()
 
     @action
-    def ls(self, path):
-        """List files"""
+    def ls(self, path: str) -> list[str]:
+        """List files."""
         files = os.listdir(os.path.expanduser(path))
         print(*files)
         return files
 
     @action
-    def pwd(self):
-        """Path to working directory"""
+    def pwd(self) -> str:
+        """Path to working directory."""
         print(os.getcwd())
         return os.getcwd()
 
     @action(needstate=True)
-    def load(self, filename, name=None, transform=None,
-             *, state=None, **kwargs):
+    def load(
+        self,
+        filename: str | list[str],
+        name: str | list[str] | None = None,
+        transform: ArrayLike[float] | list[float] | str | None = None,
+        *,
+        state: ng.ViewerState | None = None,
+        **kwargs
+    ) -> None:
         """
-        Load file(s)
+        Load file(s).
 
         Parameters
         ----------
@@ -454,7 +490,7 @@ class LocalNeuroglancer:
                 )
 
             elif layertype == 'tracts':
-                source = TractSource(filename)
+                source = TractSkeleton(filename)
                 source._load()
                 maxtracts = len(source.tractfile.streamlines)
                 nbtracts = min(maxtracts, kwargs.get('nb_tracts', 1000))
@@ -508,9 +544,14 @@ class LocalNeuroglancer:
         self.redisplay(display_dimensions, state=state)
 
     @action(needstate=True)
-    def unload(self, layer=None, *, state=None):
+    def unload(
+        self,
+        layer: str | list[str] | None = None,
+        *,
+        state: ng.ViewerState | None = None,
+    ) -> None:
         """
-        Unload layers
+        Unload layers.
 
         Parameters
         ----------
@@ -522,9 +563,15 @@ class LocalNeuroglancer:
             del state.layers[name]
 
     @action(needstate=True)
-    def rename(self, src, dst, *, state=None):
+    def rename(
+        self,
+        src: str,
+        dst: str,
+        *,
+        state: ng.ViewerState | None = None
+    ) -> None:
         """
-        Rename a layer
+        Rename a layer.
 
         Parameters
         ----------
@@ -534,13 +581,20 @@ class LocalNeuroglancer:
             New name
         """
         for layer in state.layers:
+            layer: ng.ManagedLayer
             if layer.name == src:
                 layer.name = dst
                 return
         raise ValueError('No lauyer named', src)
 
     @action(needstate=True)
-    def display(self, dimensions=None, layer=None, *, state=None):
+    def display(
+        self,
+        dimensions: str | list[str] | None = None,
+        layer: str | None = None,
+        *,
+        state: ng.ViewerState | None = None,
+    ) -> None:
         """
         Change displayed dimensions.
 
@@ -565,9 +619,13 @@ class LocalNeuroglancer:
             instead of world space.
         """
 
-        def getDimensions(source, _reentrant=False):
+        def getDimensions(
+            source: SourceType,
+            _reentrant: bool = False
+        ) -> ng.CoordinateSpace:
+            """Grab input dimensions from source layer."""
             if getattr(source, 'transform', None):
-                transform = source.transform
+                transform: ng.CoordinateSpaceTransform = source.transform
                 if transform.inputDimensions:
                     return transform.inputDimensions
             if getattr(source, 'dimensions', None):
@@ -577,7 +635,8 @@ class LocalNeuroglancer:
                 return getDimensions(mysource, True)
             return None
 
-        def getTransform(source):
+        def getTransform(source: SourceType) -> ng.CoordinateSpaceTransform:
+            """Grab coordinate space transformation from source layer."""
             transform = None
             if getattr(source, 'transform', None):
                 transform = source.transform
@@ -600,7 +659,7 @@ class LocalNeuroglancer:
                 )
             return transform
 
-        def lin2aff(x):
+        def lin2aff(x: ArrayLike) -> np.ndarray:
             matrix = np.eye(len(x)+1)
             matrix[:-1, :-1] = x
             return matrix
@@ -610,15 +669,13 @@ class LocalNeuroglancer:
             if self.to_world is not None:
                 self.transform(lin2aff(self.to_world), _mode='', state=state)
                 self.to_world = None
+
         elif layer is not None:
             # move to canonical axes
             layer = state.layers[layer]
-            transform = subtransform(getTransform(layer.source[0]), 'm')
-            transform = ensure_same_scaling(transform)
-            matrix = transform.matrix
-            if matrix is None:
-                matrix = np.eye(len(transform.output_dimensions.names))
-            matrix = to_square(matrix)[:-1, :-1]
+            transform = T.subtransform(getTransform(layer.source[0]), 'm')
+            transform = T.ensure_same_scale(transform)
+            matrix = T.get_matrix(transform, square=True)[:-1, :-1]
             # remove scales and shears
             u, _, vh = np.linalg.svd(matrix)
             rot = u @ vh
@@ -641,49 +698,47 @@ class LocalNeuroglancer:
             dimensions = list(dimensions[0])
         if len(dimensions) > 3:
             raise ValueError('display takes at most three axis names')
-        dimensions = [letter2full.get(letter.lower(), letter)
+        dimensions = [S.letter2full.get(letter.lower(), letter)
                       for letter in dimensions]
         display_dimensions = dimensions
 
-        def compactNames(names):
+        def compactNames(names: list[str]) -> str:
             names = list(map(lambda x: x[0].lower(), names))
             names = ''.join([d for d in names if d not in 'ct'])
             return names
 
         names = compactNames(display_dimensions)
 
-        def reorientUsingTransform(source):
+        def reorientUsingTransform(source: SourceType) -> bool:
             transform = getTransform(source)
-            matrix = to_square(transform.matrix)
-            if matrix is None:
-                matrix = np.eye(4)
+            matrix = T.get_matrix(transform, square=True)
             odims = transform.outputDimensions
             onames = transform.outputDimensions.names
             onames = compactNames(onames)
             if all(name in onames for name in names):
                 return False
-            T0 = ng.CoordinateSpaceTransform(
+            xform0 = ng.CoordinateSpaceTransform(
                 matrix=matrix[:-1],
                 input_dimensions=getDimensions(source),
                 output_dimensions=odims,
             )
-            T = neurotransforms[(onames, names)]
-            source.transform = compose(T, T0)
+            xform = S.neurotransforms[(onames, names)]
+            source.transform = T.compose(xform, xform0)
             return True
 
-        def reorientUsingDimensions(source):
+        def reorientUsingDimensions(source: SourceType) -> bool:
             idims = getDimensions(source)
             if not idims:
                 return False
             inames = compactNames(idims.names)
             if all(name in inames for name in names):
                 return True
-            T0 = ng.CoordinateSpaceTransform(
+            xform0 = ng.CoordinateSpaceTransform(
                 input_dimensions=idims,
                 output_dimensions=idims,
             )
-            T = neurotransforms[(inames, names)]
-            source.transform = compose(T, T0)
+            xform = S.neurotransforms[(inames, names)]
+            source.transform = T.compose(xform, xform0)
             return True
 
         for layer in state.layers:
@@ -697,9 +752,14 @@ class LocalNeuroglancer:
 
         self.redisplay(display_dimensions, state=state)
 
-    def redisplay(self, display_dimensions, state=None):
+    def redisplay(
+        self,
+        display_dimensions: list[str],
+        state: ng.ViewerState | None = None,
+    ) -> None:
         """
-        Resets `displayDimensions` to its current value, or to a new value.
+        Reset `displayDimensions` to its current value, or to a new value.
+
         This function does not transform the data accordingly. It only
         sets the state's `displayDimensions`.
 
@@ -713,10 +773,19 @@ class LocalNeuroglancer:
         state.displayDimensions = display_dimensions
 
     @action(needstate=True)
-    def transform(self, transform, layer=None, inv=False,
-                  *, mov=None, fix=None, _mode='ras2ras', state=None):
+    def transform(
+        self,
+        transform: ArrayLike[float] | str | PathLike | BytesIO,
+        layer: str | list[str] | None = None,
+        inv: bool = False,
+        *,
+        mov: str = None,
+        fix: str = None,
+        _mode: str = 'ras2ras',
+        state: ng.ViewerState | None = None,
+    ) -> None:
         """
-        Apply an affine transform
+        Apply an affine transform.
 
         Parameters
         ----------
@@ -748,7 +817,7 @@ class LocalNeuroglancer:
         if len(transform) == 1:
             transform = transform[0]
         if isinstance(transform, str):
-            transform = load_affine(transform, moving=mov, fixed=fix)
+            transform = T.load_affine(transform, moving=mov, fixed=fix)
         transform = np.asarray(transform, dtype='float64')
         if transform.ndim == 1:
             if len(transform) == 12:
@@ -760,27 +829,22 @@ class LocalNeuroglancer:
                 transform = transform.reshape([n, n+1])
         elif transform.ndim > 2:
             raise ValueError('Transforms must be matrices')
-        transform = to_square(transform)
+        transform = T.to_square(transform)
         if inv:
             transform = np.linalg.inv(transform)
         matrix1 = transform = transform[:-1]
 
         # make ng transform
-        T = ng.CoordinateSpaceTransform(
+        xform = ng.CoordinateSpaceTransform(
             matrix=transform,
-            input_dimensions=ng.CoordinateSpace(
-                names=["right", "anterior", "superior"],
-                units=["mm"] * 3,
-                scales=[1] * 3
-            ),
-            output_dimensions=ng.CoordinateSpace(
-                names=["right", "anterior", "superior"],
-                units=["mm"] * 3,
-                scales=[1] * 3
-            ),
+            input_dimensions=S.neurospaces["ras"],
+            output_dimensions=S.neurospaces["ras"],
         )
 
-        def getDimensions(source, _reentrant=False):
+        def getDimensions(
+            source: SourceType,
+            _reentrant: bool = False
+        ) -> ng.CoordinateSpace:
             if getattr(source, 'transform', None):
                 transform = source.transform
                 if transform.inputDimensions:
@@ -792,7 +856,7 @@ class LocalNeuroglancer:
                 return getDimensions(mysource, True)
             return None
 
-        def getTransform(source):
+        def getTransform(source: SourceType) -> ng.CoordinateSpaceTransform:
             if getattr(source, 'transform', None):
                 return source.transform
             if not isinstance(source, ng.LocalVolume):
@@ -801,46 +865,46 @@ class LocalNeuroglancer:
                     return mysource.transform
             return None
 
-        def composeTransform(source):
+        def composeTransform(source: SourceType) -> bool:
             transform = getTransform(source)
             idims = getDimensions(source)
             matrix = transform.matrix
             if matrix is None:
                 matrix = np.eye(4)
             odims = transform.outputDimensions
-            T0 = ng.CoordinateSpaceTransform(
+            xform0 = ng.CoordinateSpaceTransform(
                 matrix=matrix,
                 input_dimensions=idims,
                 output_dimensions=odims,
             )
             if _mode != 'ras2ras':
-                T1 = subtransform(ng.CoordinateSpaceTransform(
+                xform1 = T.subtransform(ng.CoordinateSpaceTransform(
                     input_dimensions=odims,
                     output_dimensions=odims,
                 ), unit='m')
-                T1.matrix = matrix1
+                xform1.matrix = matrix1
             else:
-                T1 = T
-            source.transform = compose(T1, T0)
+                xform1 = xform
+            source.transform = T.compose(xform1, xform0)
             return True
 
-        def applyTransform(source):
+        def applyTransform(source: SourceType) -> bool:
             idims = getDimensions(source)
             if not idims:
                 return False
-            T0 = ng.CoordinateSpaceTransform(
+            xform0 = ng.CoordinateSpaceTransform(
                 input_dimensions=idims,
                 output_dimensions=idims,
             )
             if _mode != 'ras2ras':
-                T1 = subtransform(ng.CoordinateSpaceTransform(
+                xform1 = T.subtransform(ng.CoordinateSpaceTransform(
                     matrix=matrix1,
                     input_dimensions=idims,
                     output_dimensions=idims,
                 ), unit='m')
             else:
-                T1 = T
-            source.transform = compose(T1, T0)
+                xform1 = xform
+            source.transform = T.compose(xform1, xform0)
             return True
 
         for layer in state.layers:
@@ -861,7 +925,14 @@ class LocalNeuroglancer:
             self.display(display_dimensions, state=state)
 
     @action(needstate=True)
-    def channel_mode(self, mode, layer=None, dimension='c', *, state=None):
+    def channel_mode(
+        self,
+        mode: Literal["local", "channel", "spatial"],
+        layer: str | list[str] | None = None,
+        dimension: str | list[str] = 'c',
+        *,
+        state: ng.ViewerState | None = None
+    ) -> None:
         """
         Change the mode (local or intensity) of an axis.
 
@@ -892,7 +963,11 @@ class LocalNeuroglancer:
             raise ValueError('Unknown channel mode. Should be one of '
                              '{local, channel, spatial}')
 
-        def rename_key(space, src, dst):
+        def rename_key(
+            space: ng.CoordinateSpace,
+            src: str,
+            dst: str,
+        ) -> ng.CoordinateSpace:
             space = space.to_json()
             newspace = {}
             for key, val in space.items():
@@ -901,7 +976,11 @@ class LocalNeuroglancer:
                 newspace[key] = val
             return ng.CoordinateSpace(newspace)
 
-        def update_transform(transform, olddim, newdim):
+        def update_transform(
+            transform: ng.CoordinateSpaceTransform,
+            olddim: str,
+            newdim: str,
+        ) -> ng.CoordinateSpaceTransform:
             if newdim.endswith(("'", "^")):
                 sdim = newdim[:-1]
             else:
@@ -927,7 +1006,9 @@ class LocalNeuroglancer:
                     transform.matrix = matrix
             return transform
 
-        def create_transform(scale, olddim, newdim):
+        def create_transform(
+            scale: list[float], olddim: str, newdim: str
+        ) -> ng.CoordinateSpaceTransform:
             if newdim.endswith(("'", "^")):
                 sdim = newdim[:-1]
             else:
@@ -1043,16 +1124,25 @@ class LocalNeuroglancer:
                     if sdim not in state.dimensions.to_json():
                         dimensions = state.dimensions.to_json()
                         dimensions[sdim] = scale
-                        state.dimensions = CoordinateSpace(dimensions)
-                layer.localDimensions = CoordinateSpace(localDimensions)
+                        state.dimensions = ng.CoordinateSpace(dimensions)
+                layer.localDimensions = ng.CoordinateSpace(localDimensions)
                 layer.localPosition = np.asarray(localPosition)
-                layer.channelDimensions = CoordinateSpace(channelDimensions)
+                layer.channelDimensions = ng.CoordinateSpace(channelDimensions)
 
     @action(needstate=True)
-    def position(self, coord, dimensions=None, unit=None,
-                 world=False, layer=False, *, state=None, **kwargs):
+    def position(
+        self,
+        coord: float | list[float],
+        dimensions: str | list[str] | None = None,
+        unit: str | None = None,
+        world: bool = False,
+        layer: bool | str = False,
+        *,
+        state: ng.ViewerState | None = None,
+        **kwargs,
+    ) -> list[float]:
         """
-        Change cursor position
+        Change cursor position.
 
         Parameters
         ----------
@@ -1101,7 +1191,7 @@ class LocalNeuroglancer:
             dimensions = [dimensions]
         dimensions = dimensions or list(map(str, dim.names))
         if len(dimensions) == 1 and len(dimensions[0]) > 1:
-            dimensions = compact2full(dimensions[0])
+            dimensions = S.name_compact2full(dimensions[0])
         dimensions = dimensions[:len(coord)]
 
         # Preproc layer
@@ -1124,7 +1214,7 @@ class LocalNeuroglancer:
         # Convert unit
         unitmap = {n: u for u, n in zip(dim.units, dim.names)}
         current_units = [unitmap[d] for d in dimensions]
-        coord = si_convert(coord, unit, current_units)
+        coord = U.convert_unit(coord, unit, current_units)
 
         # Sort coordinate in same order as dim
         coord = {n: x for x, n in zip(coord, dimensions)}
@@ -1139,7 +1229,7 @@ class LocalNeuroglancer:
         if change_space:
             self.display(current_dimensions, self._WORLD, state=state)
 
-            def lin2aff(x):
+            def lin2aff(x: ArrayLike) -> np.ndarray:
                 matrix = np.eye(len(x)+1)
                 matrix[:-1, :-1] = x
                 return matrix
@@ -1151,14 +1241,30 @@ class LocalNeuroglancer:
         return list(map(float, state.position))
 
     @action(needstate=True)
-    def orient(self, position, dimensions=None, units=None,
-               world=False, layer=False, reset=False, *, state=None):
+    def orient(
+        self,
+        position: list[float],
+        dimensions: str | list[str] | None = None,
+        units: str | None = None,
+        world: bool = False,
+        layer: bool | str = False,
+        reset: bool = False,
+        *,
+        state: ng.ViewerState | None = None
+    ) -> None:
+        """NOT IMPLEMETED YET."""
         raise NotImplementedError('Not implemented yet (sorry!)')
 
     @action(needstate=True)
-    def shader(self, shader, layer=None, *, state=None):
+    def shader(
+        self,
+        shader: str | PathLike,
+        layer: str | list[str] | None = None,
+        *,
+        state: ng.ViewerState | None = None
+    ) -> None:
         """
-        Apply a shader (that is, a colormap or lookup table)
+        Apply a shader (that is, a colormap or lookup table).
 
         Parameters
         ----------
@@ -1193,10 +1299,17 @@ class LocalNeuroglancer:
             layer.shader = shader
 
     @action(needstate=True)
-    def state(self, load=None, save=None, url=False, print=True,
-              *, state=None):
+    def state(
+        self,
+        load: str | None = None,
+        save: str | None = None,
+        url: bool = False,
+        print: bool = True,
+        *,
+        state: ng.ViewerState | None = None,
+    ) -> dict:
         """
-        Print or save or load the viewer's JSON state
+        Print or save or load the viewer's JSON state.
 
         Parameters
         ----------
@@ -1246,8 +1359,18 @@ class LocalNeuroglancer:
         return state
 
     @action(needstate=True)
-    def layout(self, layout=None, stack=None, layer=None, *,
-               flex=1, append=None, insert=None, remove=None, state=None):
+    def layout(
+        self,
+        layout: str | None = None,
+        stack: Literal["row", "column"] | None = None,
+        layer: str | list[str] | None = None,
+        *,
+        flex: float = 1,
+        append: bool | int | list[int] | str | None = None,
+        insert: int | list[int] | str | None = None,
+        remove: int | list[int] | str | None = None,
+        state: ng.ViewerState | None = None,
+    ) -> object:
         """
         Change layout.
 
@@ -1363,7 +1486,14 @@ class LocalNeuroglancer:
         return state.layout
 
     @action(needstate=True)
-    def zorder(self, layer, steps=None, *, state=None, **kwargs):
+    def zorder(
+        self,
+        layer: str | list[str],
+        steps: int = None,
+        *,
+        state: ng.ViewerState | None = None,
+        **kwargs,
+    ) -> None:
         """
         Move or reorder layers.
 
@@ -1420,9 +1550,9 @@ class LocalNeuroglancer:
                 state.layers[name] = layer
 
     @action
-    def help(self, action=None):
+    def help(self, action: str | None = None) -> None:
         """
-        Display help
+        Display help.
 
         Parameters
         ----------
@@ -1435,8 +1565,8 @@ class LocalNeuroglancer:
             self.parser.parse_args(['--help'])
 
     @action
-    def exit(self):
-        """Exit gracefully"""
+    def exit(self) -> None:
+        """Exit gracefully."""
         if hasattr(self, 'fileserver'):
             del self.fileserver
         sys.exit()
@@ -1447,7 +1577,7 @@ class LocalNeuroglancer:
     #
     # ==================================================================
 
-    def on_state_change(self):
+    def on_state_change(self) -> None:
         old_state = self.saved_state
         with self.viewer.txn() as state:
             self.saved_state = state
@@ -1459,7 +1589,7 @@ class LocalNeuroglancer:
                             != old_state.shaderControls.nbtracts):
                         self.update_tracts_nb(name)
 
-    def update_tracts_nb(self, name):
+    def update_tracts_nb(self, name: str) -> None:
         with self.viewer.txn() as state:
             layer = state.layers[name]
             print(type(layer))
@@ -1473,7 +1603,8 @@ class LocalNeuroglancer:
     #
     # ==================================================================
 
-    def ensure_url(self, filename):
+    def ensure_url(self, filename: str) -> str:
+        """Ensure that a path is a proper URL. Make one if needed."""
         DANDIHINTS = (
             'dandi://',
             'DANDI:',
@@ -1541,9 +1672,9 @@ class LocalNeuroglancer:
         'niftyreg',         # NiftyReg affine transform
     ]
 
-    def parse_filename(self, filename):
+    def parse_filename(self, filename: str) -> str:
         """
-        Parse a filename that may contain protocol hints
+        Parse a filename that may contain protocol hints.
 
         Parameters
         ----------

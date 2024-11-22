@@ -1,14 +1,28 @@
-from textwrap import dedent
+"""
+Functions to generate NeuroGlancer shaders.
+
+NeuroGlancer shaders must be snippets of GLSL code. This module contains
+functions that dynamically generate such code snippets.
+
+GLSL = OpenGL Shading Language.
+"""
+# stdlib
 import math
-from . import cmdata
+from os import PathLike
+from textwrap import dedent
+from typing import IO
+
+# internals
+from ngtools import cmdata
 
 
-def _flatten(x):
-    """Transform a list of list into a flat tuple"""
+def _flatten(x: list[list]) -> tuple:
+    """Transform a list of list into a flat tuple."""
     return tuple(z for y in x for z in y)
 
 
-def pretty_colormap_list(linewidth=79):
+def pretty_colormap_list(linewidth: int = 79) -> str:
+    """List all existing colormaps."""
     names = list(filter(lambda x: not x[0] == '_', dir(cmdata)))
     names = ['greyscale', 'orientation'] + names
     names = list(sorted(names))
@@ -25,7 +39,16 @@ def pretty_colormap_list(linewidth=79):
     return rows.format(*names)
 
 
-def load_fs_lut(path):
+def load_fs_lut(
+    path: str | PathLike | IO
+) -> dict[int, tuple[str, list[float]]]:
+    """
+    Load a FreeSurfer lookup table.
+
+    Returns a dictionary that maps integer labels to tuples that contains
+    1. the structure name, as a string
+    2. the structure RGBA color, as a 4-tuple of values between 0 and 1.
+    """
     if not hasattr(path, 'readlines'):
         with open(path, 'rt') as f:
             return load_fs_lut(f)
@@ -41,6 +64,7 @@ def load_fs_lut(path):
 
 
 class colormaps:
+    """Namespace for dynamic colormaps."""
 
     _DEFAULT_LENGTH = object()
 
@@ -56,7 +80,12 @@ class colormaps:
         """).lstrip()
 
     @staticmethod
-    def make_colormap(name, data=None, n=_DEFAULT_LENGTH):
+    def make_colormap(
+        name: str,
+        data: object | None = None,
+        n: int = _DEFAULT_LENGTH,
+    ) -> str:
+        """Generate GLSL code for a colormap."""
         data = data or getattr(cmdata, name)
         if isinstance(data, list):
             return colormaps.make_listed(name, data, n)
@@ -67,8 +96,12 @@ class colormaps:
         return None
 
     @staticmethod
-    def make_listed(name, data=None, n=_DEFAULT_LENGTH):
-        """Generated a listed colormap"""
+    def make_listed(
+        name: str,
+        data: object | None = None,
+        n: int = _DEFAULT_LENGTH,
+    ) -> str:
+        """Generate GLSL code for a listed colormap."""
         data = data or getattr(cmdata, name)
         if n is colormaps._DEFAULT_LENGTH:
             n = 128
@@ -96,9 +129,13 @@ class colormaps:
         ).strip()
 
     @staticmethod
-    def make_segmented(name, data=None, n=_DEFAULT_LENGTH):
-        """Generated a segmented colormap"""
-        def subsample(data, n):
+    def make_segmented(
+        name: str,
+        data: object | None = None,
+        n: int = _DEFAULT_LENGTH,
+    ) -> str:
+        """Generate GLSL code for a segmented colormap."""
+        def subsample(data: list[float], n: int) -> list[float]:
             if n is None:
                 return cmap
             step = max(1, len(r) // n)
@@ -163,6 +200,9 @@ for name in filter(lambda x: not x[0] == '_', dir(cmdata)):
 
 
 class shaders:
+    """Namespace for full-fledged shaders."""
+
+    # Classic greyscale map, with optional intensity-based opacity.
     greyscale = dedent(
         """
         #uicontrol invlerp normalized
@@ -182,6 +222,7 @@ class shaders:
         }
         """).lstrip()
 
+    # Shader for streamlines that have an `orientation` attribute
     orientation = colormaps.orientation + '\n' + dedent(
         """
         #uicontrol bool orient_color checkbox(default=true)
@@ -193,6 +234,8 @@ class shaders:
         }
         """).lstrip()
 
+    # TODO: Shader for streamlines that have an `orientation` and an `id`
+    # or `group` aatribute. It should selectively show or hide streamlines.
     trkorient = colormaps.orientation + '\n' + dedent(
         """
         #uicontrol uint nbtracts slider
@@ -205,6 +248,7 @@ class shaders:
         }
         """).lstrip()
 
+    # Classic RGB map, with brightness + contrast controls
     rgb = dedent(
         """
         #uicontrol float brightness slider(min=-1, max=1)
@@ -221,7 +265,17 @@ class shaders:
     )
 
     @staticmethod
-    def colormap(cmap):
+    def colormap(cmap: str) -> str:
+        """
+        Generate a shader based on a known colormap.
+
+        Parameters
+        ----------
+        cmap : str
+            Name of a colormap. Must be a valid attribute from the
+            `colormaps` namespace.
+
+        """
         return getattr(colormaps, cmap) + '\n' + dedent(
             """
             #uicontrol invlerp normalized
@@ -232,7 +286,15 @@ class shaders:
             """ % cmap).lstrip()
 
     @staticmethod
-    def lut(lut):
+    def lut(lut: dict | str | PathLike | IO) -> str:
+        """
+        Generate a shader based on a lookup table.
+
+        Parameters
+        ----------
+        lut : str | dict[int, tuple[str, tuple[float,float,float,float]]]
+            Path to a FreeSurfer lookup table, or pre-loaded LUT.
+        """
         if not isinstance(lut, dict):
             lut = load_fs_lut(lut)
         labels, colors = list(lut.keys()), list(lut.values())

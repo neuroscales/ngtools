@@ -20,6 +20,7 @@ from nibabel.filebasedimages import ImageFileError
 from nibabel.imageclasses import all_image_classes
 
 # internals
+from ngtools.datasources import LayerDataSource, datasource
 from ngtools.opener import open, stringify_path
 from ngtools.units import SI_PREFIX_EXPONENT
 
@@ -61,11 +62,11 @@ def _quantiles(q, data):
     return np.quantile(np.asarray(data[slicer]), q)
 
 
-class RemoteSource(ng.LayerDataSource):
-    """A remote data source"""
+class RemoteSource(LayerDataSource):
+    """A remote data source."""
 
     @classmethod
-    def from_filename(cls, filename, *args, **kwargs):
+    def from_filename(cls, filename: str, *args, **kwargs) -> RemoteSource:
         if filename.startswith(('zarr://', 'zarr2://', 'zarr3://')):
             klass = RemoteZarr
         elif filename.startswith('nifti://'):

@@ -1,13 +1,23 @@
-import os
-import sys
-import re
-import shlex                    # parse user input as if a shell commandline
-import atexit                   # do stuff whe exiting (save history...)
-import readline                 # autocomplete/history in user input
+
+"""
+An ArgumentParser that can be used as a commandline app.
+It handles history and autocomplete.
+
+We use it to implement a shell-like UI for neuroglancer.
+"""
+# stdlib
 import argparse
+import atexit  # do stuff whe exiting (save history...)
+import os
+import re
+import readline  # autocomplete/history in user input
+import shlex  # parse user input as if a shell commandline
+import sys
 import traceback
 from gettext import gettext  # to fix usage string
-from .utils import bcolors
+
+# internals
+from ngtools.local.termcolors import bcolors
 
 
 class ParserApp(argparse.ArgumentParser):
@@ -19,7 +29,7 @@ class ParserApp(argparse.ArgumentParser):
     DEFAULT_HISTFILE = '~/.neuroglancer_history'
     DEFAULT_HISTSIZE = 1000
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: tuple, **kwargs: dict) -> None:
         self.debug = kwargs.pop('debug', False)
         # Commandline behavior
         self.history_file = kwargs.pop('history_file', self.DEFAULT_HISTFILE)
@@ -37,7 +47,8 @@ class ParserApp(argparse.ArgumentParser):
         self.formatter_class = _fixhelpformatter(self.formatter_class)
 
     @property
-    def parsers(self):
+    def parsers(self) -> argparse._SubParsersAction | None:
+        """Return registered sub parsers."""
         parsers = None
         for action in self._actions:
             if isinstance(action, argparse._SubParsersAction):
@@ -46,19 +57,18 @@ class ParserApp(argparse.ArgumentParser):
         return parsers
 
     class InterruptParsing(Exception):
-        pass
+        """Exception raised when parsing gets interrupted."""
 
-    def exit(self, status=0, message=None):
-        """Overload ArgumentParser.exit to disable it"""
-        pass
+    def exit(self, status: int = 0, message: str | None = None) -> None:
+        """Overload ArgumentParser.exit to disable it."""
         raise self.InterruptParsing
         # if self.exit_on_help:
         #     return super().exit(status, message)
         # if message:
         #     print(message, file=sys.stderr)
 
-    def error(self, message):
-        """Overload ArgumentParser.error to disable it"""
+    def error(self, message: str) -> None:
+        """Overload ArgumentParser.error to disable it."""
         pass
         # if sys.version_info >= (3, 9) or self.exit_on_error:
         #     return super().error(message)
@@ -67,8 +77,8 @@ class ParserApp(argparse.ArgumentParser):
         # except SystemExit:
         #     pass
 
-    def enter_console(self):
-        """Setup history and auto-complete"""
+    def enter_console(self) -> None:
+        """Set up history and auto-complete."""
         # NOTE key bindings
         #   ^[A : arrow up
         #   ^[B : arrow down
@@ -88,13 +98,14 @@ class ParserApp(argparse.ArgumentParser):
             readline.set_history_length(self.history_size)
             atexit.register(self.exit_console)
 
-    def exit_console(self):
-        """Save history"""
+    def exit_console(self) -> None:
+        """Save history."""
         if self.history_file and self.history_size:
             readline.set_history_length(self.history_size)
             readline.write_history_file(self.history_file)
 
-    def await_input(self):
+    def await_input(self) -> None:
+        """Wait for next user input."""
         self.enter_console()
 
         print(
@@ -106,7 +117,7 @@ class ParserApp(argparse.ArgumentParser):
             f'exit the app.'
         )
 
-        def green(s):
+        def green(s: str) -> str:
             return '\001' + bcolors.fg.green + str(s) + bcolors.endc + '\002'
 
         count = 1
@@ -172,13 +183,14 @@ class ParserApp(argparse.ArgumentParser):
             self.exit_console()
 
     @property
-    def subcommands(self):
+    def subcommands(self) -> list[str]:
+        """Return the names of all subcommands."""
         if getattr(self.parsers, 'choices', None):
             return list(self.parsers.choices.keys())
         return []
 
-    def _listdir(self, root):
-        "List directory 'root' appending the path separator to subdirs."
+    def _listdir(self, root: str) -> list[str]:
+        """List directory 'root' appending the path separator to subdirs."""
         res = []
         for name in os.listdir(root):
             path = os.path.join(root, name)
@@ -187,8 +199,8 @@ class ParserApp(argparse.ArgumentParser):
             res.append(name)
         return res
 
-    def _complete_path(self, path=None):
-        "Perform completion of filesystem path."
+    def _complete_path(self, path: str | None = None) -> str:
+        """Perform completion of filesystem path."""
         if not path:
             return self._listdir('.')
         dirname, rest = os.path.split(path)
@@ -204,13 +216,14 @@ class ParserApp(argparse.ArgumentParser):
         # exact file match terminates this completion
         return [path + ' ']
 
-    def complete_default(self, context):
+    def complete_default(self, context: str) -> str:
+        """Fallback autocompleter."""
         return self._complete_path(os.path.expanduser(context))
 
     RE_SPACE = re.compile(r'.*\s+$', re.M)
 
-    def complete(self, context, state):
-        "Generic readline completion entry point."
+    def complete(self, context: str, state: str) -> str:
+        """Entry point for `readline` completion."""
         line = readline.get_line_buffer()
         begidx, endidx = readline.get_begidx(), readline.get_endidx()
         args = shlex.split(line)
@@ -238,7 +251,7 @@ class ParserApp(argparse.ArgumentParser):
             return None
 
 
-def _fixhelpformatter(klass):
+def _fixhelpformatter(klass: type) -> type:
     """
     argparse default usage string says that positional arguments
     should be given after optional arguments, whereas it's really the
@@ -249,7 +262,13 @@ def _fixhelpformatter(klass):
     method.
     """
 
-    def _format_usage(self, usage, actions, groups, prefix):
+    def _format_usage(  # noqa: ANN202
+        self: argparse.HelpFormatter,
+        usage: str | None,
+        actions: list[argparse.Action],
+        groups: list[argparse._ArgumentGroup],
+        prefix: str | None,
+    ) -> str:
         if prefix is None:
             prefix = gettext('usage: ')
 
@@ -297,7 +316,11 @@ def _fixhelpformatter(klass):
                 assert ' '.join(pos_parts) == pos_usage
 
                 # helper for wrapping lines
-                def get_lines(parts, indent, prefix=None):
+                def get_lines(
+                        parts: list[str],
+                        indent: str,
+                        prefix: str | None = None
+                ) -> list[str]:
                     lines = []
                     line = []
                     indent_length = len(indent)

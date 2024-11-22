@@ -1,15 +1,40 @@
-import numpy as np
-from types import GeneratorType as generator
-from neuroglancer import CoordinateSpace
-from neuroglancer.skeleton import SkeletonSource, Skeleton, VertexAttributeInfo
-from nibabel.streamlines.trk import TrkFile
-from nibabel.streamlines.tck import TckFile
+"""Specialized `SkeletonSource` that loads and serves tractography data."""
+
+# stdlib
 import random
+from io import BytesIO
+from os import PathLike
+from types import GeneratorType as generator
+from typing import Literal
+
+# externals
 import fsspec
+import numpy as np
+from neuroglancer import CoordinateSpace
+from neuroglancer.skeleton import Skeleton, SkeletonSource, VertexAttributeInfo
+from nibabel.streamlines.tck import TckFile
+from nibabel.streamlines.trk import TrkFile
+
+from ngtools.datasources import LocalSkeletonDataSource, datasource
 
 
-class TractSource(SkeletonSource):
+@datasource(["trk", "tck", "tracts"])
+class TractDataSource(LocalSkeletonDataSource):
+    """Data source for local skeletons."""
+
+    def __init__(self, *args, **kwargs):
+        self.nb_tracts = kwargs.pop('nb_tracts', None)
+        super().__init__(*args, **kwargs)
+
+    def _format_specific_init(self) -> None:
+        self._url = self.url
+        self.url = TractSkeleton(self._url, max_tracts=self.nb_tracts)
+
+
+class TractSkeleton(SkeletonSource):
     """
+    Local tractography source loaded into a neuroglancer skeleton.
+
     This class reads a TRK stremalines file (using nibabel)
     and implements methods that allow serving and/or converting the
     streamlines data into neuroglancer's precomputed skeleton format.
@@ -47,8 +72,13 @@ class TractSource(SkeletonSource):
 
     DEFAULT_MAX_TRACTS = 1000
 
-    def __init__(self, fileobj, max_tracts=DEFAULT_MAX_TRACTS, format=None,
-                 **kwargs):
+    def __init__(
+        self,
+        fileobj: str | PathLike | BytesIO,
+        max_tracts: int = DEFAULT_MAX_TRACTS,
+        format: Literal['tck', 'trk'] | None = None,
+        **kwargs: dict
+    ) -> None:
         """
         Parameters
         ----------
@@ -60,7 +90,7 @@ class TractSource(SkeletonSource):
             Format hint
         """
         self.fileobj = fileobj
-        self.max_tracts = max_tracts
+        self.max_tracts = max_tracts or self.DEFAULT_MAX_TRACTS
 
         format = format or ['trk', 'tck']
         if not isinstance(format, (list, tuple)):
@@ -88,24 +118,32 @@ class TractSource(SkeletonSource):
             num_components=3,
         )
 
-    def __getitem__(self, id):
-        """Get a single tract"""
+    # ------------------------------------------------------------------
+    #   SkeletonSource - API
+    # ------------------------------------------------------------------
+
+    def __getitem__(self, id: int) -> np.ndarray:
+        """Get a single tract."""
         self._ensure_loaded()
         return self.tractfile.streamlines[id]
 
-    def __len__(self):
-        """Total number of tracts"""
+    def __len__(self) -> int:
+        """Total number of tracts."""
         self._ensure_loaded()
         return len(self.tractfile.streamlines)
 
-    def _ensure_loaded(self, lazy=False):
-        """Load tracts from file (if `lazy=True`, only load metadata)"""
+    # ------------------------------------------------------------------
+    #   SkeletonSource - implementation
+    # ------------------------------------------------------------------
+
+    def _ensure_loaded(self, lazy: bool = False) -> None:
+        """Load tracts from file (if `lazy=True`, only load metadata)."""
         if self._is_loaded(lazy):
             return
 
         klasses = dict(tck=TckFile, trk=TrkFile)
 
-        def load(f):
+        def load(f: BytesIO) -> None:
             for format in self.format:
                 klass = klasses[format]
                 errors = {}
@@ -119,14 +157,14 @@ class TractSource(SkeletonSource):
             raise RuntimeError('\n'.join(
                 [f'{format}: {errors[format]}' for format in self.format]))
 
-        if isinstance(self.fileobj, str):
+        if isinstance(self.fileobj, (str, PathLike)):
             with fsspec.open(self.fileobj) as f:
                 load(f)
         else:
             load(f)
 
-    def _is_loaded(self, lazy=False):
-        """Check if file is loaded"""
+    def _is_loaded(self, lazy: bool = False) -> bool:
+        """Check if file is loaded."""
         if not self.tractfile:
             # not loaded at all
             return False
@@ -135,8 +173,8 @@ class TractSource(SkeletonSource):
             return lazy
         return True
 
-    def _filter(self):
-        """Select `max_tracts` random tracts"""
+    def _filter(self) -> None:
+        """Select `max_tracts` random tracts."""
         self._ensure_loaded()
         num_tracts = len(self.tractfile.streamlines)
         ids = list(range(num_tracts))
@@ -144,12 +182,12 @@ class TractSource(SkeletonSource):
         random.shuffle(ids)
         self.displayed_ids = ids[:self.max_tracts]
 
-    def _make_skeleton(self):
+    def _make_skeleton(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Merge all (filtered) streamlines into a single skeleton
+        Merge all (filtered) streamlines into a single skeleton.
 
         Returns
-        ----------
+        -------
         vertices : (N, 3) array
         edges : (M, 2) array
         orientation : (N, 3) array
@@ -181,8 +219,8 @@ class TractSource(SkeletonSource):
         return vertices, edges, orientations
 
     @classmethod
-    def compute_orientation(cls, tract):
-        """Compute the orientation of a tract at each vertex"""
+    def compute_orientation(cls, tract: np.ndarray) -> np.ndarray:
+        """Compute the orientation of a tract at each vertex."""
         # 1) compute directed orientation of each edge
         orient = tract[1:] - tract[:-1]
         # 2) compute directed orientation of each vertex as the
@@ -199,9 +237,9 @@ class TractSource(SkeletonSource):
         orient /= length
         return orient
 
-    def get_skeleton(self, i=1):
+    def get_skeleton(self, i: int = 1) -> Skeleton:
         """
-        Neuroglancer Python API
+        Neuroglancer Python API.
 
         Parameters
         ----------
@@ -218,9 +256,13 @@ class TractSource(SkeletonSource):
         vertices, edges, orients = self._make_skeleton()
         return Skeleton(vertices, edges, dict(orientation=orients))
 
-    def precomputed_prop_info(self, combined=False):
+    # ------------------------------------------------------------------
+    #   Converter to Neuroglancer precomputed skeleton format
+    # ------------------------------------------------------------------
+
+    def precomputed_prop_info(self, combined: bool = False) -> dict:
         """
-        "NG precomputed format" : property info
+        Return precomputed format's "property info" file.
 
             https://github.com/google/neuroglancer/blob/master/
             src/neuroglancer/datasource/precomputed/segment_properties.md
@@ -245,9 +287,9 @@ class TractSource(SkeletonSource):
         }
         return info
 
-    def precomputed_skel_info(self):
+    def precomputed_skel_info(self) -> dict:
         """
-        "NG precomputed format" : skeleton info
+        Return precomputed format's "skeleton info" file.
 
             https://github.com/google/neuroglancer/blob/master/
             src/neuroglancer/datasource/precomputed/skeletons.md
@@ -273,15 +315,20 @@ class TractSource(SkeletonSource):
 
         return info
 
-    def precomputed_skel_data(self, id=1, combined=True):
+    def precomputed_skel_data(
+        self,
+        id: int = 1,
+        combined: bool = True,
+    ) -> bytes:
+        """Return precomputed format's "skeleton data" bytes."""
         if combined:
             return self._precomputed_skel_data_combined(id)
         else:
             return self._precomputed_skel_data_single(id)
 
-    def _precomputed_skel_data_combined(self, id=1):
+    def _precomputed_skel_data_combined(self, id: int = 1) -> bytes:
         """
-        "NG precomputed format" : skeleton data (combined)
+        Return precomputed format's "skeleton data" bytes (combined).
 
         `id` should alway be `1` (since there is only one skeleton)
 
@@ -303,31 +350,20 @@ class TractSource(SkeletonSource):
         # edges:            uint32le  [num_edges,    2]  (C-order)
         # attr|orientation: float32le [num_vertices, 3]  (C-order)
 
-        num_vertices = num_edges = 0
-        vertices = b''
-        edges = b''
-        orientations = b''
-
-        for id in self.displayed_ids:
-            tract = self[id] * 1E6  # nanometer
-            v, e, o = self.get_skeleton(tract)
-            vertices += np.asarray(v, dtype='<f4').tobytes()
-            edges += np.asarray(e, dtype='<f4').tobytes()
-            orientations += np.asarray(o, dtype='<f4').tobytes()
-            num_vertices += len(tract)
-            num_edges += len(tract) - 1
+        v, e, o = self._make_skeleton()
+        v *= 1E6
 
         bintract = b''
-        bintract += np.asarray(num_vertices, dtype='<u4').tobytes()
-        bintract += np.asarray(num_edges, dtype='<u4').tobytes()
-        bintract += vertices
-        bintract += edges
-        bintract += orientations
+        bintract += np.asarray(len(v), dtype='<u4').tobytes()
+        bintract += np.asarray(len(e), dtype='<u4').tobytes()
+        bintract += np.asarray(v, dtype='<f4').tobytes()
+        bintract += np.asarray(e, dtype='<u4').tobytes()
+        bintract += np.asarray(o, dtype='<f4').tobytes()
         return bintract
 
-    def _precomputed_skel_data_single(self, id):
+    def _precomputed_skel_data_single(self, id: int) -> bytes:
         """
-        Return a single tract
+        Return precomputed format's "skeleton data" bytes (single tract).
 
         This function is used in the case where each streamline is
         encoded by a single skeleton. Note that this is very inefficient.

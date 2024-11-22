@@ -1,7 +1,129 @@
+[project]
+name = "ngtools"
+authors = [{name = "Yael Balbastre", email = "y.balbastre@ucl.ac.uk"}]
+maintainers = [{name = "Yael Balbastre", email = "y.balbastre@ucl.ac.uk"}]
+description = "Build and manipulate Neuroglancer scenes"
+readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Visualization"
+]
+requires-python = ">=3.10"
+dependencies = [
+    "neuroglancer",
+    "fsspec[full] >= 2021.0.0",    # // first stable releae
+    "universal_pathlib",           # UPath
+    "numpy >= 1.20",               # // np.typing
+    "nibabel",                     # io nifti
+    "nitransforms >= 22.0",        # io lta // scipy compat
+    "tifffile",                    # io tiff
+    "zarr",                        # io zarr
+    "indexed_gzip",                # io gzip
+    "cloud-volume",                # io precomputed | zarr | n5 | boss | graphene
+    "dask",
+    "dandi >= 0.44",               # get_assets_by_glob
+    "requests",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/balbasty/ngtools"
+Issues = "https://github.com/balbasty/ngtools/issues"
+
+[project.scripts]
+nglocal = "ngtools.nglocal:cli"
+neuroglancer = "ngtools.nglocal:cli"
+
 [build-system]
 requires = [
-  "setuptools>=61.0",
+  "setuptools >= 61.0",
   "wheel",
-  "versioneer[toml]==0.29",
+  "versioningit >= 1.0",
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ngtools"]
+
+[tool.versioningit]
+default-version = "0+unknown"
+
+[tool.versioningit.format]
+# Same format as versioneer
+distance = "{base_version}+{distance}.{vcs}{rev}"
+dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
+distance-dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
+
+[tool.versioningit.write]
+file = "ngtools/_version.py"
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+testpaths = [
+  "ngtools/tests"
+]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.ruff]
+exclude = [
+  ".bzr",
+  ".direnv",
+  ".eggs",
+  ".git",
+  ".git-rewrite",
+  ".hg",
+  ".mypy_cache",
+  ".nox",
+  ".pants.d",
+  ".pytype",
+  ".ruff_cache",
+  ".svn",
+  ".tox",
+  ".venv",
+  "__pypackages__",
+  "_build",
+  "buck-out",
+  "build",
+  "dist",
+  "node_modules",
+  "venv"
+]
+line-length = 88
+indent-width = 4
+src = ["."]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["ANN", "D", "E", "F", "I"]
+ignore = [
+  "ANN002",  # args should not be annotated
+  "ANN003",  # kwargs should not be annotated
+  "ANN101",  # self should not be annotated.
+  "ANN102",  # cls should not be annotated.
+  "D105",    # Missing docstring in magic method
+  "D205"     # 1 blank line required between summary line and description -> triggered in __init__ docstrings
+]
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"ngtools/tests/*.py" = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
