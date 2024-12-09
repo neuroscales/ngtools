@@ -153,9 +153,6 @@ class LocalNeuroglancer:
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
         self.parser = self._make_parser(debug)
-        self.to_world = None
-
-    _WORLD = object()
 
     # ==================================================================
     #

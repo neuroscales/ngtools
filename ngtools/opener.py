@@ -2,6 +2,7 @@
 # stdlib
 import json
 from bz2 import BZ2File
+from io import BufferedReader, BytesIO
 from os import PathLike, environ
 from pathlib import Path
 from types import TracebackType
@@ -9,8 +10,10 @@ from typing import IO
 
 # externals
 import fsspec
+import numpy as np
 import requests
 from indexed_gzip import IndexedGzipFile
+from typing_extensions import Buffer
 
 # internals
 from ngtools.protocols import FORMATS, LAYERS, PROTOCOLS
@@ -112,7 +115,7 @@ def parse_protocols(url: str | PathLike) -> tuple[str, str, str, str]:
             raise ValueError("Unknown protocol:", part)
     protocol = protocol or "file"
     if protocol != "file":
-        path = path + protocol
+        path = protocol + "://" + path
     return layert_type, format, protocol, path
 
 
@@ -135,7 +138,8 @@ def filesystem(
 def exists(uri: str | PathLike, **opt) -> bool:
     """Check that the file or directory pointed by a URI exists."""
     uri = parse_protocols(uri)[-1]
-    return filesystem(uri, **opt).exists(uri)
+    fs = filesystem(uri, **opt)
+    return fs.exists(uri)
 
 
 def read_json(fileobj: str | PathLike | IO, *args, **kwargs) -> dict:
@@ -175,6 +179,101 @@ def fsopen(
     return fs.open(uri, mode, compression=compression)
 
 
+class chain:
+    """Chain multiple file objects."""
+
+    # FIXME: never tested and not really used in the end
+
+    def __init__(self, *files, **kwargs) -> None:
+        self._files = list(map(lambda x: open(files, **kwargs)))
+        self._file_index = 0
+
+    def _open(self) -> None:
+        self._open(self._file_index)
+
+    def _close(self) -> None:
+        self._close(self._file_index)
+
+    def __enter__(self) -> IO:
+        self._open()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self._close()
+
+    def read(self, n: int | None = None, *a, **k) -> bytes | str:
+        out = None
+        while self._file_index < len(self._files):
+            with self._files[self._file_index] as f:
+                out1 = f.read(n, *a, **k)
+                if n != 0 and len(out1) == 0:
+                    self._file_index += 1
+                if n is not None:
+                    n -= len(out1)
+                out = out1 if out is None else (out + out1)
+                if n <= 0:
+                    break
+        return out
+
+    def readline(self, n: int | None = None, *a, **k) -> bytes | str:
+        out = []
+        while self._file_index < len(self._files):
+            with self._files[self._file_index] as f:
+                out1 = f.readlines(n, *a, **k)
+                if n != 0 and len(out1) == 0:
+                    self._file_index += 1
+                if n is not None:
+                    n -= len(out1)
+                out += out1
+                if n <= 0:
+                    break
+        return out
+
+    def readinto(self, buf: Buffer, *a, **k) -> None:
+        # FIXME: I am not sure this implementation works
+        buf0 = None
+        if isinstance(buf, np.ndarray):
+            buf0, buf = buf, np.empty_like(buf, shape=[buf.numel()])
+
+        count = 0
+        while self._file_index < len(self._files):
+            with self._files[self._file_index] as f:
+                count1 = f.readinto(buf[count:], *a, **k)
+                if len(buf) != 0 and count1 in (0, None):
+                    self._file_index += 1
+                if count1 is not None:
+                    count += count1
+                if count >= len(buf):
+                    break
+
+        if buf0 is not None:
+            buf0[...] = buf.reshape(buf0.shape)
+            buf = buf0
+        return count
+
+    def write(self, *a, **k) -> int:
+        raise NotImplementedError
+
+    def writeline(self, *a, **k) -> int:
+        raise NotImplementedError
+
+    def peek(self, *a, **k) -> bytes | str:
+        head = self.read(*a, **k)
+        self._files.insert(self._file_index, BytesIO(head))
+        return head
+
+    def seek(self, *a, **k) -> int:
+        raise NotImplementedError
+
+    def tell(self, *a, **k) -> int:
+        raise NotImplementedError
+
+
 class open:
     """
     General-purpose stream opener.
@@ -192,6 +291,7 @@ class open:
         fileobj: str | PathLike | IO,
         mode: str = 'rb',
         compression: str | None = None,
+        open: bool = True,
     ) -> None:
         """
         Open a file from a path or url or an opened file object.
@@ -225,7 +325,8 @@ class open:
 
         # open
         self._is_open = False
-        self._open()
+        if open:
+            self._open()
 
     @property
     def _effective_fileobj(self) -> IO:
@@ -240,6 +341,8 @@ class open:
         self._is_open = False
 
     def _open(self) -> None:
+        if self._is_open:
+            return
         if isinstance(self.fileobj, str):
             self._fsspec_open()
         if self.compression == 'infer' and 'r' in self.mode:
@@ -271,9 +374,8 @@ class open:
         # stream) and infer its compression from its magic bytes.
         fileobj = self._effective_fileobj
         if not hasattr(fileobj, "peek"):
-            raise TypeError(
-                "Expected a file-like object with `peek()` but got:", fileobj
-            )
+            fileobj = BufferedReader(fileobj)
+            self.fileobjs.append(fileobj)
         try:
             magic = fileobj.peek(2)
         except Exception:
@@ -290,8 +392,7 @@ class open:
     # ------------------------------------------------------------------
 
     def __enter__(self) -> IO:
-        if not self._is_open:
-            self._open()
+        self._open()
         return self._effective_fileobj
 
     def __exit__(

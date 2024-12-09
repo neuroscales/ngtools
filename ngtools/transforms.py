@@ -278,21 +278,52 @@ def inverse(
 
 
 def compose(
-    left: ng.CoordinateSpaceTransform,
-    right: ng.CoordinateSpaceTransform
+    *transforms,
+    adapt: bool = False,
 ) -> ng.CoordinateSpaceTransform:
     """
     Compose two transforms.
 
     Parameters
     ----------
-    left : ng.CoordinateSpaceTransform
-    right : ng.CoordinateSpaceTransform
+    *transforms : ng.CoordinateSpaceTransform
+        Transforms to compose
+    adapt : bool
+        Try to adapt midspaces if they are different neurospaces.
 
     Returns
     -------
     composition : ng.CoordinateSpaceTransform
     """
+    if len(transforms) == 0:
+        return None
+    if len(transforms) == 1:
+        return transforms[0]
+    left, right, *transforms = transforms
+    if transforms:
+        opt = dict(adapt=adapt)
+        return compose(compose(left, right, **opt), *transforms, **opt)
+
+    # ------------------------------------------------------------------
+    # Adapt midspace
+    #
+    #   The left and right transforms may map from/to spaces that are
+    #   compatible but different (for example, different neurospaces
+    #   such as "ras" and "lpi"). We therefore convert the intermediate
+    #   spaces (right output and left input) to the same neurospace
+    #   (xyz == ras) first.
+    if adapt:
+        space_right = S.space_to_name(right.output_dimensions, compact=True)
+        space_left = S.space_to_name(left.input_dimensions, compact=True)
+        sorted_right = list(sorted(space_right))
+        sorted_left = list(sorted(space_left))
+        if sorted_right != ["x", "y", "z"][:len(sorted_right)]:
+            right = compose(S.neurotransforms[("xyz", space_right)], right)
+        if sorted_left != ["x", "y", "z"][:len(sorted_left)]:
+            left = compose(left, S.neurotransforms[(space_left, "xyz")])
+
+    # ------------------------------------------------------------------
+    # Get parts
     li_dims = left.input_dimensions.to_json()
     lo_dims = left.output_dimensions.to_json()
     ri_dims = right.input_dimensions.to_json()

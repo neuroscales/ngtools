@@ -1,25 +1,41 @@
 """A neuroglancer scene with a programmatic interface."""
 # stdlib
-import os.path
+import json
 from io import BytesIO
 from os import PathLike
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence
+from urllib.parse import quote as urlquote
+from urllib.parse import unquote as urlunquote
+from urllib.parse import urlparse
 
 # externals
 import neuroglancer as ng
 import numpy as np
+from neuroglancer.viewer_state import wrapped_property
 from numpy.typing import ArrayLike
 from upath import UPath
 
 # internals
-import ngtools.datasources as D
-import ngtools.local.datasources as LD
-import ngtools.local.tracts as LT
-import ngtools.opener as Op
 import ngtools.spaces as S
 import ngtools.transforms as T
-import ngtools.units as U
+from ngtools.datasources import (
+    LayerDataSource,
+    LayerDataSources,
+    MeshDataSource,
+    SkeletonDataSource,
+    VolumeDataSource,
+)
+from ngtools.local.tracts import TractDataSource
+from ngtools.opener import exists, open, parse_protocols
 from ngtools.shaders import colormaps, shaders
+from ngtools.units import convert_unit, split_unit
+from ngtools.utils import DEFAULT_URL
+
+# monkey-patch Layer state to expose channelDimensions
+ng.Layer.channel_dimensions = ng.Layer.channelDimensions = wrapped_property(
+    "channelDimensions", ng.CoordinateSpace
+)
+ng.Layer.local_dimensions = ng.Layer.localDimensions = ng.Layer.layerDimensions
 
 
 def _ensure_list(x: object) -> list:
@@ -31,6 +47,9 @@ def _ensure_list(x: object) -> list:
     return list(x)
 
 
+_print = print
+
+
 URILike = str | PathLike
 SourceType = ng.LayerDataSource | ng.LocalVolume | ng.skeleton.SkeletonSource
 
@@ -38,52 +57,73 @@ SourceType = ng.LayerDataSource | ng.LocalVolume | ng.skeleton.SkeletonSource
 class LayerFactory(type):
     """Metaclass for layers."""
 
+    _JSONData = URILike | dict | ng.LayerDataSource | ng.Layer | None
+
     def __call__(  # noqa: D102
-        self, uri: URILike | ng.LayerDataSource, *args, **kwargs
+        cls,
+        json_data: _JSONData = None,
+        *args, **kwargs
     ) -> "Layer":
-        if isinstance(uri, (str, PathLike)):
-            layer_type = Op.parse_protocols(uri)[0]
-            layer = {
+        if isinstance(json_data, (str, PathLike)):
+            json_data = {"url": str(json_data)}
+        if isinstance(json_data, (ng.LayerDataSource, ng.Layer)):
+            json_data = json_data.to_json()
+        # only use the factory if it is not called from a subclass
+        if cls is not Layer:
+            return super().__call__(json_data, *args, **kwargs)
+        # switch based on uri
+        if "source" in kwargs:
+            source = LayerDataSources(kwargs["source"])
+        else:
+            source = LayerDataSources(json_data)
+        uri_as_str = source[0].url
+        if isinstance(uri_as_str, (str, PathLike)):
+            layer_type = parse_protocols(uri_as_str)[0]
+            SpecialLayer = {
                 'volume': ImageLayer,
                 'labels': SegmentationLayer,
                 'surface': MeshLayer,
                 'mesh': MeshLayer,
                 'tracts': TractLayer,
                 'skeleton': SkeletonLayer,
-            }.get(layer_type, lambda *a, **k: None)(uri, *args, **kwargs)
-            if layer:
-                return layer
-        source = D.LayerDataSource(uri, *args, **kwargs)
-        if isinstance(source, D.VolumeDataSource):
-            return ImageLayer(source)
-        if isinstance(source, D.SkeletonDataSource):
-            return SkeletonLayer(source)
-        if isinstance(source, D.MeshDataSource):
-            return MeshLayer(source)
+            }.get(layer_type, None)
+            if SpecialLayer:
+                return SpecialLayer(json_data, *args, **kwargs)
+        # switch based on data source type
+        source = LayerDataSources(json_data, *args, **kwargs)
+        if isinstance(source[0], VolumeDataSource):
+            return ImageLayer(source=source)
+        if isinstance(source[0], SkeletonDataSource):
+            return SkeletonLayer(source=source)
+        if isinstance(source[0], MeshDataSource):
+            return MeshLayer(source=source)
         raise ValueError("Cannot guess layer type for:", source)
 
 
 class Layer(ng.Layer, metaclass=LayerFactory):
     """Base class for all layers."""
 
-    def __init__(self, *args, **kwargs):
-        source = D.LayerDataSource(*args, **kwargs)
-        super().__init__(source)
+    def __getattribute__(self, name: str) -> Any:
+        value = super().__getattribute__(name)
+        if name == "source":
+            value = LayerDataSources(value)
+        return value
 
 
 class ImageLayer(Layer, ng.ImageLayer):
     """Image layer."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        source = D.LayerDataSource(self.source[0])
-        mn, q0, q1, mx = source.quantiles([0.0, 0.01, 0.99, 1.0])
-        self.shaderControls = {
-            "normalized": {
-                "range": np.stack([q0, q1]),
-                "window": np.stack([mn, mx]),
+        if self.source and not self.shaderControls:
+            source = self.source[0]
+            mn, q0, q1, mx = source.quantiles([0.0, 0.01, 0.99, 1.0])
+            self.shaderControls = {
+                "normalized": {
+                    "range": np.stack([q0, q1]).tolist(),
+                    "window": np.stack([mn, mx]).tolist(),
+                }
             }
-        }
 
 
 class SegmentationLayer(Layer, ng.SegmentationLayer):
@@ -95,19 +135,19 @@ class SegmentationLayer(Layer, ng.SegmentationLayer):
 class SkeletonFactory(LayerFactory):
     """Factory for skeletons."""
 
-    def __call__(self, uri: URILike, *args, **kwargs) -> "Layer":
+    def __call__(self, uri: URILike, *args, **kwargs) -> "Layer":  # noqa: D102
         if isinstance(uri, (str, PathLike)):
-            layer_type = Op.parse_protocols(uri)[0]
+            layer_type = parse_protocols(uri)[0]
             layer = {
                 'tracts': TractLayer,
                 'skeleton': SkeletonLayer,
             }.get(layer_type, lambda *a, **k: None)(uri, *args, **kwargs)
             if layer:
                 return layer
-        source = D.LayerDataSource(uri, *args, **kwargs)
-        if isinstance(source, LT.TractDataSource):
+        source = LayerDataSource(uri, *args, **kwargs)
+        if isinstance(source, TractDataSource):
             return TractLayer(source)
-        if isinstance(source, D.SkeletonDataSource):
+        if isinstance(source, SkeletonDataSource):
             return SkeletonLayer(source)
         raise ValueError("Cannot guess layer type for:", source)
 
@@ -122,7 +162,7 @@ class TractLayer(SkeletonLayer):
     """Tract layer."""
 
     def __init__(self, *args, **kwargs) -> None:
-        source = LT.TractDataSource(*args, **kwargs)
+        source = TractDataSource(*args, **kwargs)
         max_tracts = len(source.url.tractfile.streamlines)
         controls = {
             "nbtracts": {
@@ -147,6 +187,37 @@ class MeshLayer(Layer, ng.SingleMeshLayer):
     ...
 
 
+class ManagedLayer(ng.ManagedLayer):
+    """Named layer."""
+
+    def __setattr__(self, key: str, value: dict | ng.Layer) -> None:
+        if key == "layer":
+            value = Layer(value)
+        return super().__setattr__(key, value)
+
+
+class Layers(ng.Layers):
+    """List of named layers."""
+
+    class _ManagedLayersList(list):
+
+        def __init__(self, other: list[ng.ManagedLayer]) -> None:
+            super().__init__(map(ManagedLayer, other))
+
+        def append(self, x: ng.ManagedLayer) -> None:
+            super().append(ManagedLayer(x))
+
+        def extend(self, other: list[ng.ManagedLayer]) -> None:
+            super().extend(map(ManagedLayer, other))
+
+        def __setitem__(self, k: int, v: ng.ManagedLayer) -> None:
+            super().__setitem__(k, ManagedLayer(v))
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._layers = self._ManagedLayersList(self._layers)
+
+
 class ViewerState(ng.ViewerState):
     """Smart ng.ViewerState that knows default values set in the frontend."""
 
@@ -154,17 +225,24 @@ class ViewerState(ng.ViewerState):
         dims = {}
         for layer in self.layers:
             layer = layer.layer
-            source = D.LayerDataSource(layer.source)
+            source = LayerDataSource(layer.source)
             transform = source.transform
             odims = transform.output_dimensions
             dims.update({
-                name: [1, U.split_unit(unit)[1]]
+                name: [1, split_unit(unit)[1]]
                 for name, (_, unit) in odims.to_json().items()
                 if not name.endswith(("^", "'"))
             })
         return dims
 
-    def _fix_dimensions(self, value) -> ng.CoordinateSpace:
+    def __setattr__(self, name: str, value) -> None:
+        if name == "layers":
+            value = Layers(value)
+        return super().__setattr__(name, value)
+
+    def _fix_dimensions(
+        self, value: ng.CoordinateSpace | None
+    ) -> ng.CoordinateSpace:
         default_value = self._default_dimensions
         if value is None:
             value = default_value
@@ -182,6 +260,7 @@ class ViewerState(ng.ViewerState):
 
     @property
     def dimensions(self) -> ng.CoordinateSpace:
+        """All non-local dimensions."""
         self.value = super().dimensions
         return super().dimensions
 
@@ -189,7 +268,22 @@ class ViewerState(ng.ViewerState):
     def dimensions(self, value: ng.CoordinateSpace | None) -> None:
         self.value = self._fix_dimensions(value)
 
-    def _fix_relative_display_scales(self, value) -> dict[str, float]:
+    @property
+    def spatial_dimensions(self) -> ng.CoordinateSpace:
+        """All spatial dimensions (with meter-like unit)."""
+        return ng.CoordinateSpace({
+            key: [scale, unit]
+            for key, (scale, unit) in self.dimensions.to_json()
+            if unit[-1:] == "m"
+        })
+
+    @property
+    def _space(self) -> str:
+        return "".join(x[:1].lower() for x in self.spatial_dimensions.names)
+
+    def _fix_relative_display_scales(
+        self, value: dict[str, float] | None
+    ) -> dict[str, float]:
         dimensions = self.dimensions
         value = value or {}
         value = {
@@ -204,6 +298,7 @@ class ViewerState(ng.ViewerState):
 
     @property
     def relative_display_scales(self) -> dict[str, float]:
+        """Relative display scales."""
         self.relative_display_scales = super().relative_display_scales
         return super().relative_display_scales
 
@@ -216,6 +311,7 @@ class ViewerState(ng.ViewerState):
 
     @property
     def display_dimensions(self) -> list[str]:
+        """Name of (up to three) displayed dimensions."""
         self.value = super().relative_display_scales
         return super().relative_display_scales
 
@@ -282,7 +378,8 @@ class Scene(ViewerState):
         onames = []
         for n, uri in enumerate(uris):
             uri = str(uri).rstrip("/")
-            name = names[n] if names else UPath(uri).name
+            short_uri = parse_protocols(uri)[-1]
+            name = names[n] if names else UPath(short_uri).name
             onames.append(name)
             layer = Layer(uri, **kwargs)
             self.layers.append(name=name, layer=layer)
@@ -345,30 +442,34 @@ class Scene(ViewerState):
         axes : dict[str, str]
             Mapping from native to user names.
         """
+        def make_local_annot() -> ng.AnnotationLayer:
+            coord = ng.CoordinateSpace()
+            return ng.AnnotationLayer(ng.LocalAnnotationLayer(coord))
+
         # We save the mapping using the output dimensions of two
         # different local annotation layers.
         if "__world_axes_native__" not in self.layers:
             self.layers.append(ng.ManagedLayer(
                 name="__world_axes_native__",
-                layer=ng.AnnotationLayer(ng.LocalAnnotationLayer()),
+                layer=make_local_annot(),
                 archived=True
             ))
         if "__world_axes_current__" not in self.layers:
             self.layers.append(ng.ManagedLayer(
                 name="__world_axes_current__",
-                layer=ng.AnnotationLayer(ng.LocalAnnotationLayer()),
+                layer=make_local_annot(),
                 archived=True
             ))
-        __world_axes_native__ = self.layers["__world_axes_native__"]
-        __world_axes_current__ = self.layers["__world_axes_current__"]
+        world_axes_native = self.layers["__world_axes_native__"]
+        world_axes_current = self.layers["__world_axes_current__"]
 
         new_axes = axes
         axes = {"x": "x", "y": "y", "z": "z", "t": "t"}
         axes.update({
             native: current
             for native, current in zip(
-                __world_axes_native__.transform.output_dimensions.names,
-                __world_axes_current__.transform.output_dimensions.names
+                world_axes_native.source[0].transform.output_dimensions.names,
+                world_axes_current.source[0].transform.output_dimensions.names
             )
         })
 
@@ -387,11 +488,15 @@ class Scene(ViewerState):
                 "Renaming scheme cannot involve permuting native axes."
             )
 
-        __world_axes_native__.transform = ng.CoordinateSpaceTransform(
-            output_dimensions={name: [1, ""] for name in axes.keys()}
+        world_axes_native.source[0].transform = ng.CoordinateSpaceTransform(
+            output_dimensions=ng.CoordinateSpace({
+                name: [1, ""] for name in axes.keys()
+            })
         )
-        __world_axes_current__.transform = ng.CoordinateSpaceTransform(
-            output_dimensions={name: [1, ""] for name in axes.values()}
+        world_axes_current.source[0].transform = ng.CoordinateSpaceTransform(
+            output_dimensions=ng.CoordinateSpace({
+                name: [1, ""] for name in axes.values()
+            })
         )
         return axes
 
@@ -428,20 +533,20 @@ class Scene(ViewerState):
 
         layers = _ensure_list(layer)
         for named_layer in self.layers:
-            if layers and layer.name not in layers:
+            if layers and named_layer.name not in layers:
                 continue
             layer = named_layer.layer
-            transform = layer.transform
+            transform = layer.source[0].transform
             transform.output_dimensions = ng.CoordinateSpace({
-                axes.get(name): scale
-                for name, scale in transform.output_dimensions.to_json()
+                axes.get(name): scl
+                for name, scl in transform.output_dimensions.to_json().items()
             })
-            layer.transform = transform
+            layer.source[0].transform = transform
 
         return axes
 
     def _world2view(
-        self, rotation: np.ndarray | None = None
+        self, transform: np.ndarray | None = None
     ) -> ng.CoordinateSpaceTransform:
         """Set or get the world-to-view transform (must be a pure rotation)."""
         if "__world_to_view__" not in self.layers:
@@ -451,33 +556,30 @@ class Scene(ViewerState):
                 archived=True
             ))
         __world_to_view__ = self.layers["__world_to_view__"]
-        old_transform = __world_to_view__.source.transform
-        if rotation is None:
+        old_transform = __world_to_view__.source[0].transform
+
+        if transform is None:
             return old_transform
 
-        rotation = np.asarray(rotation)
-        rank = len(rotation)
-        names = list(self.world_axes().values())[:rank]
+        transform = np.asarray(transform)
+        rank = len(transform)
+        names = ["x", "y", "z"][:rank]
         matrix = np.eye(rank+1)[:-1]
-        matrix[:, :-1] = rotation
+        matrix[:, :-1] = transform
         dimensions = ng.CoordinateSpace({
             name: [1, ""] for name in names
         })
         transform = ng.CoordinateSpaceTransform(
             matrix=matrix,
+            input_dimensions=dimensions,
             output_dimensions=dimensions,
         )
-        __world_to_view__.source.transform = transform
+        __world_to_view__.source[0].transform = transform
         return transform
 
     def _neurospace(self, space: str | list[str] | None) -> str:
         """Set or get the neurospace used for display."""
-        current_space = self.dimensions.to_json().items()
-        current_space = [
-            name for name, (_, unit) in space
-            if U.split_unit(unit)[-1][-1:] == "m"
-        ]
-        current_space = "".join([name[0].lower() for name in current_space])
+        current_space = S.space_to_name(self.dimensions, compact=True)
 
         if space is None:
             return current_space
@@ -501,9 +603,9 @@ class Scene(ViewerState):
 
         Parameters
         ----------
-        space : str
+        space
             Name of space to show data in (`"ras"`, `"lpi"`, etc.)
-        layer : str
+        layer
             Name of a layer or `"world"`.
         """
         # If first input is a layer name, switch
@@ -514,46 +616,52 @@ class Scene(ViewerState):
         if space is None and layer is None:
             return self.dimensions
 
-        if space is not None:
-            transf
+        # Change neurospace
+        space = self._neurospace(space)
 
-        if layer == "world":
-            self.crossSectionOrientation = [0, 0, 0, 1]
-            return
+        # If it's just a neurospace change, we're done
+        if layer is None:
+            return space
 
-        elif layer in S.neurospaces:
-            display = list(self.renamed_axes().values())
-            this_space = "".join([axis[0].lower() for axis in display])
-            matrix = S.neurotransforms[layer, this_space].matrix[:3, :3]
-            if matrix.det() < 0:
-                display = display[1::-1] + display[-1:]
-                this_space = "".join([axis[0].lower() for axis in display])
-                matrix = S.neurotransforms[layer, this_space].matrix[:3, :3]
-                assert matrix.det() > 0
+        # Otherwise, temporarily move to canonical space
+        self._neurospace("xyz")
 
-            u, _, vh = np.linalg.svd(matrix)
-            rot = u @ vh
-            quat = T.matrix_to_quaternion(rot)
-            self.crossSectionOrientation = quat
+        # Move back to world space
+        #   1. get current world2view transform
+        world2view = self._world2view()
+        #   2. apply its inverse to remove its effect
+        view2world = T.inverse(world2view)
+        self._apply_transform(view2world)
+        #   3. reset world2view to identity
+        self._world2view(np.eye(4)[:3])
 
-        else:
-            # move to canonical axes
-            source = D.LayerDataSource(self.layers[layer].source)
-            transform = T.subtransform(source.transform, 'm')
-            transform = T.ensure_same_scale(transform)
-            matrix = T.get_matrix(transform, square=True)[:-1, :-1]
-            # remove scales and shears
-            u, _, vh = np.linalg.svd(matrix)
-            rot = u @ vh
-            # preserve permutations and flips
-            # > may not work if exactly 45 deg rotation so add a tiny bit of noise
-            eps = np.random.randn(*rot.shape) * 1E-8 * rot.abs().max()
-            orient = (rot + eps).round()
-            assert np.allclose(orient @ orient.T, np.eye(len(orient)))
-            rot = rot @ orient.T
-            # convert to quaternion
-            quat = T.matrix_to_quaternion(rot)
-            self.crossSectionOrientation = quat
+        # Compute new world2view
+        #   1. Get voxel2world matrix
+        source = LayerDataSource(self.layers[layer].source)
+        transform = T.subtransform(source.transform, 'm')
+        transform = T.ensure_same_scale(transform)
+        matrix = T.get_matrix(transform, square=True)[:-1, :-1]
+        #   2.remove scales and shears
+        u, _, vh = np.linalg.svd(matrix)
+        rot = u @ vh
+        #   3. preserve permutations and flips
+        #      > may not work if exactly 45 deg rotation so add a tiny
+        #        bit of noise
+        eps = np.random.randn(*rot.shape) * 1E-8 * rot.abs().max()
+        orient = (rot + eps).round()
+        assert np.allclose(orient @ orient.T, np.eye(len(orient)))
+        rot = rot @ orient.T
+        view2world = rot
+        world2view = rot.T
+
+        # Apply transform
+        self._apply_transform(world2view)
+
+        # Save world2view
+        self._world2view(world2view[:-1])
+
+        # Reset neurospace
+        return self._neurospace(space)
 
     def display(
         self,
@@ -593,27 +701,15 @@ class Scene(ViewerState):
             return names
 
         names = compactNames(display_dimensions)
-
-        def reorient(source: SourceType) -> bool:
-            xform0 = D.LayerDataSource(source).transform
-            onames = compactNames(xform0.outputDimensions.names)
-            if all(name in onames for name in names):
-                return False
-            xform = S.neurotransforms[(onames, names)]
-            source.transform = T.compose(xform, xform0)
-            return True
-
-        for layer in self.layers:
-            layer = layer.layer
-            if isinstance(layer, ng.ImageLayer):
-                for source in layer.source:
-                    reorient(source)
+        self.space(names)
 
         self.display_dimensions = display_dimensions
 
     def transform(
         self,
-        transform: ArrayLike[float] | str | PathLike | BytesIO,
+        transform: (
+            ng.CoordinateSpaceTransform | ArrayLike | str | PathLike | BytesIO
+        ),
         layer: str | list[str] | None = None,
         inv: bool = False,
         *,
@@ -643,10 +739,73 @@ class Scene(ViewerState):
         if not isinstance(layer_names, (list, tuple)):
             layer_names = [layer_names]
 
+        # save current axes
+        dimensions = self.dimensions
         display_dimensions = self.display_dimensions
-        self.display("ras")
+        world2view = self._world2view()
+        view2world = T.inverse(world2view)
+
+        # go back to world xyz space
+        self.space("xyz")
 
         # prepare transformation matrix
+        transform = self._load_transform(transform, inv, mov=mov, fix=fix)
+        transform = T.compose(world2view, transform, view2world, adapt=True)
+
+        # apply transform
+        self._apply_transform(transform, layer, adapt=True)
+
+        # go back to original space
+        self.space(S.space_to_name(dimensions))
+        self.display(display_dimensions)
+
+    def _apply_transform(
+        self,
+        transform: ng.CoordinateSpaceTransform,
+        layer: str | list[str] | None = None,
+        adapt: bool = False,
+    ) -> None:
+        """
+        Apply a transform to one or more layers.
+
+        This function expects that the output dimensions of the layer(s)
+        match the input dimensions of the transform. I.e., they must
+        already be in the correct neurospace and layerspace.
+        """
+        transform = self._load_transform(transform)
+
+        layer_names = layer
+        if isinstance(layer_names, str):
+            layer_names = [layer_names]
+
+        for layer in self.layers:
+            layer: ng.ManagedLayer
+            layer_name = layer.name
+            if layer_names and layer_name not in layer_names:
+                continue
+            if layer_name.startswith('__'):
+                continue
+            layer = layer.layer
+            if isinstance(layer, ng.ImageLayer):
+                for source in layer.source:
+                    source: LayerDataSource
+                    source.transform = T.compose(
+                        transform, source.transform, adapt=adapt
+                    )
+
+    @staticmethod
+    def _load_transform(
+        transform: (
+            ng.CoordinateSpaceTransform | ArrayLike | str | PathLike | BytesIO
+        ),
+        inv: bool = False,
+        *,
+        mov: str = None,
+        fix: str = None,
+    ) -> ng.CoordinateSpaceTransform:
+        if isinstance(transform, ng.CoordinateSpaceTransform):
+            return transform
+
         transform = _ensure_list(transform)
         if len(transform) == 1:
             transform = transform[0]
@@ -666,98 +825,20 @@ class Scene(ViewerState):
         transform = T.to_square(transform)
         if inv:
             transform = np.linalg.inv(transform)
-        matrix1 = transform = transform[:-1]
+        transform = transform[:-1]
 
         # make ng transform
-        xform = ng.CoordinateSpaceTransform(
+        return ng.CoordinateSpaceTransform(
             matrix=transform,
-            input_dimensions=S.neurospaces["ras"],
-            output_dimensions=S.neurospaces["ras"],
+            input_dimensions=S.neurospaces["xyz"],
+            output_dimensions=S.neurospaces["xyz"],
         )
-
-        def getDimensions(
-            source: SourceType,
-            _reentrant: bool = False
-        ) -> ng.CoordinateSpace:
-            if getattr(source, 'transform', None):
-                transform = source.transform
-                if transform.inputDimensions:
-                    return transform.inputDimensions
-            if getattr(source, 'dimensions', None):
-                return source.dimensions
-            if not _reentrant and not isinstance(source, ng.LocalVolume):
-                mysource = RemoteSource.from_filename(source.url)
-                return getDimensions(mysource, True)
-            return None
-
-        def getTransform(source: SourceType) -> ng.CoordinateSpaceTransform:
-            if getattr(source, 'transform', None):
-                return source.transform
-            if not isinstance(source, ng.LocalVolume):
-                mysource = RemoteSource.from_filename(source.url)
-                if getattr(mysource, 'transform', None):
-                    return mysource.transform
-            return None
-
-        def composeTransform(source: SourceType) -> bool:
-            transform = getTransform(source)
-            idims = getDimensions(source)
-            matrix = transform.matrix
-            if matrix is None:
-                matrix = np.eye(4)
-            odims = transform.outputDimensions
-            xform0 = ng.CoordinateSpaceTransform(
-                matrix=matrix,
-                input_dimensions=idims,
-                output_dimensions=odims,
-            )
-            if _mode != 'ras2ras':
-                xform1 = T.subtransform(ng.CoordinateSpaceTransform(
-                    input_dimensions=odims,
-                    output_dimensions=odims,
-                ), unit='m')
-                xform1.matrix = matrix1
-            else:
-                xform1 = xform
-            source.transform = T.compose(xform1, xform0)
-            return True
-
-        def applyTransform(source: SourceType) -> bool:
-            idims = getDimensions(source)
-            if not idims:
-                return False
-            xform0 = ng.CoordinateSpaceTransform(
-                input_dimensions=idims,
-                output_dimensions=idims,
-            )
-            if _mode != 'ras2ras':
-                xform1 = T.subtransform(ng.CoordinateSpaceTransform(
-                    matrix=matrix1,
-                    input_dimensions=idims,
-                    output_dimensions=idims,
-                ), unit='m')
-            else:
-                xform1 = xform
-            source.transform = T.compose(xform1, xform0)
-            return True
-
-        for layer in self.layers:
-            if layer_names and layer.name not in layer_names:
-                continue
-            layer = layer.layer
-            if isinstance(layer, ng.ImageLayer):
-                for source in layer.source:
-                    composeTransform(source)
-
-        self.display(display_dimensions)
 
     def channel_mode(
         self,
         mode: Literal["local", "channel", "spatial"],
         layer: str | list[str] | None = None,
         dimension: str | list[str] = 'c',
-        *,
-        state: ng.ViewerState | None = None
     ) -> None:
         """
         Change the mode (local or intensity) of an axis.
@@ -863,10 +944,11 @@ class Scene(ViewerState):
             )
             return transform
 
-        for layer in state.layers:
+        for layer in self.layers:
+            layer: ng.ManagedLayer
             if layers and layer.name not in layers:
                 continue
-            layer = layer.layer
+            layer: ng.Layer = layer.layer
             for dimension in dimensions:
                 ldim = dimension + "'"
                 cdim = dimension + "^"
@@ -947,10 +1029,10 @@ class Scene(ViewerState):
                     else:
                         source.transform = create_transform(
                             scale, cdim if was_channel else ldim, sdim)
-                    if sdim not in state.dimensions.to_json():
-                        dimensions = state.dimensions.to_json()
+                    if sdim not in self.dimensions.to_json():
+                        dimensions = self.dimensions.to_json()
                         dimensions[sdim] = scale
-                        state.dimensions = ng.CoordinateSpace(dimensions)
+                        self.dimensions = ng.CoordinateSpace(dimensions)
                 layer.localDimensions = ng.CoordinateSpace(localDimensions)
                 layer.localPosition = np.asarray(localPosition)
                 layer.channelDimensions = ng.CoordinateSpace(channelDimensions)
@@ -962,8 +1044,6 @@ class Scene(ViewerState):
         unit: str | None = None,
         world: bool = False,
         layer: bool | str = False,
-        *,
-        state: ng.ViewerState | None = None,
         **kwargs,
     ) -> list[float]:
         """
@@ -991,20 +1071,20 @@ class Scene(ViewerState):
             Current cursor position.
         """
         if kwargs.pop('reset', not isinstance(coord, Sequence) and coord == 0):
-            return coord([0] * len(state.dimensions))
+            return coord([0] * len(self.dimensions))
 
-        if not state.dimensions:
+        if not self.dimensions:
             raise RuntimeError(
                 'Dimensions not known. Are you running the app in windowless '
                 'mode? If yes, you must open a neuroglancer window to access '
                 'or modifiy the cursor position')
 
-        dim = state.dimensions
+        dim = self.dimensions
 
         # No argument -> print current position
         if not coord:
             string = []
-            position = list(map(float, state.position))
+            position = list(map(float, self.position))
             for x, d, s, u in zip(position, dim.names, dim.scales, dim.units):
                 x = float(x) * float(s)
                 string += [f'{d}: {x:g} {u}']
@@ -1023,47 +1103,42 @@ class Scene(ViewerState):
         if world and layer:
             raise ValueError('Cannot use both --world and --layer')
         if world:
-            layer = self._WORLD
+            layer = "world"
         if layer is True:
-            layer = state.layers[0].name
+            layer = self.layers[0].name
 
         # Change space
         current_dimensions = list(map(str, dim.names))
         change_space = False
-        to_world = None
+        world2view = None
         if layer or any(d not in current_dimensions for d in dimensions):
-            to_world = self.to_world
-            self.display(dimensions, layer, state=state)
+            world2view = self._world2view()
+            self.space(dimensions, layer)
             change_space = True
 
         # Convert unit
         unitmap = {n: u for u, n in zip(dim.units, dim.names)}
         current_units = [unitmap[d] for d in dimensions]
-        coord = U.convert_unit(coord, unit, current_units)
+        coord = convert_unit(coord, unit, current_units)
 
         # Sort coordinate in same order as dim
         coord = {n: x for x, n in zip(coord, dimensions)}
-        for x, n in zip(state.position, dim.names):
+        for x, n in zip(self.position, dim.names):
             coord.setdefault(n, x)
         coord = [coord[n] for n in dim.names]
 
         # Assign new coord
-        state.position = list(coord.values())
+        self.position = list(coord.values())
 
         # Change space back
         if change_space:
-            self.display(current_dimensions, self._WORLD, state=state)
+            self.space(current_dimensions, "world")
 
-            def lin2aff(x: ArrayLike) -> np.ndarray:
-                matrix = np.eye(len(x)+1)
-                matrix[:-1, :-1] = x
-                return matrix
+            if world2view is not None:
+                self._apply_transform(world2view)
+                self._world2view(world2view.matrix)
 
-            if to_world is not None:
-                self.transform(lin2aff(to_world.T), _mode='', state=state)
-                self.to_world = to_world
-
-        return list(map(float, state.position))
+        return list(map(float, self.position))
 
     def orient(
         self,
@@ -1073,8 +1148,6 @@ class Scene(ViewerState):
         world: bool = False,
         layer: bool | str = False,
         reset: bool = False,
-        *,
-        state: ng.ViewerState | None = None
     ) -> None:
         """NOT IMPLEMETED YET."""
         raise NotImplementedError('Not implemented yet (sorry!)')
@@ -1083,8 +1156,6 @@ class Scene(ViewerState):
         self,
         shader: str | PathLike,
         layer: str | list[str] | None = None,
-        *,
-        state: ng.ViewerState | None = None
     ) -> None:
         """
         Apply a shader (that is, a colormap or lookup table).
@@ -1100,13 +1171,14 @@ class Scene(ViewerState):
         layer_names = _ensure_list(layer or [])
 
         if shader.lower() == 'rgb':
-            for layer in state.layers:
+            for layer in self.layers:
+                layer: ng.ManagedLayer
                 layer_name = layer.name
                 if layer_names and layer_name not in layer_names:
                     continue
-                layer = layer.layer
+                layer: ng.Layer = layer.layer
                 if not layer.channelDimensions.to_json():
-                    self.channel_mode('channel', layer=layer_name, state=state)
+                    self.channel_mode('channel', layer=layer_name)
 
         if hasattr(shaders, shader):
             shader = getattr(shaders, shader)
@@ -1115,7 +1187,7 @@ class Scene(ViewerState):
         elif 'main()' not in shader:
             # assume it's a path
             shader = shaders.lut(shader)
-        for layer in state.layers:
+        for layer in self.layers:
             if layer_names and layer.name not in layer_names:
                 continue
             layer = layer.layer
@@ -1131,7 +1203,6 @@ class Scene(ViewerState):
         append: bool | int | list[int] | str | None = None,
         insert: int | list[int] | str | None = None,
         remove: int | list[int] | str | None = None,
-        state: ng.ViewerState | None = None,
     ) -> object:
         """
         Change layout.
@@ -1172,14 +1243,14 @@ class Scene(ViewerState):
             Current JSON layout
         """  # noqa: E501
         if not layout and (remove is None):
-            print(state.layout)
-            return state.layout
+            print(self.layout)
+            return self.layout
 
         layout = _ensure_list(layout or [])
 
         layer = _ensure_list(layer or [])
         if (len(layout) > 1 or stack) and not layer:
-            layer = [_.name for _ in state.layers]
+            layer = [_.name for _ in self.layers]
 
         if layer:
             layout = [ng.LayerGroupViewer(
@@ -1223,7 +1294,7 @@ class Scene(ViewerState):
             raise ValueError('Do not set `layout` and `remove`')
 
         if append or (insert is not False) or (remove is not False):
-            parent = state.layout
+            parent = self.layout
             while indices:
                 parent = layout.children[indices.pop(0)]
             if layout and not isinstance(layout, ng.LayerGroupViewer):
@@ -1231,7 +1302,7 @@ class Scene(ViewerState):
                     if len(parent.children):
                         layer = [L for L in parent.children[-1].layers]
                     else:
-                        layer = [_.name for _ in state.layers]
+                        layer = [_.name for _ in self.layers]
                 layout = ng.LayerGroupViewer(
                     layers=layer,
                     layout=layout,
@@ -1244,15 +1315,13 @@ class Scene(ViewerState):
             elif remove:
                 del parent.children[remove]
         else:
-            state.layout = layout
-        return state.layout
+            self.layout = layout
+        return self.layout
 
     def zorder(
         self,
         layer: str | list[str],
         steps: int = None,
-        *,
-        state: ng.ViewerState | None = None,
         **kwargs,
     ) -> None:
         """
@@ -1286,18 +1355,18 @@ class Scene(ViewerState):
         names = _ensure_list(layer)
         if steps is None:
             # permutation
-            names += list(reversed([layer.name for layer in state.layers
+            names += list(reversed([layer.name for layer in self.layers
                                     if layer.name not in names]))
-            layers = {layer.name: layer.layer for layer in state.layers}
+            layers = {layer.name: layer.layer for layer in self.layers}
             for name in names:
-                del state.layers[name]
+                del self.layers[name]
             for name in reversed(names):
-                state.layers[name] = layers[name]
+                self.layers[name] = layers[name]
         elif steps == 0:
             return
         else:
             # move up/down
-            layers = {layer.name: layer.layer for layer in state.layers}
+            layers = {layer.name: layer.layer for layer in self.layers}
             indices = {name: n for n, name in enumerate(layers)}
             for name in layers.keys():
                 indices[name] += steps * (1 if name in names else -1)
@@ -1306,163 +1375,62 @@ class Scene(ViewerState):
                 for name in sorted(layers.keys(), key=lambda x: indices[x])
             }
             for name in layers.keys():
-                del state.layers[name]
+                del self.layers[name]
             for name, layer in layers.items():
-                state.layers[name] = layer
+                self.layers[name] = layer
 
-    # ==================================================================
-    #
-    #                            FILEUTILS
-    #
-    # ==================================================================
-
-    def ensure_url(self, filename: str) -> str:
-        """Ensure that a path is a proper URL. Make one if needed."""
-        DANDIHINTS = (
-            'dandi://',
-            'DANDI:',
-            'https://identifiers.org/DANDI:',
-            'https://dandiarchive.org/',
-            'https://gui.dandiarchive.org/',
-            'https://api.dandiarchive.org/',
-        )
-        if filename.startswith(DANDIHINTS):
-            return RemoteDandiFileSystem().s3_url(filename)
-
-        if not filename.startswith(remote_protocols()):
-            filename = os.path.abspath(filename)
-            while filename.endswith('/'):
-                filename = filename[:-1]
-            prefix = f'http://{self.fileserver.ip}:{self.fileserver.port}/'
-            filename = prefix + filename
-        return filename
-
-    # Protocols that describe the type of data contained in the file
-    LAYERTYPES = [
-        'volume',           # Raster data (image or volume)
-        'labels',           # Integer raster data, interpreted as labels
-        'surface',          # Triangular mesh
-        'mesh',             # Other types of mesh ???
-        'tracts',           # Set of piecewise curves
-        'roi',              # Region of interest ???
-        'points',           # Pointcloud
-        'transform',        # Spatial transform
-        'affine',           # Affine transform
-    ]
-
-    # Native neuroglancer formats
-    NG_FORMATS = [
-        'boss',             # bossDB: Block & Object storage system
-        'brainmap',         # Google Brain Maps
-        'deepzoom',         # Deep Zoom file-backed data source
-        'dvid',             # DVID
-        'graphene',         # Graphene Zoom file-backed data source
-        'local',            # Local in-memory
-        'n5',               # N5 data source
-        'nggraph',          # nggraph data source
-        'nifti',            # Single NIfTI file
-        'obj',              # Wavefront OBJ mesh file
-        'precomputed',      # Precomputed file-backed data source
-        'render',           # Render
-        'vtk',              # VTK mesh file
-        'zarr',             # Zarr data source
-        'zarr2',            # Zarr v2 data source
-        'zarr3',            # Zarr v3 data source
-    ]
-
-    # Extra local formats (if not specified, try to guess from file)
-    EXTRA_FORMATS = [
-        'mgh',              # Freesurfer volume format
-        'mgz',              # Freesurfer volume format (compressed)
-        'trk',              # Freesurfer streamlines
-        'lta',              # Freesurfer affine transform
-        'surf',             # Freesurfer surfaces
-        'annot',            # Freesurfer surface annotation
-        'tck',              # MRtrix streamlines
-        'mif',              # MRtrix volume format
-        'gii',              # Gifti
-        'tiff',             # Tiff volume format
-        'niftyreg',         # NiftyReg affine transform
-    ]
-
-    def parse_filename(self, filename: str) -> str:
+    def state(
+        self,
+        load: str | None = None,
+        save: str | None = None,
+        url: bool = False,
+        print: bool = True,
+    ) -> dict:
         """
-        Parse a filename that may contain protocol hints.
+        Print or save or load the viewer's JSON state.
 
         Parameters
         ----------
-        filename : str
-            A filename, that may be prepended by:
-
-            1) A layer type protocol, which indicates the kind of object
-               that the file contains.
-               Examples: `volume://`, `labels://`, `tracts://`.
-            2) A format protocol, which indicates the exact file format.
-               Examples: `nifti://`, `zarr://`, `mgh://`.
-            3) An access protocol, which indices the protocol used to
-               access the files.
-               Examples: `https://`, `s3://`, `dandi://`.
-
-            All of these protocols are optional. If absent, a guess is
-            made using the file extension.
+        load : str
+            Load state from JSON file, or JSON string (or URL if `url=True`).
+        save : str
+            Save state to JSON file
+        url : bool
+            Print/load a JSON URL rather than a JSON object
+        print : bool
+            Print the JSON object or URL
 
         Returns
         -------
-        layertype : str
-            Data type protocol. Can be None.
-        format : str
-            File format protocol. Can be None.
-        filename : str
-            File path, eventually prepended with an access protocol.
+        state : dict
+            JSON state
         """
-        layertype = None
-        for dt in self.LAYERTYPES:
-            if filename.startswith(dt + '://'):
-                layertype = dt
-                filename = filename[len(dt)+3:]
-                break
+        if load:
+            if exists(load):
+                with open(load, "rb") as f:
+                    state = json.load(f)
+            elif url:
+                if '://' in url:
+                    url = urlparse(url).fragment
+                    if url[0] != '!':
+                        raise ValueError('Neuroglancer URL not recognized')
+                    url = url[1:]
+                state = json.loads(urlunquote(url))
+            else:
+                state = json.loads(url)
+            self.set_state(state)
+        else:
+            state = self.to_json()
 
-        format = None
-        for fmt in self.NG_FORMATS + self.EXTRA_FORMATS:
-            if filename.startswith(fmt + '://'):
-                format = fmt
-                filename = filename[len(fmt)+3:]
-                break
+        if save:
+            with open(save, 'wb') as f:
+                json.dump(state, f, indent=4)
 
-        if format is None:
-            if filename.endswith('.mgh'):
-                format = 'mgh'
-            elif filename.endswith('.mgz'):
-                format = 'mgz'
-            elif filename.endswith(('.nii', '.nii.gz')):
-                format = 'nifti'
-            elif filename.endswith('.trk'):
-                format = 'trk'
-            elif filename.endswith('.tck'):
-                format = 'tck'
-            elif filename.endswith('.lta'):
-                format = 'lta'
-            elif filename.endswith('.mif'):
-                format = 'mif'
-            elif filename.endswith(('.tiff', '.tif')):
-                format = 'tiff'
-            elif filename.endswith('.gii'):
-                format = 'gii'
-            elif filename.endswith(('.zarr', '.zarr/')):
-                format = 'zarr'
-            elif filename.endswith('.vtk'):
-                format = 'vtk'
-            elif filename.endswith('.obj'):
-                format = 'obj'
-            elif filename.endswith(('.n5', '.n5/')):
-                format = 'n5'
-
-        if layertype is None:
-            if format in ('tck', 'trk'):
-                layertype = 'tracts'
-            elif format in ('vtk', 'obj'):
-                layertype = 'mesh'
-            elif format in ('lta',):
-                layertype = 'affine'
-
-        return layertype, format, filename
+        if print:
+            if url:
+                state = urlquote(json.dumps(state))
+                state = f'{DEFAULT_URL}#!' + state
+                _print(state)
+            else:
+                _print(json.dumps(state, indent=4))
+        return state

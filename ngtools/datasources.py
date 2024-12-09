@@ -5,7 +5,7 @@ optional attributes that neuroglancer typically delegates to the frontend.
 # stdlib
 import json
 from os import PathLike
-from typing import Callable
+from typing import Callable, Iterator
 
 # externals
 import neuroglancer as ng
@@ -67,32 +67,64 @@ SourceType = (
 )
 
 
+class LayerDataSources(ng.LayerDataSources):
+    """List of data sources."""
+
+    def __init__(self, other: list[ng.LayerDataSource]) -> None:
+        if not isinstance(other, (list, tuple, ng.LayerDataSources)):
+            other = [other]
+        other = list(map(LayerDataSource, other))
+        super().__init__(other)
+
+    def append(self, x: ng.LayerDataSource) -> None:  # noqa: D102
+        super().append(LayerDataSource(x))
+
+    def extend(self, other: list[ng.LayerDataSource]) -> None:  # noqa: D102
+        super().extend(map(LayerDataSource, other))
+
+    def __setitem__(self, k: int, v: ng.LayerDataSource) -> None:
+        super().__setitem__(k, LayerDataSource(v))
+
+    def __getitem__(self, *a, **k) -> "LayerDataSource":
+        return LayerDataSource(super().__getitem__(*a, **k))
+
+    def __iter__(self) -> Iterator["LayerDataSource"]:
+        for source in self:
+            yield LayerDataSource(source)
+
+    def pop(self, *a, **k) -> ng.LayerDataSource:  # noqa: D102
+        return LayerDataSource(super().pop(*a, **k))
+
+
 class _LayerDataSourceFactory(type):
     """Factory for LayerDataSource objects."""
 
-    def __call__(cls, *args, **kwargs) -> "LayerDataSource":
-        # only use the factory if it is not called from a subclass
-        if cls is not LayerDataSource:
-            return super().__call__(*args, **kwargs)
+    def __call__(cls, json_data=None, *args, **kwargs) -> "LayerDataSource":
         # If (single) input already a LayerDataSource, return it as is.
         #   LayerDataSource(inp: LayerDataSource) -> LayerDataSource
-        if len(args == 1) and not kwargs:
-            if isinstance(args[0], LayerDataSource):
-                return args[0]
+        if not args and not kwargs:
+            if isinstance(json_data, cls) and cls is not LayerDataSource:
+                return json_data
+        # only use the factory if it is not called from a subclass
+        if cls is not LayerDataSource:
+            if isinstance(json_data, ng.LayerDataSource):
+                json_data = json_data.to_json()
+            obj = super().__call__(json_data, *args, **kwargs)
+            return obj
         # Use  ng.LayerDataSource to get url
         #   (deals with json_data, keywords, local volumes, etc.)
-        url = ng.LayerDataSource(*args, **kwargs).url
+        url = ng.LayerDataSource(json_data, *args, **kwargs).url
         # Local objects -> delegate
         if isinstance(url, ng.LocalVolume):
-            return LocalVolumeDataSource(*args, **kwargs)
+            return LocalVolumeDataSource(json_data, *args, **kwargs)
         if isinstance(url, ng.skeleton.SkeletonSource):
-            return LocalSkeletonDataSource(*args, **kwargs)
+            return LocalSkeletonDataSource(json_data, *args, **kwargs)
         # If format protocol provided, use it
         format = parse_protocols(url)[1]
         if format in _DATASOURCE_REGISTRY:
-            return _DATASOURCE_REGISTRY[format](*args, **kwargs)
+            return _DATASOURCE_REGISTRY[format](json_data, *args, **kwargs)
         # Otherwise. build a simple source
-        return super().__call__(args, **kwargs)
+        return super().__call__(json_data, *args, **kwargs)
 
 
 class DataSourceInfo:
@@ -143,7 +175,7 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
                 "Cannot assign uri with protocol", format, "in "
                 "data source of type:", type(self)
             )
-        super().url = value
+        ng.LayerDataSource.url.fset(self, value)
         self._format_specific_init()
 
     @property
@@ -190,7 +222,7 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
 
     @transform.setter
     def transform(self, value: ng.CoordinateSpaceTransform | dict) -> None:
-        super(self, ng.LayerDataSource).transform = value
+        ng.LayerDataSource.transform.fset(self, value)
 
     @property
     def shape(self) -> list[int]:
@@ -236,8 +268,6 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
         """Return an array-like object pointing to a pyramid level."""
         if level < 0:
             level = self.nb_levels + level
-        if level == 0:
-            return self.dataobj
         return self._get_dataobj(level, mode)
 
     def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
@@ -251,7 +281,16 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
 
     def quantiles(self, q: float | list[float]) -> np.ndarray:
         """Compute data quantiles."""
-        return _quantiles(q, self.get_dataobj(-1, mode="r"))
+        spatial_dims = self.transform.input_dimensions
+        spatial_dims = [
+            i for i, unit in enumerate(spatial_dims.units)
+            if unit.endswith("m")
+        ]
+        for i in range(self.nb_levels):
+            dat = self.get_dataobj(i, mode="r")
+            if all([dat.shape[i] <= 64 for i in spatial_dims]):
+                break
+        return _quantiles(q, dat)
 
     def apply_transform(self, transform: ng.CoordinateSpaceTransform) -> None:
         """Apply an additional transform in model space."""
@@ -468,13 +507,15 @@ class NiftiVolumeInfo(VolumeInfo):
         self._nib_header: nib.nifti1.Nifti1Header = self._load()
 
     def _load(self) -> nib.nifti1.Nifti1Header | nib.nifti2.Nifti2Header:
+        NiftiHeaders = (nib.nifti1.Nifti1Header, nib.nifti2.Nifti2Header)
         url = parse_protocols(self.url)[-1]
-        fileobj = open(url, compression='infer')
-        for image_klass in (nib.nifti1.Nifti1Image, nib.nifti2.Nifti2Image):
-            try:
-                return image_klass.from_fileobj(fileobj)
-            except Exception:
-                pass
+        for compression in ('infer', 'gzip', None):
+            fileobj = open(url, compression=compression)
+            for image_klass in NiftiHeaders:
+                try:
+                    return image_klass.from_fileobj(fileobj)
+                except Exception:
+                    pass
         raise RuntimeError("Failed to load file.")
 
     _allSourceNames = ["i", "j", "k", "m", "c^", "c1^", "c2^"]
@@ -946,6 +987,12 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
 
 class _ZarrDataSourceFactory(_LayerDataSourceFactory):
     def __call__(cls, *args, **kwargs) -> "ZarrDataSource":
+        # If (single) input already a LayerDataSource, return it as is.
+        #   LayerDataSource(inp: LayerDataSource) -> LayerDataSource
+        if len(args) == 1 and not kwargs:
+            if isinstance(args[0], cls) and cls is not ZarrDataSource:
+                return args[0]
+        # only use the factory if it is not called from a subclass
         if cls is not ZarrDataSource:
             return super().__call__(*args, **kwargs)
         url = ng.LayerDataSource(*args, **kwargs).url
@@ -1026,7 +1073,7 @@ class Zarr3DataSource(ZarrDataSource):
         return Zarr3VolumeInfo(self.url)
 
 
-class _PrecomputedInfoFactory:
+class _PrecomputedInfoFactory(type):
     def __call__(cls, url: str | dict) -> "PrecomputedInfo":
         info = cls._load_dict(url)
         return {

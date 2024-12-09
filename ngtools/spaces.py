@@ -12,6 +12,8 @@ name_compact2full
     (`["anterior", "posterior", "superior"]`).
 space_is_compatible
     Check whether two standard spaces can map to/from each other.
+space_to_name
+    Get neurospace name from spatial axis names.
 
 
 Attributes
@@ -372,6 +374,21 @@ def normalize_space(space: ng.CoordinateSpace) -> ng.CoordinateSpace:
     !!! info "See also: `convert_space`."
     """
     return convert_space(space, "base")
+
+
+def space_to_name(
+    space: ng.CoordinateSpace,
+    compact: bool = False,
+) -> str | list[str]:
+    """Get spatial axis name from coordinate space."""
+    space = space.to_json().items()
+    space = [
+        name for name, (_, unit) in space
+        if U.split_unit(unit)[-1][-1:] == "m"
+    ]
+    if compact:
+        space = "".join([name[0].lower() for name in space])
+    return space
 
 
 def _ensure_list(x: object, n: int | None = None, **kwargs) -> list:
