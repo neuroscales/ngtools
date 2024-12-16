@@ -221,12 +221,30 @@ class Layers(ng.Layers):
 class ViewerState(ng.ViewerState):
     """Smart ng.ViewerState that knows default values set in the frontend."""
 
+    def __setattr__(self, name: str, value: object) -> None:
+        if hasattr(self, f"__set_{name}"):
+            value = getattr(self, f"__set_{name}")(value)
+        return super().__setattr__(name, value)
+
+    def __getattribute__(self, name: str) -> object:
+        try:
+            return super().__getattribute__(f"__get_{name}")()
+        except Exception:
+            ...
+        return super().__getattribute__(name)
+
+    def __set_layer(self, value: ng.Layers) -> Layers:
+        return Layers(value)
+
     def _default_dimensions(self) -> ng.CoordinateSpace:
         dims = {}
         for layer in self.layers:
+            layer: ng.ManagedLayer
+            if layer.name.startswith("__"):
+                continue
             layer = layer.layer
-            source = LayerDataSource(layer.source)
-            transform = source.transform
+            source = LayerDataSources(layer.source)
+            transform = source[0].transform
             odims = transform.output_dimensions
             dims.update({
                 name: [1, split_unit(unit)[1]]
@@ -235,15 +253,10 @@ class ViewerState(ng.ViewerState):
             })
         return dims
 
-    def __setattr__(self, name: str, value) -> None:
-        if name == "layers":
-            value = Layers(value)
-        return super().__setattr__(name, value)
-
-    def _fix_dimensions(
+    def __set_dimensions(
         self, value: ng.CoordinateSpace | None
     ) -> ng.CoordinateSpace:
-        default_value = self._default_dimensions
+        default_value = self._default_dimensions()
         if value is None:
             value = default_value
         value = value.to_json()
@@ -258,15 +271,10 @@ class ViewerState(ng.ViewerState):
         })
         return value
 
-    @property
-    def dimensions(self) -> ng.CoordinateSpace:
+    def __get_dimensions(self) -> ng.CoordinateSpace:
         """All non-local dimensions."""
-        self.value = super().dimensions
-        return super().dimensions
-
-    @dimensions.setter
-    def dimensions(self, value: ng.CoordinateSpace | None) -> None:
-        self.value = self._fix_dimensions(value)
+        self.dimensions = super().__getattribute__("dimensions")
+        return super().__getattribute__("dimensions")
 
     @property
     def spatial_dimensions(self) -> ng.CoordinateSpace:
@@ -281,7 +289,7 @@ class ViewerState(ng.ViewerState):
     def _space(self) -> str:
         return "".join(x[:1].lower() for x in self.spatial_dimensions.names)
 
-    def _fix_relative_display_scales(
+    def __set_relative_display_scales(
         self, value: dict[str, float] | None
     ) -> dict[str, float]:
         dimensions = self.dimensions
@@ -296,43 +304,36 @@ class ViewerState(ng.ViewerState):
         })
         return value
 
-    @property
-    def relative_display_scales(self) -> dict[str, float]:
+    def __get_relative_display_scales(self) -> dict[str, float]:
         """Relative display scales."""
-        self.relative_display_scales = super().relative_display_scales
-        return super().relative_display_scales
+        self.relative_display_scales \
+            = super().__getattribute__("relative_display_scales")
+        return super().__getattribute__("relative_display_scales")
 
-    @relative_display_scales.setter
-    def relative_display_scales(self, value: dict[str, float] | None) -> None:
-        value = self._fix_relative_display_scales(value)
-        super().relative_display_scales = value
+    __get_relativeDisplayScales = __get_relative_display_scales
 
-    relativeDisplayScales = relative_display_scales
-
-    @property
-    def display_dimensions(self) -> list[str]:
+    def __get_display_dimensions(self) -> list[str]:
         """Name of (up to three) displayed dimensions."""
-        self.value = super().relative_display_scales
-        return super().relative_display_scales
+        self.display_dimensions \
+            = super().__getattribute__("display_dimensions")
+        return super().__getattribute__("display_dimensions")
 
-    @display_dimensions.setter
-    def display_dimensions(self, value: list[str] | None) -> None:
+    def __set_display_dimensions(self, value: list[str] | None) -> None:
         dimensions = self.dimensions.items()
         if value is None:
             value = []
         value = [name for name in value if name in dimensions]
         dimensions = [name for name in dimensions if name not in value]
         value = (value + dimensions)[:3]
-        super().display_dimensions = value
+        return value
 
-    @property
-    def cross_section_orientation(self) -> np.ndarray:
+    def __get_cross_section_orientation(self) -> np.ndarray:
         """Orientation of the cross section view."""
-        self.cross_section_orientation = super().cross_section_orientation
-        return super().cross_section_orientation
+        self.cross_section_orientation \
+            = super().__getattribute__("cross_section_orientation")
+        return super().__getattribute__("cross_section_orientation")
 
-    @cross_section_orientation.setter
-    def cross_section_orientation(self, value: ArrayLike) -> None:
+    def __set_cross_section_orientation(self, value: ArrayLike) -> None:
         if value is None:
             value = [0, 0, 0, 1]
         value = np.ndarray(value).tolist()
@@ -342,7 +343,44 @@ class ViewerState(ng.ViewerState):
         value /= (value**2).sum()**0.5
         super().cross_section_orientation = value
 
-    crossSectionOrientation = cross_section_orientation
+    __get_crossSectionOrientation = __get_cross_section_orientation
+    __set_crossSectionOrientation = __set_cross_section_orientation
+
+    def _default_position(self) -> list[float]:
+        """
+        Compute a smart default position (center of the fist).
+
+        NOTE: positions are expressed in "model scaled space". That is,
+        it the "z" dimension listed in `dimensions` has scale (0.5, "mm"),
+        a position increment of 1 will correspond to an effective increment
+        of 0.5 mm.
+        """
+        pos = [0.0] * len(self.dimensions.names)
+        for layer in self.layers:
+            layer: ng.ManagedLayer
+            if not layer.visible:
+                continue
+            layer = layer.layer
+            if getattr(layer, "source", []) == 0:
+                continue
+            source = layer.source[0]
+            if not hasattr(source, "output_center"):
+                continue
+            center = source.output_center
+            for i, (name, (scale, unit)) \
+                    in enumerate(self.dimensions.to_json().items()):
+                if name not in source.output_dimensions.names:
+                    continue
+                j = source.output_dimensions.names.index(name)
+                unit0 = source.output_dimensions.units[j]
+                value = convert_unit(center[j], unit0, unit)
+                pos[i] = value / scale
+        return pos
+
+    def __get_position(self) -> list[float]:
+        if not super().__getattribute__("position"):
+            self.position = self._default_position()
+        return super().__getattribute__("position")
 
 
 class Scene(ViewerState):
@@ -374,6 +412,8 @@ class Scene(ViewerState):
         uris = _ensure_list(uri or [])
         names = _ensure_list(names or [])
 
+        nb_layers_0 = len(self.layers)
+
         # load layers
         onames = []
         for n, uri in enumerate(uris):
@@ -390,6 +430,9 @@ class Scene(ViewerState):
         # apply transform
         if transform:
             self.transform(transform, name=onames)
+
+        if nb_layers_0 == 0:
+            self.position = self._default_position()
 
     def unload(
         self,
@@ -637,7 +680,7 @@ class Scene(ViewerState):
 
         # Compute new world2view
         #   1. Get voxel2world matrix
-        source = LayerDataSource(self.layers[layer].source)
+        source = LayerDataSource(self.layers[layer].source[0])
         transform = T.subtransform(source.transform, 'm')
         transform = T.ensure_same_scale(transform)
         matrix = T.get_matrix(transform, square=True)[:-1, :-1]

@@ -6,6 +6,7 @@ optional attributes that neuroglancer typically delegates to the frontend.
 import json
 from os import PathLike
 from typing import Callable, Iterator
+from itertools import product
 
 # externals
 import neuroglancer as ng
@@ -89,7 +90,7 @@ class LayerDataSources(ng.LayerDataSources):
         return LayerDataSource(super().__getitem__(*a, **k))
 
     def __iter__(self) -> Iterator["LayerDataSource"]:
-        for source in self:
+        for source in super().__iter__():
             yield LayerDataSource(source)
 
     def pop(self, *a, **k) -> ng.LayerDataSource:  # noqa: D102
@@ -99,16 +100,21 @@ class LayerDataSources(ng.LayerDataSources):
 class _LayerDataSourceFactory(type):
     """Factory for LayerDataSource objects."""
 
-    def __call__(cls, json_data=None, *args, **kwargs) -> "LayerDataSource":
+    def __call__(
+        cls,
+        json_data: dict | ng.LayerDataSource | None = None,
+        *args,
+        **kwargs
+    ) -> "LayerDataSource":
         # If (single) input already a LayerDataSource, return it as is.
         #   LayerDataSource(inp: LayerDataSource) -> LayerDataSource
         if not args and not kwargs:
             if isinstance(json_data, cls) and cls is not LayerDataSource:
                 return json_data
         # only use the factory if it is not called from a subclass
+        if isinstance(json_data, ng.LayerDataSource):
+            json_data = json_data.to_json()
         if cls is not LayerDataSource:
-            if isinstance(json_data, ng.LayerDataSource):
-                json_data = json_data.to_json()
             obj = super().__call__(json_data, *args, **kwargs)
             return obj
         # Use  ng.LayerDataSource to get url
@@ -295,6 +301,78 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
     def apply_transform(self, transform: ng.CoordinateSpaceTransform) -> None:
         """Apply an additional transform in model space."""
         self.transform = T.compose(transform, self.transform)
+
+    @property
+    def input_dimensions(self) -> ng.CoordinateSpace:
+        """Input dimensions."""
+        return self.transform.input_dimensions
+
+    inputDimensions = input_dimensions
+
+    @property
+    def output_dimensions(self) -> ng.CoordinateSpace:
+        """Output dimensions."""
+        return self.transform.output_dimensions
+
+    outputDimensions = output_dimensions
+
+    @property
+    def input_bbox(self) -> list[list[float]]:
+        """Bounding box, in input_dimensions space and units."""
+        shape = self.shape
+        scales = self.input_dimensions.scales
+        min = [0.0] * self.rank
+        max = [x * scl for x, scl in zip(shape, scales)]
+        return [min, max]
+
+    @property
+    def output_bbox(self) -> list[list[float]]:
+        """Bounding box, in output_dimensions space and units."""
+        bbox = self.input_bbox
+
+        mn = np.full([self.rank], +float('inf'))
+        mx = np.full([self.rank], -float('inf'))
+
+        for corner in product([0, 1], repeat=self.rank):
+            coord = [bbox[j][i] for i, j in enumerate(corner)]
+
+            mat = np.eye(self.rank+1)[:-1]
+            mat[:, -1] = coord
+            coord = ng.CoordinateSpaceTransform(
+                input_dimensions=self.input_dimensions,
+                output_dimensions=self.output_dimensions,
+                matrix=mat,
+            )
+
+            coord = T.compose(self.transform, coord)
+            coord = coord.matrix[:, -1]
+
+            mn = np.minimum(mn, coord)
+            mx = np.maximum(mx, coord)
+
+        bbox = [mn.tolist(), mx.tolist()]
+        return bbox
+
+    @property
+    def input_center(self) -> list[float]:
+        """Center of the field of view in input dimensions space and units."""
+        bbox = np.asarray(self.input_bbox)
+        return ((bbox[0] + bbox[1]) / 2). tolist()
+
+    @property
+    def output_center(self) -> list[float]:
+        """Center of the field of view in output dimensions space and units."""
+        center = self.input_center
+        mat = np.eye(self.rank+1)[:-1]
+        mat[:, -1] = center
+        center = ng.CoordinateSpaceTransform(
+            input_dimensions=self.input_dimensions,
+            output_dimensions=self.output_dimensions,
+            matrix=mat,
+        )
+        center = T.compose(self.transform, center)
+        center = center.matrix[:, -1]
+        return center
 
 
 class VolumeInfo(DataSourceInfo):
