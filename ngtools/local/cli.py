@@ -5,7 +5,7 @@ import sys
 import webbrowser
 
 # internals
-from ngtools.local.fileserver import LocalFileServerInBackground
+from ngtools.local.fileserver import LocalFileServer
 from ngtools.local.viewer import LocalNeuroglancer
 
 
@@ -29,7 +29,7 @@ def main(args: list[str] | None = None) -> None:
 
     # instantiate file server
     if not args.no_fileserver:
-        fileserver = LocalFileServerInBackground(
+        fileserver = LocalFileServer(
             port=args.port_fileserver, ip=args.ip, interrupt=EOFError)
     else:
         fileserver = False

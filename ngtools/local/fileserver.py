@@ -15,6 +15,7 @@ import os
 import socket
 import sys
 from multiprocessing import Process
+from threading import Thread
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 
@@ -23,6 +24,26 @@ class _NoLoggingWSGIRequestHandler(WSGIRequestHandler):
 
     def log_message(self, format, *args):  # noqa: ANN001, ANN002, ANN202
         pass
+
+
+def find_available_port(port: int = 0, ip: str = "") -> tuple[int, str]:
+    """Return an available port and the local IP."""
+    try:
+        s = socket.socket()
+        s.bind((ip, port))
+        ip = s.getsockname()[0]
+        port = s.getsockname()[1]
+        s.close()
+    except OSError:
+        port0 = port
+        s = socket.socket()
+        s.bind((ip, 0))
+        ip = s.getsockname()[0]
+        port = s.getsockname()[1]
+        s.close()
+        print(f'Port {port0} already in use. Use port {port} instead.',
+              file=sys.stderr)
+    return port, ip
 
 
 class LocalFileServer:
@@ -47,24 +68,10 @@ class LocalFileServer:
             If instantiated inside a background process, useful to set
             to False so that the exception is handled in the main thread.
         """
-        try:
-            s = socket.socket()
-            s.bind((ip, port))
-            ip = s.getsockname()[0]
-            port = s.getsockname()[1]
-            s.close()
-        except OSError:
-            port0 = port
-            s = socket.socket()
-            s.bind((ip, 0))
-            ip = s.getsockname()[0]
-            port = s.getsockname()[1]
-            s.close()
-            print(f'Port {port0} already in use. Use port {port} instead.',
-                  file=sys.stderr)
-
+        port, ip = find_available_port(port, ip)
         self.port = port
         self.ip = ip
+        self.thread = None
 
         if interrupt is True:
             interrupt = KeyboardInterrupt
@@ -78,7 +85,7 @@ class LocalFileServer:
         self.server = make_server(self.ip, self.port, self._serve,
                                   handler_class=_NoLoggingWSGIRequestHandler)
 
-    def serve_forever(self) -> None:
+    def _serve_forever(self) -> None:
         """Run the server forever."""
         while True:
             try:
@@ -87,6 +94,26 @@ class LocalFileServer:
                 raise e
             finally:
                 continue
+
+    def start(self) -> None:
+        """Start server and server forever."""
+        if not self.thread:
+            self.thread = Thread(target=self._serve_forever)
+            self.thread.start()
+        elif not self.thread.is_alive():
+            self.thread = None
+            self.start()
+
+    def stop(self) -> None:
+        """Shutdown server."""
+        self.server.shutdown()
+        self.server.server_close()
+
+    def __del__(self) -> None:
+        try:
+            self.stop()
+        except Exception:
+            pass
 
     @staticmethod
     def _file_not_found(dest: str, start_response: callable) -> list:
@@ -178,68 +205,3 @@ class LocalFileServer:
 
         start_response("200 OK", header)
         return body
-
-
-class LocalFileServerInBackground:
-    """A fileserver that runs in a background process."""
-
-    def __init__(
-        self, port: int = 0, ip: str = "", interrupt: bool = False
-    ) -> None:
-        """
-        Parameters
-        ----------
-        port : int
-            Port number to use
-        ip : str
-            IP address
-        interrupt : bool or [tuple of] type
-            Exceptions that do interrupt the fileserver.
-            If any other exception happens, the fileserver is restarted.
-            If True, interupt on KeyboardInterrupt.
-        """
-        try:
-            s = socket.socket()
-            s.bind((ip, port))
-            ip = s.getsockname()[0]
-            port = s.getsockname()[1]
-            s.close()
-        except OSError:
-            port0 = port
-            s = socket.socket()
-            s.bind((ip, 0))
-            ip = s.getsockname()[0]
-            port = s.getsockname()[1]
-            s.close()
-            print(f'Port {port0} already in use. Use port {port} instead.',
-                  file=sys.stderr)
-
-        self.port = port
-        self.ip = ip
-        self.process = None
-        self.interrupt = interrupt
-
-    @classmethod
-    def _start_and_server_forever(
-        cls, port: int, ip: str, interupt: bool
-    ) -> None:
-        server = LocalFileServer(port, ip, interrupt=interupt)
-        server.serve_forever()
-
-    def start_and_serve_forever(self) -> None:
-        """Start server and server forever."""
-        if not self.process:
-            self.process = Process(
-                target=self._start_and_server_forever,
-                args=(self.port, self.ip, self.interrupt)
-            )
-        if not self.process.is_alive():
-            self.process.start()
-
-    def stop(self) -> None:
-        """Stop server."""
-        if self.process and self.process.is_alive():
-            self.process.terminate()
-
-    def __del__(self) -> None:
-        self.stop()

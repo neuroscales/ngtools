@@ -2,7 +2,6 @@
 # stdlib
 import argparse
 import os.path
-import socket
 import sys
 import textwrap
 
@@ -12,7 +11,7 @@ import numpy as np
 from neuroglancer.server import global_server_args
 
 # internals
-from ngtools.local.fileserver import LocalFileServerInBackground
+from ngtools.local.fileserver import LocalFileServer, find_available_port
 from ngtools.local.parserapp import ParserApp, _fixhelpformatter
 from ngtools.local.termcolors import bcolors
 from ngtools.scene import Scene
@@ -98,7 +97,7 @@ class LocalNeuroglancer:
         port: int = 0,
         ip: str = '',
         token: int = 1,
-        fileserver: bool | LocalFileServerInBackground = True,
+        fileserver: bool | int | LocalFileServer = True,
         debug: bool = False,
     ) -> None:
         """
@@ -118,28 +117,14 @@ class LocalNeuroglancer:
         debug : bool
             Print full trace when an error is encountered.
         """
-        if fileserver is True:
-            fileserver = LocalFileServerInBackground(interrupt=EOFError)
+        if fileserver is True or isinstance(fileserver, int):
+            portf = fileserver if isinstance(fileserver, int) else 0
+            fileserver = LocalFileServer(ip=ip, port=portf, interrupt=EOFError)
         self.fileserver = fileserver
         if self.fileserver:
-            self.fileserver.start_and_serve_forever()
+            self.fileserver.start()
 
-        try:
-            s = socket.socket()
-            s.bind((ip, port))
-            ip = s.getsockname()[0]
-            port = s.getsockname()[1]
-            s.close()
-        except OSError:
-            port0 = port
-            s = socket.socket()
-            s.bind((ip, 0))
-            ip = s.getsockname()[0]
-            port = s.getsockname()[1]
-            s.close()
-            print(f'Port {port0} already in use. Use port {port} instead.',
-                  file=sys.stderr)
-
+        port, ip = find_available_port(port, ip)
         global_server_args['bind_address'] = str(ip)
         global_server_args['bind_port'] = str(port)
         self.viewer = ng.Viewer(token=str(token))
