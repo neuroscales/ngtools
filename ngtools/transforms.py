@@ -113,6 +113,7 @@ AFFINE_FORMATMAP = {
 def matrix_to_quaternion(mat: np.ndarray) -> np.ndarray:
     """Convert a rotation matrix to a quaternion."""
     # https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Fitting_quaternions
+    mat = np.asarray(mat)
     if tuple(mat.shape) != (3, 3):
         raise ValueError("Expected a 3x3 matrix")
     if np.linalg.det(mat) < 0:
@@ -123,6 +124,7 @@ def matrix_to_quaternion(mat: np.ndarray) -> np.ndarray:
     K = np.asarray([
         [Qxx - Qyy - Qzz, Qxy + Qyx, Qxz + Qzx, Qzy - Qyz],
         [Qyx + Qxy, Qyy - Qxx - Qzz, Qzy + Qyz, Qxz - Qzx],
+        [Qzx + Qxz, Qzy + Qyz, Qzz - Qxx - Qyy, Qyx - Qxy],
         [Qzy - Qyz, Qxz - Qzx, Qyx - Qxy, Qxx + Qyy + Qzz],
     ])
     val, vec = np.linalg.eig(K)
@@ -134,7 +136,8 @@ def load_affine(
     format: str | None = None,
     moving: PathLike | str | None = None,
     fixed: PathLike | str | None = None,
-) -> np.ndarray:
+    names: list[str] = ("right", "anterior", "posterior"),
+) -> ng.CoordinateSpaceTransform:
     """
     Load an affine transform from a file.
 
@@ -183,10 +186,11 @@ def load_affine(
         ras2ras = klass.from_filename(fileobj).to_ras(moving, fixed)
         if isinstance(ras2ras, list):
             ras2ras = ras2ras[0]
+        dims = ng.CoordinateSpace(names=names, scales=[1]*3, units=["mm"]*3)
         return ng.CoordinateSpaceTransform(
-            matrix=ras2ras,
-            input_dimensions=S.neurospaces["ras"],
-            output_dimensions=S.neurospaces["ras"],
+            matrix=ras2ras[:3],
+            input_dimensions=dims,
+            output_dimensions=dims,
         )
 
     if format:
@@ -267,7 +271,7 @@ def inverse(
 
     inv_linear = np.linalg.inv(linear)
     inv_offset = -(inv_linear @ (offset * out_scales)) / inp_scales
-    inv_matrix = np.concat([inv_linear, inv_offset], -1)
+    inv_matrix = np.concatenate([inv_linear, inv_offset], -1)
 
     inv_transform = ng.CoordinateSpaceTransform(
         input_dimensions=transform.output_dimensions,
@@ -362,9 +366,9 @@ def compose(
     # Check mixing across removed and preserved axes
     lo_indcs_rm = set()
     for li_indx in li_indcs_rm:
-        lo_indces = l_matrix[:-1, li_indx].nonzero()
+        lo_indces = l_matrix[:-1, li_indx].nonzero()[0].tolist()
         for lo_indx in lo_indces:
-            li_indces = l_matrix[lo_indx, :-1].nonzero()
+            li_indces = l_matrix[lo_indx, :-1].nonzero()[0].tolist()
             if set(li_indces) - set(li_indcs_rm):
                 raise RuntimeError(
                     "Transforms are not compatible. The left transform "
@@ -419,6 +423,7 @@ def compose(
     l_matrix[:l_ndims, -1:] = l_matrix0[:-1, -1:]
 
     # Reorder right side of the matrix to conform to the right matrix
+    li_names = list(li_dims.keys())
     l_matrix = l_matrix[:, [li_names.index(n) for n in ro_names] + [-1]]
 
     # ------------------------------------------------------------------
