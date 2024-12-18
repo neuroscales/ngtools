@@ -785,13 +785,6 @@ class ZarrVolumeInfo(VolumeInfo):
     def hasNIfTI(self) -> bool:
         """Return `True` if Zarr has NIfTI metadata."""
         return self.nifti is not None
-        # if getattr(self, "_hasNIfTI", None) is None:
-        #     url = UPath(parse_protocols(self.url)[-1])
-        #     self._hasNIfTI = (
-        #         exists(url / "nifti" / "zarr.json") or
-        #         exists(url / "nifti" / ".zarray")
-        #     )
-        # return self._hasNIfTI
 
     def getMultiscalesOME(self) -> list[dict]:
         """Return content of OME metadata (JSON)."""
