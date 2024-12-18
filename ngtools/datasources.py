@@ -4,9 +4,9 @@ optional attributes that neuroglancer typically delegates to the frontend.
 """
 # stdlib
 import json
+from itertools import product
 from os import PathLike
 from typing import Callable, Iterator
-from itertools import product
 
 # externals
 import neuroglancer as ng
@@ -566,7 +566,8 @@ class NiftiVolumeInfo(VolumeInfo):
     def __init__(
         self,
         url: str | PathLike,
-        align_corner: bool = False
+        align_corner: bool = False,
+        affine: str = "qform",
     ) -> None:
         """
         Parameters
@@ -579,9 +580,12 @@ class NiftiVolumeInfo(VolumeInfo):
             the corner of the first voxel. If False, use NIfTI's spec,
             which is to assume the (0, 0, 0) points to the center of the
             first voxel.
+        affine : {"qform", "sform", "best", "base"}
+            Which orientation matrix to use.
         """
         super().__init__(url)
         self._align_corner = align_corner
+        self._affine = affine
         self._nib_header: nib.nifti1.Nifti1Header = self._load()
 
     def _load(self) -> nib.nifti1.Nifti1Header | nib.nifti2.Nifti2Header:
@@ -613,7 +617,7 @@ class NiftiVolumeInfo(VolumeInfo):
 
     def getSpaceUnit(self) -> str:
         """Compute spatial unit."""
-        if not getattr(self, "_space_unit"):
+        if not getattr(self, "_space_unit", None):
             unit = self._nib_header.get_xyzt_units()[0]
             if unit == "unknown":
                 unit = "mm"
@@ -623,7 +627,7 @@ class NiftiVolumeInfo(VolumeInfo):
 
     def getTimeUnit(self) -> str:
         """Compute time unit."""
-        if not getattr(self, "_time_unit"):
+        if not getattr(self, "_time_unit", None):
             unit = self._nib_header.get_xyzt_units()[1]
             if unit == "unknown":
                 unit = "s"
@@ -652,7 +656,7 @@ class NiftiVolumeInfo(VolumeInfo):
         return [1] * self.getRank()
 
     def getDescription(self) -> str:
-        """Compute description stirng."""
+        """Compute description string."""
         return self._nib_header["description"]
 
     def getDataType(self) -> np.dtype:
@@ -683,12 +687,18 @@ class NiftiVolumeInfo(VolumeInfo):
         # (0, 0, 0) of the input space is at the corner of the first voxel.
         if getattr(self, "_matrix", None) is None:
             srank = min(3, self.getRank())
-            matrix = self._nib_header.get_qform()[:-1]
+            if self._affine == "base":
+                matrix = self._nib_header.get_base_affine()[:-1]
+            elif self._affine == "best":
+                matrix = self._nib_header.get_best_affine()[:-1]
+            elif self._affine == "sform":
+                matrix = self._nib_header.get_sform()[:-1]
+            else:
+                matrix = self._nib_header.get_qform()[:-1]
             scales = self._nib_header['pixdim'][1:4]
             if not self._align_corner:
                 matrix[:3, -1] -= matrix[:3, :-1] @ ([0.5]*srank)
-            scales = U.convert_unit(scales, self.getSpaceUnit(), "m")
-            matrix[:-1, :-1] /= scales
+            matrix[:3, :-1] /= scales
             fullmatrix = np.eye(self.getRank()+1)[:-1]
             fullmatrix[:srank, :srank] = matrix[:srank, :srank]
             fullmatrix[:srank, -1] = matrix[:srank, -1]
@@ -769,13 +779,14 @@ class ZarrVolumeInfo(VolumeInfo):
 
     def hasNIfTI(self) -> bool:
         """Return `True` if Zarr has NIfTI metadata."""
-        if getattr(self, "_hasNIfTI", None) is None:
-            url = UPath(self.url)
-            self._hasNIfTI = (
-                exists(url / "nifti" / "zarr.json") or
-                exists(url / "nifti" / ".zarray.json")
-            )
-        return self._hasNIfTI
+        return self.nifti is not None
+        # if getattr(self, "_hasNIfTI", None) is None:
+        #     url = UPath(parse_protocols(self.url)[-1])
+        #     self._hasNIfTI = (
+        #         exists(url / "nifti" / "zarr.json") or
+        #         exists(url / "nifti" / ".zarray")
+        #     )
+        # return self._hasNIfTI
 
     def getMultiscalesOME(self) -> list[dict]:
         """Return content of OME metadata (JSON)."""
@@ -920,7 +931,7 @@ class ZarrVolumeInfo(VolumeInfo):
             self._matrix = matrix
         return self._matrix
 
-    def getTransform(self) -> ng.CoordinateSpaceTransform:
+    def getZarrTransform(self) -> ng.CoordinateSpaceTransform:
         """Return the pure zarr transform."""
         return ng.CoordinateSpaceTransform(
             matrix=self.getMatrix(),
@@ -961,7 +972,20 @@ class ZarrVolumeInfo(VolumeInfo):
         """
         return T.compose(
             self.getNiftiTransform(),
-            self.getTransform(),
+            ng.CoordinateSpaceTransform(
+                input_dimensions=self.getInputDimensions(),
+                output_dimensions=self.getInputDimensions(),
+            ),
+        )
+
+    def getTransform(self) -> ng.CoordinateSpaceTransform:
+        """
+        Return the nifti-zarr transform if it exists, else the ome-zarr
+        transform.
+        """
+        return (
+            self.getNiftiZarrTransform() if self.hasNIfTI() else
+            self.getZarrTransform()
         )
 
 
@@ -1005,7 +1029,7 @@ class Zarr2VolumeInfo(ZarrVolumeInfo):
         if nifti is not False:
             if exists(url / "nifti" / ".zarray"):
                 url = url / "nifti" / "0"
-                self.nifti = NiftiVolumeInfo(url)
+                self.nifti = NiftiVolumeInfo(url, affine="best")
             elif nifti is True:
                 raise FileNotFoundError("Cannot find nifti group in zarr.")
 
@@ -1054,7 +1078,7 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
         if nifti is not False:
             if exists(url / "nifti" / "zarr.json"):
                 url = url / "nifti" / "c0"
-                self.nifti = NiftiVolumeInfo(url)
+                self.nifti = NiftiVolumeInfo(url, affine="best")
             elif nifti is True:
                 raise FileNotFoundError("Cannot find nifti group in zarr.")
 
