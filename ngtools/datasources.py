@@ -721,10 +721,15 @@ class NiftiDataSource(VolumeDataSource):
 
     def __init__(self, *args, **kwargs) -> None:
         self._align_corner = kwargs.pop("align_corner", False)
+        self._select_affine = kwargs.pop("affine", False)
         super().__init__(*args, **kwargs)
 
     def _compute_info(self) -> NiftiVolumeInfo:
-        return NiftiVolumeInfo(self.url, self._align_corner)
+        return NiftiVolumeInfo(
+            self.url,
+            align_corner=self._align_corner,
+            affine=self._select_affine,
+        )
 
     def _format_specific_init(self) -> None:
         self._nib_image = None
