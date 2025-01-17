@@ -2,38 +2,12 @@ import numpy as np
 import os
 from dipy.io.streamline import load_trk
 import nibabel as nib
-import psutil
 import time
 import json
-from utils import generate_colors
+from utils import generate_colors, convert_to_native, log_resource_usage
 
 
 WORLD_SPACE_DIMENSION = 1
-
-# Generate bright, unique color
-
-
-# Convert data to JSON serializable format
-def convert_to_native(data):
-    if isinstance(data, np.ndarray):
-        return data.tolist()
-    elif isinstance(data, (np.float32, np.float64)):
-        return float(data)
-    elif isinstance(data, (np.int32, np.int64)):
-        return int(data)
-    elif isinstance(data, dict):
-        return {k: convert_to_native(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [convert_to_native(v) for v in data]
-    else:
-        return data
-
-# Function to log resource utilization
-def log_resource_usage(stage):
-    memory = psutil.virtual_memory()
-    cpu_percent = psutil.cpu_percent(interval=1)
-    print(f"[{stage}] CPU Usage: {cpu_percent}%")
-    print(f"[{stage}] Memory Usage: {memory.percent}% ({memory.used / (1024**2):.2f} MB used / {memory.total / (1024**2):.2f} MB total)")
 
 # Start timing
 start_time = time.time()
