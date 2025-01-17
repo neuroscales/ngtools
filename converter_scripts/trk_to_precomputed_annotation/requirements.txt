@@ -1,0 +1,5 @@
+dipy
+numpy
+nibabel
+psutil
+matplotlib
