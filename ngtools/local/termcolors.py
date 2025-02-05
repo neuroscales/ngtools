@@ -74,3 +74,74 @@ class bcolors:
     okgreen = fg.bright.green
     warning = fg.bright.yellow
     fail = fg.bright.red
+
+
+def _make_format(name: str) -> classmethod:
+    color = bcolors
+    for name in name.split("."):
+        color = getattr(color, name)
+    return classmethod(lambda _, x: f"{color}{x}{bcolors.endc}")
+
+
+class bformat:
+    """Namespace for formatting functions."""
+
+    bold = _make_format("bold")
+    faint = _make_format("faint")
+    underline = _make_format("underline")
+    blink = _make_format("blink")
+
+    class fg:
+        """Foreground colors."""
+
+        black = _make_format("fg.black")
+        red = _make_format("fg.red")
+        green = _make_format("fg.green")
+        yellow = _make_format("fg.yellow")
+        blue = _make_format("fg.blue")
+        magenta = _make_format("fg.magenta")
+        cyan = _make_format("fg.cyan")
+        white = _make_format("fg.white")
+
+        class bright:
+            """Bright foreground colors."""
+
+            black = _make_format("fg.bright.black")
+            red = _make_format("fg.bright.red")
+            green = _make_format("fg.bright.green")
+            yellow = _make_format("fg.bright.yellow")
+            blue = _make_format("fg.bright.blue")
+            magenta = _make_format("fg.bright.magenta")
+            cyan = _make_format("fg.bright.cyan")
+            white = _make_format("fg.bright.white")
+
+    class bg:
+        """Background colors."""
+
+        black = _make_format("bg.black")
+        red = _make_format("bg.red")
+        green = _make_format("bg.green")
+        yellow = _make_format("bg.yellow")
+        blue = _make_format("bg.blue")
+        magenta = _make_format("bg.magenta")
+        cyan = _make_format("bg.cyan")
+        white = _make_format("bg.white")
+
+        class bright:
+            """Bright background colors."""
+
+            black = _make_format("bg.bright.black")
+            red = _make_format("bg.bright.red")
+            green = _make_format("bg.bright.green")
+            yellow = _make_format("bg.bright.yellow")
+            blue = _make_format("bg.bright.blue")
+            magenta = _make_format("bg.bright.magenta")
+            cyan = _make_format("bg.bright.cyan")
+            white = _make_format("bg.bright.white")
+
+    header = fg.bright.magenta
+    okblue = fg.bright.blue
+    okcyan = fg.bright.cyan
+    okgreen = fg.bright.green
+    warning = fg.bright.yellow
+    fail = fg.bright.red

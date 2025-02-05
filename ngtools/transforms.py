@@ -84,11 +84,12 @@ Alternatively, a "scaled-voxel to world" matrix can be constructed via
 """
 
 # stdlib
+import logging
 import math
-import sys
 from numbers import Number
 from os import PathLike
-from tempfile import NamedTemporaryFile
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import IO
 
 # externals
@@ -99,7 +100,10 @@ from nitransforms.io import afni, fsl, itk, lta
 # internals
 import ngtools.spaces as S
 import ngtools.units as U
-from ngtools.opener import open, remote_protocols, stringify_path
+from ngtools._lta.lta import LinearTransformArray
+from ngtools.opener import open, parse_protocols, stringify_path
+
+LOG = logging.getLogger(__name__)
 
 AFFINE_FORMATMAP = {
     'afni': afni.AFNILinearTransform,
@@ -111,7 +115,12 @@ AFFINE_FORMATMAP = {
 
 
 def matrix_to_quaternion(mat: np.ndarray) -> np.ndarray:
-    """Convert a rotation matrix to a quaternion."""
+    """Convert a rotation matrix to a quaternion.
+
+    We follow neuroglancer and assume that quaternions are ordered as
+    [*v, r] (or again, [i, j, k, r]). This differs form wikipedia
+    which defines them as [r, *v] (or [r, i, j, k]).
+    """
     # https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Fitting_quaternions
     mat = np.asarray(mat)
     if tuple(mat.shape) != (3, 3):
@@ -128,7 +137,52 @@ def matrix_to_quaternion(mat: np.ndarray) -> np.ndarray:
         [Qzy - Qyz, Qxz - Qzx, Qyx - Qxy, Qxx + Qyy + Qzz],
     ])
     val, vec = np.linalg.eig(K)
-    return vec[:, val.argmax()]
+    vec = vec[:, val.argmax()]
+    vec = np.concatenate([vec[1:], vec[:1]])  # wiki to neuroglancer
+    return vec
+
+
+def quaternion_to_matrix(q: np.ndarray) -> np.ndarray:
+    """Convert a quaternion to a rotation matrix."""
+    # https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#From_a_quaternion_to_an_orthogonal_matrix
+    q = np.asarray(q).flatten()
+    if q.shape != (4,):
+        raise ValueError("Expected a vector of length 4")
+    q = np.concatenate([q[-1:], q[:-1]])  # neuroglancer to wiki
+    a, b, c, d = q
+    s = 2 / (a*a + b*b + c*c + d*d)
+    bs = b * s
+    cs = c * s
+    ds = d * s
+    ab = a * bs
+    ac = a * cs
+    ad = a * ds
+    bb = b * bs
+    bc = b * cs
+    bd = b * ds
+    cc = c * cs
+    cd = c * ds
+    dd = d * ds
+    m = np.asarray([
+        [1 - cc - dd, bc - ad, bd + ac],
+        [bc + ad, 1 - bb - dd, cd - ab],
+        [bd - ac, cd + ab, 1 - bb - cc],
+    ])
+    return m
+
+
+def compose_quaternions(a: np.ndarray, b: np.ndarray, *others) -> np.ndarray:
+    """Compose quaternions."""
+    a = np.asarray(a).flatten()
+    b = np.asarray(b).flatten()
+    av, ar = a[:-1], a[-1:]
+    bv, br = b[:-1], b[-1:]
+    cr = ar * br - np.dot(av, bv)
+    cv = ar * av + br * bv + np.cross(av, bv)
+    c = np.concatenate([cv, cr])
+    if others:
+        c = compose_quaternions(c, *others)
+    return c
 
 
 def load_affine(
@@ -136,7 +190,7 @@ def load_affine(
     format: str | None = None,
     moving: PathLike | str | None = None,
     fixed: PathLike | str | None = None,
-    names: list[str] = ("right", "anterior", "posterior"),
+    names: list[str] = ("x", "y", "z"),
 ) -> ng.CoordinateSpaceTransform:
     """
     Load an affine transform from a file.
@@ -159,27 +213,35 @@ def load_affine(
     affine : (4, 4) np.ndarray
         A RAS2RAS affine transform.
     """
+    opt = dict(moving=moving, fixed=fixed, names=names)
+
     fileobj = stringify_path(fileobj)
 
     if isinstance(fileobj, str):
-        format_protocols = [format + '://' for format in AFFINE_FORMATMAP]
-        if fileobj.startswith(tuple(format_protocols)):
-            format, *fileobj = fileobj.split('://')
-            fileobj = '://'.join(fileobj)
+        parsed = parse_protocols(fileobj)
+        format = format or parsed.format
+        fileobj = parsed.url
 
         if not format and fileobj.endswith('.lta'):
             format = 'lta'
 
-    # If remote file, open with fsspec
-    if isinstance(fileobj, str) and fileobj.startswith(remote_protocols()):
-        with open(fileobj) as f:
-            return load_affine(f, format=format)
+        # If remote file, open with fsspec
+        if parsed.stream != "file":
+            with open(fileobj) as f:
+                return load_affine(f, format=format, **opt)
 
     # If open file object, write to local file
     if hasattr(fileobj, 'read'):
-        with NamedTemporaryFile() as tmp:
-            tmp.write(fileobj.read())
-            return load_affine(tmp.name, format=format)
+        with TemporaryDirectory() as tmp:
+            # NOTE: I use a TemporaryDirectory rather than a
+            #       NamedTemporaryFile because I've encountered
+            #       issues where the file was not yet written
+            #       but was already being read by the transform reader.
+            tmpname = Path(tmp) / "affine.lta"
+            with tmpname.open("wb") as f:
+                f.write(fileobj.read())
+            out = load_affine(tmpname, format=format, **opt)
+            return out
 
     def _read(klass: type) -> ng.CoordinateSpaceTransform:
         """Try to read with a nitransforms type."""
@@ -193,20 +255,52 @@ def load_affine(
             output_dimensions=dims,
         )
 
-    if format:
+    if format == "lta":
+        # Try my reader first
+        # (nitransforms does not like nitorch's cropped LTAs)
         try:
-            return _read(AFFINE_FORMATMAP[format])
+            out = LinearTransformArray(fileobj).matrix()[0]
+            LOG.debug(f'Succesfully read format "{format}".')
+            return out
         except Exception as e:
-            print(f'Tried format "{format}" with no success', file=sys.stderr)
+            LOG.info(f'Tried format "{format}" (our impl) with no success.')
+            LOG.debug(e)
             raise e
 
-    for format, klass in AFFINE_FORMATMAP.items():
+    if format:
         try:
-            return _read(klass)
-        except Exception:
-            print(f'Tried format "{format}" with no success', file=sys.stderr)
+            out = _read(AFFINE_FORMATMAP[format])
+            LOG.debug(f'Succesfully read format "{format}".')
+            return out
+        except Exception as e:
+            LOG.warning(f'Tried format "{format}" with no success.')
+            LOG.debug(e)
 
-    raise RuntimeError(f"Failed to load {fileobj}")
+    hint_format = format
+    for format, klass in AFFINE_FORMATMAP.items():
+        if format == hint_format:
+            continue
+        try:
+            out = _read(klass)
+            LOG.info(f'Succesfully read format "{format}".')
+            return out
+        except Exception as e:
+            LOG.info(f'Tried format "{format}" with no success.')
+            LOG.debug(e)
+
+    if hint_format != "lta":
+        # Try my reader last
+        # (nitransforms does not like nitorch's cropped LTAs)
+        try:
+            out = LinearTransformArray(fileobj).matrix()[0]
+            LOG.debug(f'Succesfully read format "{format}".')
+            return out
+        except Exception as e:
+            LOG.warning(f'Tried format "{format}" (our impl) with no success.')
+            LOG.debug(e)
+
+    LOG.error(f"Failed to load {fileobj}.")
+    raise RuntimeError(f"Failed to load {fileobj}.")
 
 
 def to_square(affine: np.ndarray) -> np.ndarray:

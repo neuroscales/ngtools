@@ -635,6 +635,8 @@ def as_neuroglancer_unit(unit: str) -> str:
         short_unit = short_unit[:-2] + "hz"
     if short_unit.endswith("rads"):
         short_unit = short_unit[:-4] + "rad/s"
+    if short_unit[:1] in (_MU1, _MU2):
+        short_unit = "u" + short_unit[1:]
     return short_unit
 
 

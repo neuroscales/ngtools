@@ -13,7 +13,7 @@ from neuroglancer.server import global_server_args
 # internals
 from ngtools.local.fileserver import LocalFileServer, find_available_port
 from ngtools.local.parserapp import ParserApp, _fixhelpformatter
-from ngtools.local.termcolors import bcolors
+from ngtools.local.termcolors import bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
 
@@ -329,14 +329,6 @@ class LocalNeuroglancer:
         #     help='Cursor coordinates. If None, print current one.')
         # _add_common_args(position)
 
-        # orient = add_parser(
-        #     'orient', help='Reorient the cross-section')
-        # orient.set_defaults(func=self.orient)
-        # orient.add_argument(
-        #     '--normal', nargs='*', type=float,
-        #     help='Normal vector of the cross-section plane.')
-        # _add_common_args(orient)
-
         # --------------------------------------------------------------
         #   ZORDER
         # --------------------------------------------------------------
@@ -390,7 +382,6 @@ class LocalNeuroglancer:
     transform = state_action("transform")
     channel_mode = state_action("channel_mode")
     position = state_action("position")
-    orient = state_action("orient")
     shader = state_action("shader")
     layout = state_action("layout")
     zorder = state_action("zorder")
@@ -465,59 +456,61 @@ class LocalNeuroglancer:
 
 
 _clihelp = type('_clihelp', (object,), {})
-B = bcolors.bold
-E = bcolors.endc
-r, g, b = bcolors.fg.red, bcolors.fg.green, bcolors.fg.blue
+
+bold = bformat.bold
+red = bformat.fg.red
+green = bformat.fg.green
+blue = bformat.fg.blue
 
 _clihelp.load = textwrap.dedent(
 f"""
 Load a file, which can be local or remote.
 
-{B}Paths and URLs{E}
-{B}--------------{E}
+{bold("Paths and URLs")}
+{bold("--------------")}
 Each path or url may be prepended by:
 
 1)  A layer type protocol, which indicates the kind of object that the file
     contains.
-    Examples: {B}volume://{E}, {B}labels://{E}, {B}tracts://{E}.
+    Examples: {bold("volume://")}, {bold("labels://")}, {bold("tracts://")}.
 
 2)  A format protocol, which indicates the exact file format.
-    Examples: {B}nifti://{E}, {B}zarr://{E}, {B}mgh://{E}.
+    Examples: {bold("nifti://")}, {bold("zarr://")}, {bold("mgh://")}.
 
 3)  An access protocol, which indices the protocol used to  access the files.
-    Examples: {B}https://{E}, {B}s3://{E}, {B}dandi://{E}.
+    Examples: {bold("https://")}, {bold("s3://")}, {bold("dandi://")}.
 
 All of these protocols are optional. If absent, a guess is made using the
 file extension.
 
-{B}Examples{E}
-{B}--------{E}
+{bold("Examples")}
+{bold("--------")}
 
-- Absolute path to local file:  {B}/absolute/path/to/mri.nii.gz{E}
-- Relative path to local file:  {B}relative/path/to/mri.nii.gz{E}
-- Local file with format hint:  {B}mgh://relative/path/to/linkwithoutextension{E}
-- Remote file:                  {B}https://url.to/mri.nii.gz{E}
-- Remote file with format hint: {B}zarr://https://url.to/filewithoutextension{E}
-- File on dandiarchive:         {B}dandi://dandi/<dandiset>/sub-<id>/path/to/file.ome.zarr{E}
+- Absolute path to local file:  {bold("/absolute/path/to/mri.nii.gz")}
+- Relative path to local file:  {bold("relative/path/to/mri.nii.gz")}
+- Local file with format hint:  {bold("mgh://relative/path/to/linkwithoutextension")}
+- Remote file:                  {bold("https://url.to/mri.nii.gz")}
+- Remote file with format hint: {bold("zarr://https://url.to/filewithoutextension")}
+- File on dandiarchive:         {bold("dandi://dandi/<dandiset>/sub-<id>/path/to/file.ome.zarr")}
 
-{B}Layer names{E}
-{B}-----------{E}
+{bold("Layer names")}
+{bold("-----------")}
 Neuroglancer layers are named. The name of the layer can be specified with
-the {B}--name{E} option. Otherwise, the base name of the file is used (that
+the {bold("--name")} option. Otherwise, the base name of the file is used (that
 is, without the folder hierarchy).
 
 If multiple files are loaded _and_ the --name option is used, then there
 should be as many names as files.
 
-{B}Transforms{E}
-{B}----------{E}
+{bold("Transforms")}
+{bold("----------")}
 A spatial transform (common to all files) can be applied to the loaded
-volume. The transform is specified with the {B}--transform{E} option, which
+volume. The transform is specified with the {bold("--transform")} option, which
 can be a flattened affine matrix (row major) or the path to a transform file.
-Type {B}help transform{E} for more information.
+Type {bold("help transform")} for more information.
 
-{B}Arguments{E}
-{B}----------{E}"""  # noqa: E122, E501
+{bold("Arguments")}
+{bold("----------")}"""  # noqa: E122, E501
 )
 
 _clihelp.unload = "Unload layers"
@@ -529,8 +522,8 @@ f"""
 Applies a colormap, or a more advanced shading function to all or some of
 the layers.
 
-{B}List of builtin colormaps{E}
-{B}-------------------------{E}
+{bold("List of builtin colormaps")}
+{bold("-------------------------")}
 """  # noqa: E122
 ) + textwrap.indent(pretty_colormap_list(), ' ')
 
@@ -550,12 +543,12 @@ There are two ways of using this command:
 
 1)  Provide the new order (top-to-bottom) of the layers
 
-2)  Provide a positive ({B}--up{E}) or negative ({B}--down{E}) number of
-    steps by which to move the listed layers.
+2)  Provide a positive ({bold("--up")}) or negative ({bold("--down")})
+    number of steps by which to move the listed layers.
     In this case, more than one up or down step can be provided, using
     repeats of the option.
-    Examples: {B}-vvvv{E} moves downward 4 times
-              {B}-^^^^{E} moves upwards 4 times
+    Examples: {bold("-vvvv")} moves downward 4 times
+              {bold("-^^^^")} moves upwards 4 times
 """  # noqa: E122
 )
 
@@ -566,8 +559,8 @@ different orientation (RAS, LPI, and permutations thereof)
 
 By default, neuroglancer displays data in their "native" space, where
 native means a "XYZ" coordinate frame, whose mapping from and to voxels
-is format-spacific. In {B}nifti://{E} volumes, XYZ always corresponds to
-the RAS+ world space, whereas in {B}zarr://{E}, XYZ correspond to canonical
+is format-spacific. In {bold("nifti://")} volumes, XYZ always corresponds to
+the RAS+ world space, whereas in {bold("zarr://")}, XYZ correspond to canonical
 axes ordered according to the OME metadata.
 
 Because of our neuroimaging bias, we choose to interpret XYZ as RAS+ (which
@@ -575,22 +568,22 @@ is consistant with the nifti behavior).
 
 The simplest usage of this command is therefore to switch between
 different representations of the world coordinate system:
-    . {B}display RAS{E}  (alias: {B} display right anterior superior{E})
-      maps the {r}red{E}, {g}green{E} and {b}blue{E} axes to {r}right{E}, {g}anterior{E}, {b}superior{E}.
-    . {B}display LPI{E}  (alias: {B} display left posterior inferior{E})
-      maps the {r}red{E}, {g}green{E} and {b}blue{E} axes to {r}left{E}, {g}posterior{E}, {b}inferior{E}.
+    . {bold("display RAS")}  (alias: {bold(" display right anterior superior")})
+      maps the {red("red")}, {green("green")} and {bold("blue")} axes to {red("right")}, {green("anterior")}, {bold("superior")}.
+    . {bold("display LPI")}  (alias: {bold(" display left posterior inferior")})
+      maps the {red("red")}, {green("green")} and {bold("blue")} axes to {red("left")}, {green("posterior")}, {bold("inferior")}.
 
 A second usage allows switching between displaying the data in the world
 frame and displaying the data in the canonical frame of one of the layers
 (that is, the frame axes are aligned with the voxel dimensions).
-    . {B}display --layer <name>{E} maps the {r}red{E}/{g}green{E}/{b}blue{E}
+    . {bold("display --layer <name>")} maps the {red("red")}/{green("green")}/{bold("blue")}
       axes to the canonical axes of the layer <name>
-    . {B}display --world{E} maps (back) the {r}red{E}/{g}green{E}/{b}blue{E}
+    . {bold("display --world")} maps (back) the {red("red")}/{green("green")}/{bold("blue")}
       axes to the axes of world frame.
 
 Of course, both usages can be combined:
-    . {B}display RAS --layer <name>{E}
-    . {B}display LPI --world{E}
+    . {bold("display RAS --layer <name>")}
+    . {bold("display LPI --world")}
 
 """  # noqa: E122, E501
 )
@@ -600,20 +593,20 @@ f"""
 Change the viewer's layout (i.e., the quadrants and their layers)
 
 Neuroglancer has 8 different window types:
-. xy     : {r}X{E}{g}Y{E} cross-section
-. yz     : {g}Y{E}{b}Z{E} cross-section
-. xz     : {r}X{E}{b}Z{E} cross-section
-. xy-3d  : {r}X{E}{g}Y{E} cross-section in a {B}3D{E} window
-. yz-3d  : {g}Y{E}{b}Z{E} cross-section in a {B}3D{E} window
-. xz-3d  : {r}X{E}{b}Z{E} cross-section in a {B}3D{E} window
-. 4panel : Four quadrants ({r}X{E}{g}Y{E}, {r}X{E}{b}Z{E}, {B}3D{E}, {g}Y{E}{b}Z{E})
-. 3d     : {B}3D{E} window
+. xy     : {red("X")}{green("Y")} cross-section
+. yz     : {green("Y")}{bold("Z")} cross-section
+. xz     : {red("X")}{bold("Z")} cross-section
+. xy-3d  : {red("X")}{green("Y")} cross-section in a {bold("3D")} window
+. yz-3d  : {green("Y")}{bold("Z")} cross-section in a {bold("3D")} window
+. xz-3d  : {red("X")}{bold("Z")} cross-section in a {bold("3D")} window
+. 4panel : Four quadrants ({red("X")}{green("Y")}, {red("X")}{bold("Z")}, {bold("3D")}, {green("Y")}{bold("Z")})
+. 3d     : {bold("3D")} window
 
 It is possible to build a user-defined layout by stacking these basic
 windows into a row or a column -- or even nested rows and columns --
-using the {B}--stack{E} option. The {B}--layer{E} option allows assigning
-specific layers to a specific window. We also define {B}--append{E} and
-{B}--insert{E} to add a new window into an existing stack of windows.
+using the {bold("--stack")} option. The {bold("--layer")} option allows assigning
+specific layers to a specific window. We also define {bold("--append")} and
+{bold("--insert")} to add a new window into an existing stack of windows.
 
 """  # noqa: E122, E501
 )

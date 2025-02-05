@@ -1,6 +1,10 @@
+"""Lists of kown protocols."""
+
 LAYERS = [
     'volume',           # Raster data (image or volume)
+    'image',            # ^ alias
     'labels',           # Integer raster data, interpreted as labels
+    'segmentation',     # ^ alias
     'surface',          # Triangular mesh
     'mesh',             # Other types of mesh ???
     'tracts',           # Set of piecewise curves

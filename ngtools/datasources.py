@@ -3,7 +3,10 @@ Wrappers around neuroglancer classes that can compute metadata and
 optional attributes that neuroglancer typically delegates to the frontend.
 """
 # stdlib
+import functools
 import json
+import logging
+import time
 from itertools import product
 from os import PathLike
 from typing import Callable, Iterator
@@ -28,15 +31,22 @@ from ngtools.opener import (
     parse_protocols,
     read_json,
 )
+from ngtools.utils import Wraps
+
+LOG = logging.getLogger(__name__)
 
 _DATASOURCE_REGISTRY = {}
 
 
 def _quantiles(q: float | list[float], data: ArrayLike) -> np.ndarray[float]:
     """Compute (efficiently) intensity quantiles."""
+    tic = time.time()
     steps = [max(1, x//64) for x in data.shape]
     slicer = (Ellipsis,) + tuple(slice(None, None, step) for step in steps)
-    return np.quantile(np.asarray(data[slicer]), q)
+    quantiles = np.quantile(np.asarray(data[slicer]), q)
+    toc = time.time()
+    LOG.info(f"Compute quantiles: {toc-tic} s")
+    return quantiles
 
 
 def datasource(formats: str | list[str]) -> Callable[[type], type]:
@@ -68,67 +78,109 @@ SourceType = (
 )
 
 
-class LayerDataSources(ng.LayerDataSources):
+def _LDS(*a, **k):
+    return LayerDataSource(*a, **k)
+
+
+class LayerDataSources(Wraps(ng.LayerDataSources)):
     """List of data sources."""
 
-    def __init__(self, other: list[ng.LayerDataSource]) -> None:
-        if not isinstance(other, (list, tuple, ng.LayerDataSources)):
-            other = [other]
-        other = list(map(LayerDataSource, other))
-        super().__init__(other)
+    _DataSourceLike = (
+        ng.LayerDataSource |
+        str |
+        ng.local_volume.LocalVolume |
+        ng.skeleton.SkeletonSource
+    )
+    _DataSourcesLike = (
+        ng.LayerDataSources |
+        _DataSourceLike |
+        list[_DataSourceLike] |
+        dict |
+        list[dict]
+    )
 
-    def append(self, x: ng.LayerDataSource) -> None:  # noqa: D102
-        super().append(LayerDataSource(x))
+    def __init__(
+        self, json_data: _DataSourcesLike | None = None, **kwargs
+    ) -> None:
+        """
+        Parameters
+        ----------
+        json_data : [list of] dict | [list of] (LayerDataSource | str)
+        """
+        if json_data:
+            list_like = (list, tuple, ng.LayerDataSources)
+            if not isinstance(json_data, list_like):
+                json_data = [json_data]
+        super().__init__(json_data, **kwargs)
 
-    def extend(self, other: list[ng.LayerDataSource]) -> None:  # noqa: D102
-        super().extend(map(LayerDataSource, other))
-
-    def __setitem__(self, k: int, v: ng.LayerDataSource) -> None:
-        super().__setitem__(k, LayerDataSource(v))
-
-    def __getitem__(self, *a, **k) -> "LayerDataSource":
-        return LayerDataSource(super().__getitem__(*a, **k))
-
-    def __iter__(self) -> Iterator["LayerDataSource"]:
+    @functools.wraps(ng.LayerDataSources.__iter__)
+    def __iter__(self) -> Iterator[ng.LayerDataSource]:
         for source in super().__iter__():
             yield LayerDataSource(source)
 
-    def pop(self, *a, **k) -> ng.LayerDataSource:  # noqa: D102
-        return LayerDataSource(super().pop(*a, **k))
+    @functools.wraps(ng.LayerDataSources.__getitem__)
+    def __getitem__(self, *args, **kwargs) -> "LayerDataSource":
+        return LayerDataSource(super().__getitem__(*args, **kwargs))
+
+    @functools.wraps(ng.LayerDataSources.pop)
+    def pop(self, *args, **kwargs) -> "LayerDataSource":
+        return LayerDataSource(super().pop(*args, **kwargs))
 
 
 class _LayerDataSourceFactory(type):
     """Factory for LayerDataSource objects."""
 
+    _DataSourceLike = (
+        ng.LayerDataSource |
+        dict |
+        str |
+        ng.local_volume.LocalVolume |
+        ng.skeleton.SkeletonSource
+    )
+
     def __call__(
         cls,
-        json_data: dict | ng.LayerDataSource | None = None,
+        json_data: _DataSourceLike | None = None,
         *args,
         **kwargs
     ) -> "LayerDataSource":
-        # If (single) input already a LayerDataSource, return it as is.
-        #   LayerDataSource(inp: LayerDataSource) -> LayerDataSource
-        if not args and not kwargs:
-            if isinstance(json_data, cls) and cls is not LayerDataSource:
-                return json_data
-        # only use the factory if it is not called from a subclass
-        if isinstance(json_data, ng.LayerDataSource):
-            json_data = json_data.to_json()
+        # # If (single) input already a LayerDataSource, return it as is.
+        # #   LayerDataSource(inp: LayerDataSource) -> LayerDataSource
+        # if not args and not kwargs:
+        #     if isinstance(json_data, cls) and cls is not LayerDataSource:
+        #         return json_data
+
+        # Only use the factory if it is not called from a subclass
         if cls is not LayerDataSource:
             obj = super().__call__(json_data, *args, **kwargs)
             return obj
+
+        # Convert to JSON to avoid conflicting ng/ngtools types and
+        # ensure that we keep all information.
+        # It does mean that we keep re-building the same DataSourceInfo
+        # objects (and therefore download header bytes), which is a bit
+        # slow. But I am not sure how to avoid that while inheriting
+        # ng types.
+        if isinstance(json_data, ng.LayerDataSource):
+            really_json_data = json_data.to_json()
+        else:
+            really_json_data = json_data
+
         # Use  ng.LayerDataSource to get url
         #   (deals with json_data, keywords, local volumes, etc.)
-        url = ng.LayerDataSource(json_data, *args, **kwargs).url
-        # Local objects -> delegate
+        url = ng.LayerDataSource(really_json_data, *args, **kwargs).url
+
+        # If local object -> delegate
         if isinstance(url, ng.LocalVolume):
             return LocalVolumeDataSource(json_data, *args, **kwargs)
         if isinstance(url, ng.skeleton.SkeletonSource):
             return LocalSkeletonDataSource(json_data, *args, **kwargs)
+
         # If format protocol provided, use it
         format = parse_protocols(url)[1]
         if format in _DATASOURCE_REGISTRY:
             return _DATASOURCE_REGISTRY[format](json_data, *args, **kwargs)
+
         # Otherwise. build a simple source
         return super().__call__(json_data, *args, **kwargs)
 
@@ -139,22 +191,30 @@ class DataSourceInfo:
     ...
 
 
-class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
+class LayerDataSource(Wraps(ng.LayerDataSource),
+                      metaclass=_LayerDataSourceFactory):
     """A wrapper around `ng.LayerDataSource` that computes metadata."""
 
-    PROTOCOLS: list[str]
+    PROTOCOLS: list[str] = []
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._format_specific_init()
 
-    def _format_specific_init(self) -> None:
-        """Additional format-specific initialization."""
-        ...
+        # ensure that the url has the right format
+        if isinstance(self.url, str):
+            url = parse_protocols(self.url)[-1]
+            if self.PROTOCOLS:
+                url = self.PROTOCOLS[0] + "://" + url
+            self.url = url
 
     def _compute_info(self) -> DataSourceInfo:
         """Compute format-specific metadata."""
         ...
+
+    def to_json(self) -> dict:  # noqa: D102
+        # ensure the transform that we guess is saved in the ng object
+        self.transform = self.transform
+        return super().to_json()
 
     @property
     def info(self) -> DataSourceInfo:
@@ -171,18 +231,22 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
 
     @property
     def url(self) -> str:  # noqa: D102
-        return super().url
+        return self._wrapped.url
 
     @url.setter
     def url(self, value: str) -> str:
-        format = parse_protocols(value)[1]
-        if format not in self.PROTOCOLS:
-            raise ValueError(
-                "Cannot assign uri with protocol", format, "in "
-                "data source of type:", type(self)
-            )
-        ng.LayerDataSource.url.fset(self, value)
-        self._format_specific_init()
+        LocalObject = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
+        if isinstance(value, LocalObject):
+            self._wrapped.url = value
+        else:
+            format = parse_protocols(value)[1]
+            if format not in self.PROTOCOLS:
+                raise ValueError(
+                    "Cannot assign uri with protocol", format, "in "
+                    "data source of type:", type(self)
+                )
+            self._wrapped.url = value
+            self._info = None
 
     @property
     def local_url(self) -> str:
@@ -200,15 +264,27 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
     def transform(self) -> ng.CoordinateSpaceTransform:
         """
         If a transform has been explicitely set, return it,
-        else, return the transform implcitely defined by neuroglancer.
+        else, return the transform implicitely defined by neuroglancer.
         """
-        assigned_trf = super().transform
-        implicit_trf = getattr(self, '_transform', None)
-        if not assigned_trf:
-            return implicit_trf
-        elif not implicit_trf:
-            return assigned_trf
-        else:
+        assigned_trf = self._wrapped.transform
+        if (
+            assigned_trf is None or
+            assigned_trf.matrix is None or
+            assigned_trf.input_dimensions is None or
+            assigned_trf.output_dimensions is None
+        ):
+            tic = time.time()
+            implicit_trf = getattr(self, '_transform', None)
+            if implicit_trf is None:
+                return assigned_trf
+            if assigned_trf is None:
+                return implicit_trf
+            toc = time.time()
+            LOG.debug(
+                f"{type(self).__name__}: "
+                "Compute implicit transform: "
+                f"{toc - tic} s"
+            )
             matrix = assigned_trf.matrix
             if matrix is None:
                 matrix = implicit_trf.matrix
@@ -220,15 +296,18 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
                 assigned_trf.output_dimensions or
                 implicit_trf.input_dimensions
             )
-            return ng.CoordinateSpaceTransform(
+            self._wrapped.transform = ng.CoordinateSpaceTransform(
                 matrix=matrix,
                 input_dimensions=idims,
                 output_dimensions=odims,
             )
+            return self._wrapped.transform
+        else:
+            return assigned_trf
 
     @transform.setter
     def transform(self, value: ng.CoordinateSpaceTransform | dict) -> None:
-        ng.LayerDataSource.transform.fset(self, value)
+        self._wrapped.transform = value
 
     @property
     def shape(self) -> list[int]:
@@ -277,6 +356,7 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
         return self._get_dataobj(level, mode)
 
     def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
+        # Implementation classes should implement this method.
         self._raise_not_implemented_error("get_dataobj")
 
     _IndexType = int | bool | slice | ArrayLike | type(Ellipsis)
@@ -298,9 +378,11 @@ class LayerDataSource(ng.LayerDataSource, metaclass=_LayerDataSourceFactory):
                 break
         return _quantiles(q, dat)
 
-    def apply_transform(self, transform: ng.CoordinateSpaceTransform) -> None:
+    def apply_transform(self, *args: ng.CoordinateSpaceTransform
+                        ) -> "LayerDataSource":
         """Apply an additional transform in model space."""
-        self.transform = T.compose(transform, self.transform)
+        self.transform = T.compose(*args, self.transform)
+        return self
 
     @property
     def input_dimensions(self) -> ng.CoordinateSpace:
@@ -512,10 +594,15 @@ class AnnotationDataSource(LayerDataSource):
 class LocalDataSource(LayerDataSource):
     """Wrapper for local data sources."""
 
-    ...
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._format_specific_init()
+
+    def _format_specific_init(self) -> None:
+        pass
 
 
-class LocalSkeletonDataSource(VolumeDataSource, LocalDataSource):
+class LocalSkeletonDataSource(SkeletonDataSource, LocalDataSource):
     """Wrapper for data source that wraps a `SkeletonSource`."""
 
     @property
@@ -529,7 +616,7 @@ class LocalSkeletonDataSource(VolumeDataSource, LocalDataSource):
     ...
 
 
-class LocalVolumeDataSource(SkeletonDataSource, LocalDataSource):
+class LocalVolumeDataSource(VolumeDataSource, LocalDataSource):
     """Wrapper for data source that wraps a `LocalVolume`."""
 
     def __init__(self, *args, **kwargs) -> None:
@@ -567,7 +654,7 @@ class NiftiVolumeInfo(VolumeInfo):
         self,
         url: str | PathLike,
         align_corner: bool = False,
-        affine: str = "qform",
+        affine: str = "best",
     ) -> None:
         """
         Parameters
@@ -582,6 +669,7 @@ class NiftiVolumeInfo(VolumeInfo):
             first voxel.
         affine : {"qform", "sform", "best", "base"}
             Which orientation matrix to use.
+            Neuroglancer uses the qform by default.
         """
         super().__init__(url)
         self._align_corner = align_corner
@@ -590,14 +678,20 @@ class NiftiVolumeInfo(VolumeInfo):
 
     def _load(self) -> nib.nifti1.Nifti1Header | nib.nifti2.Nifti2Header:
         NiftiHeaders = (nib.nifti1.Nifti1Header, nib.nifti2.Nifti2Header)
+        tic = time.time()
         url = parse_protocols(self.url)[-1]
         for compression in ('infer', 'gzip', None):
             fileobj = open(url, compression=compression)
-            for image_klass in NiftiHeaders:
+            for hdr_klass in NiftiHeaders:
                 try:
-                    return image_klass.from_fileobj(fileobj)
+                    hdr = hdr_klass.from_fileobj(fileobj)
+                    toc = time.time()
+                    LOG.info(f"Load nii header: {toc-tic} s")
+                    return hdr
                 except Exception:
                     pass
+        toc = time.time()
+        LOG.info(f"Failed to load nii header: {toc-tic} s")
         raise RuntimeError("Failed to load file.")
 
     _allSourceNames = ["i", "j", "k", "m", "c^", "c1^", "c2^"]
@@ -717,11 +811,40 @@ class NiftiDataSource(VolumeDataSource):
     of the first voxel. This wrapper follows the nifti convention by default.
     The neuroglancer default behavior can be recovered with the option
     `align_corner=True`.
+
+    Also, by default, neuroglancer uses the `qform` orientation matrix,
+    whereas the `intent` code must be used to choose between the `sform`
+    and `qform` according to the spec (as implemented in e.g. nibabel).
+    This wrapper follows the specification, unless the affine to use
+    is explictly specified with the option `affine="sform"`,
+    `affine="qform"`, or `affine="base"`.
     """
 
     def __init__(self, *args, **kwargs) -> None:
+        """
+        Parameters
+        ----------
+        json_data : dict | NiftiDataSource | str, optional
+            URL to the file
+
+        Other Parameters
+        ----------------
+        url : str
+            URL to the file
+        align_corner : bool
+            If True, use neuroglancer's native behavior when computing
+            the transform, which is to asume that (0, 0, 0) points to
+            the corner of the first voxel. If False, use NIfTI's spec,
+            which is to assume the (0, 0, 0) points to the center of the
+            first voxel.
+        affine : {"qform", "sform", "best", "base"}
+            Which orientation matrix to use.
+            Neuroglancer uses the qform by default.
+        """
         self._align_corner = kwargs.pop("align_corner", False)
-        self._select_affine = kwargs.pop("affine", False)
+        self._select_affine = kwargs.pop("affine", "best")
+        self._nib_image = None
+        self._stream = None
         super().__init__(*args, **kwargs)
 
     def _compute_info(self) -> NiftiVolumeInfo:
@@ -731,16 +854,16 @@ class NiftiDataSource(VolumeDataSource):
             affine=self._select_affine,
         )
 
-    def _format_specific_init(self) -> None:
-        self._nib_image = None
-        self._stream = None
-
     def _load_image(self, mode: str = "r") -> nib.nifti1.Nifti1Image:
+        tic = time.time()
         url = self.url[8:]
         self._stream = open(url, compression='infer', mode=mode)
         for image_klass in (nib.nifti1.Nifti1Image, nib.nifti2.Nifti2Image):
             try:
-                return image_klass.from_stream(self._stream)
+                img = image_klass.from_stream(self._stream)
+                toc = time.time()
+                LOG.info(f"Map nifti image: {toc-tic} s")
+                return img
             except Exception:
                 pass
         raise RuntimeError("Failed to load file.")
@@ -751,11 +874,7 @@ class NiftiDataSource(VolumeDataSource):
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
+    def _get_dataobj(self, *a, **k) -> ArrayLike:
         # NOTE: we return the raw (unscaled) data, like neuroglancer
         if getattr(self, "_nib_image", None) is None:
             self._nib_image = self._load_image()
@@ -1106,7 +1225,7 @@ class _ZarrDataSourceFactory(_LayerDataSourceFactory):
             return Zarr2DataSource(*args, **kwargs)
         elif version == 3:
             return Zarr3DataSource(*args, **kwargs)
-        raise ValueError("Unsupporter zarr version:", version)
+        return super().__call__(*args, **kwargs)
 
 
 @datasource(["zarr", "zarr2", "zarr3"])
@@ -1125,9 +1244,9 @@ class ZarrDataSource(VolumeDataSource, metaclass=_ZarrDataSourceFactory):
     info: ZarrVolumeInfo
 
     def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
         self._nifti = kwargs.pop('nifti', None)
         self._align_corner = kwargs.pop("align_corner", False)
-        super().__init__(*args, **kwargs)
 
     @classmethod
     def guess_version(cls, url: str) -> int:
@@ -1141,20 +1260,31 @@ class ZarrDataSource(VolumeDataSource, metaclass=_ZarrDataSourceFactory):
             return 2
         return 0
 
+    def _compute_info(self) -> Zarr2VolumeInfo:
+        version = self.guess_version(self.url)
+        if version == 2:
+            return Zarr2VolumeInfo(self.url)
+        elif version == 3:
+            return Zarr3VolumeInfo(self.url)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
         """Return an array-like object pointing to a pyramid level."""
+        tic = time.time()
         url = parse_protocols(self.url)[-1]
         fs = filesystem(url)
         store = zarr.storage.FSStore(url, fs=fs, mode=mode)
         if not self.info.hasOME():
-            return zarr.open(store, mode)
+            dataobj = zarr.open(store, mode)
         else:
             path = self.info.getDatasetOME(level)["path"]
-            return zarr.open(store, mode, path=path)
+            dataobj = zarr.open(store, mode, path=path)
+        toc = time.time()
+        LOG.info(f"Map zarr: {toc - tic} s")
+        return dataobj
 
 
 @datasource("zarr2")

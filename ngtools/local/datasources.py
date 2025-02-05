@@ -21,7 +21,6 @@ from ngtools.datasources import (
     datasource,
 )
 from ngtools.opener import open, parse_protocols, stringify_path
-from ngtools.units import convert_unit
 
 
 def _babel_load(
@@ -121,8 +120,9 @@ class BabelVolumeInfo(VolumeInfo):
         if getattr(self, "_matrix", None) is None:
             affine = np.copy(self._affine)
             srank = min(3, self.getRank())
-            scales = convert_unit(self.getInputScales()[:srank], "mm", "m")
-            affine[:srank, :srank] /= np.asarray(scales)[None, :]
+            scales = self.getInputScales()[:srank]
+            affine[:srank, :srank] -= affine[:srank, :srank] @ ([0.5]*srank)
+            affine[:srank, :srank] /= scales
             mat = np.eye(self.getRank()+1)[:-1]
             mat[:srank, :srank] = affine[:srank, :srank]
             mat[:srank, -1] = affine[:srank, -1]

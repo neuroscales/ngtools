@@ -15,14 +15,16 @@ from neuroglancer.skeleton import Skeleton, SkeletonSource, VertexAttributeInfo
 from nibabel.streamlines.tck import TckFile
 from nibabel.streamlines.trk import TrkFile
 
+# internals
 from ngtools.datasources import LocalSkeletonDataSource, datasource
+from ngtools.opener import parse_protocols, stringify_path
 
 
 @datasource(["trk", "tck", "tracts"])
 class TractDataSource(LocalSkeletonDataSource):
     """Data source for local skeletons."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self.nb_tracts = kwargs.pop('nb_tracts', None)
         super().__init__(*args, **kwargs)
 
@@ -89,6 +91,9 @@ class TractSkeleton(SkeletonSource):
         format : [list of] {'tck', 'trk'}
             Format hint
         """
+        fileobj = stringify_path(fileobj)
+        if isinstance(fileobj, str):
+            fileobj = parse_protocols(fileobj).url
         self.fileobj = fileobj
         self.max_tracts = max_tracts or self.DEFAULT_MAX_TRACTS
 
