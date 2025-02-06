@@ -1,6 +1,7 @@
 """Entrypoint to a local neuroglancer instance and associated shell."""
 # stdlib
 import argparse
+import logging
 import sys
 import webbrowser
 from functools import partial
@@ -26,6 +27,16 @@ def main(args: list[str] | None = None) -> None:
 
     help_fmt = partial(argparse.HelpFormatter, max_help_position=32)
 
+    log_choices = ("any", "debug", "info", "warning", "error", "none")
+    log_map = {
+        "a": 0,
+        "d": logging.DEBUG,
+        "i": logging.INFO,
+        "w": logging.WARNING,
+        "e": logging.ERROR,
+        "n": 1024
+    }
+
     parser = argparse.ArgumentParser('Run a local neuroglancer',
                                      formatter_class=help_fmt)
     parser.add_argument('--token', type=str, default='1',
@@ -42,8 +53,13 @@ def main(args: list[str] | None = None) -> None:
                         help="do not open neuroglancer window")
     parser.add_argument('--debug', action='store_true', default=False,
                         help="run in debug mode")
+    parser.add_argument('--log-level', choices=log_choices, default="none",
+                        help="logging level")
     parser.add_argument(nargs='*', dest='filenames', help='Files to load')
     args = parser.parse_args(args)
+
+    logging.basicConfig()
+    logging.getLogger().setLevel(log_map[args.log_level[0].lower()])
 
     if args.ip == 'auto':
         args.ip = ''

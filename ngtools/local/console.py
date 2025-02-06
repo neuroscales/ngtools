@@ -83,8 +83,9 @@ class Console(argparse.ArgumentParser):
             self.history_file = os.path.expanduser(self.history_file)
         self.history_size = kwargs.pop('history_size', self.DEFAULT_HISTSIZE)
         # Exit behavior
-        self.exit_on_error = kwargs.pop('exit_on_error', False)
-        self.exit_on_help = kwargs.pop('exit_on_help', False)
+        exit_on_error = kwargs.pop('exit_on_error', False)
+        exit_on_help = kwargs.pop('exit_on_help', False)
+        kwargs["exit_on_error"] = False
         # Input/output
         stdio = kwargs.pop("stdio", None)
         if stdio is None:
@@ -101,6 +102,9 @@ class Console(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         # Fixed usage formatter (monkey patch)
         self.formatter_class = _fixhelpformatter(self.formatter_class)
+        # Overwrite ArgumentParser attributes
+        self.exit_on_error = exit_on_error
+        self.exit_on_help = exit_on_help
 
     @property
     def parsers(self) -> argparse._SubParsersAction | None:
