@@ -36,8 +36,8 @@ Homepage = "https://github.com/balbasty/ngtools"
 Issues = "https://github.com/balbasty/ngtools/issues"
 
 [project.scripts]
-nglocal = "ngtools.nglocal:cli"
-neuroglancer = "ngtools.nglocal:cli"
+nglocal = "ngtools.local.cli:main"
+neuroglancer = "ngtools.local.cli:main"
 
 [build-system]
 requires = [

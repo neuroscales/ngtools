@@ -11,6 +11,7 @@ LocalFileServer
 LocalFileServerInBackground
     A fileserver that runs in a background process
 """
+import atexit
 import os
 import socket
 import sys
@@ -84,21 +85,12 @@ class LocalFileServer:
         self.server = make_server(self.ip, self.port, self._serve,
                                   handler_class=_NoLoggingWSGIRequestHandler)
 
-    def _serve_forever(self) -> None:
-        """Run the server forever."""
-        while True:
-            try:
-                self.server.serve_forever()
-            except self.interrupt as e:
-                raise e
-            finally:
-                continue
-
     def start(self) -> None:
         """Start server and server forever."""
         if not self.thread:
-            self.thread = Thread(target=self._serve_forever)
+            self.thread = Thread(target=self.server.serve_forever)
             self.thread.start()
+            atexit.register(self.stop)
         elif not self.thread.is_alive():
             self.thread = None
             self.start()
@@ -107,12 +99,7 @@ class LocalFileServer:
         """Shutdown server."""
         self.server.shutdown()
         self.server.server_close()
-
-    def __del__(self) -> None:
-        try:
-            self.stop()
-        except Exception:
-            pass
+        atexit.unregister(self.stop)
 
     @staticmethod
     def _file_not_found(dest: str, start_response: callable) -> list:

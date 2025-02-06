@@ -26,7 +26,7 @@ import ngtools.transforms as T
 import ngtools.units as U
 from ngtools.dandifs import RemoteDandiFileSystem
 from ngtools.local.fileserver import LocalFileServerInBackground
-from ngtools.local.parserapp import ParserApp, _fixhelpformatter
+from ngtools.local.console import Console, _fixhelpformatter
 from ngtools.local.termcolors import bcolors
 from ngtools.local.tracts import TractSkeleton
 from ngtools.opener import remote_protocols
@@ -168,8 +168,8 @@ class LocalNeuroglancer:
             # exit gracefully (cleanup the fileserver process, etc)
             self.exit()
 
-    def _make_parser(self, debug: bool = False) -> ParserApp:
-        mainparser = ParserApp('', debug=debug)
+    def _make_parser(self, debug: bool = False) -> Console:
+        mainparser = Console('', debug=debug)
         parsers = mainparser.add_subparsers()
         formatter = _fixhelpformatter(argparse.RawDescriptionHelpFormatter)
         F = dict(formatter_class=formatter)

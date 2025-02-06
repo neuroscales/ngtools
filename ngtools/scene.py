@@ -3,6 +3,7 @@
 import functools
 import json
 import logging
+import sys
 from io import BytesIO
 from os import PathLike
 from typing import Literal, Sequence
@@ -24,15 +25,13 @@ import ngtools.local.tracts  # noqa: F401
 # internals
 import ngtools.spaces as S
 import ngtools.transforms as T
-from ngtools.datasources import (
-    LayerDataSource,
-    LayerDataSources,
-)
+from ngtools.datasources import LayerDataSource, LayerDataSources
 from ngtools.layers import Layer, Layers
+from ngtools.local.iostream import StandardIO
 from ngtools.opener import exists, open, parse_protocols
 from ngtools.shaders import colormaps, shaders
 from ngtools.units import convert_unit, split_unit
-from ngtools.utils import DEFAULT_URL
+from ngtools.utils import DEFAULT_URL, Wraps
 
 # monkey-patch Layer state to expose channelDimensions
 ng.Layer.channel_dimensions = ng.Layer.channelDimensions = wrapped_property(
@@ -57,23 +56,11 @@ URILike = str | PathLike
 SourceType = ng.LayerDataSource | ng.LocalVolume | ng.skeleton.SkeletonSource
 
 
-class ViewerState(ng.ViewerState):
+class ViewerState(Wraps(ng.ViewerState)):
     """Smart ng.ViewerState that knows default values set in the frontend."""
 
-    def __setattr__(self, name: str, value: object) -> None:
-        if hasattr(self, f"__set_{name}"):
-            value = getattr(self, f"__set_{name}")(value)
-        return super().__setattr__(name, value)
-
-    def __getattribute__(self, name: str) -> object:
-        try:
-            return super().__getattribute__(f"__get_{name}")()
-        except Exception:
-            ...
-        return super().__getattribute__(name)
-
-    def __set_layer(self, value: ng.Layers) -> Layers:
-        return Layers(value)
+    def __get_layers(self) -> Layers:
+        return Layers(getattr(super(), "layers"))
 
     def _default_dimensions(self) -> ng.CoordinateSpace:
         dims = {}
@@ -112,8 +99,8 @@ class ViewerState(ng.ViewerState):
 
     def __get_dimensions(self) -> ng.CoordinateSpace:
         """All non-local dimensions."""
-        self.dimensions = super().__getattribute__("dimensions")
-        return super().__getattribute__("dimensions")
+        self.dimensions = getattr(super(), "dimensions")
+        return getattr(super(), "dimensions")
 
     @property
     def spatial_dimensions(self) -> ng.CoordinateSpace:
@@ -126,6 +113,7 @@ class ViewerState(ng.ViewerState):
 
     @property
     def _space(self) -> str:
+        """Current space."""
         return "".join(x[:1].lower() for x in self.spatial_dimensions.names)
 
     def __set_relative_display_scales(
@@ -146,8 +134,8 @@ class ViewerState(ng.ViewerState):
     def __get_relative_display_scales(self) -> dict[str, float]:
         """Relative display scales."""
         self.relative_display_scales \
-            = super().__getattribute__("relative_display_scales")
-        return super().__getattribute__("relative_display_scales")
+            = getattr(super(), "relative_display_scales")
+        return getattr(super(), "relative_display_scales")
 
     __get_relativeDisplayScales = __get_relative_display_scales
 
@@ -227,7 +215,7 @@ def autolog(func: callable) -> callable:
 
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):  # noqa: ANN001, ANN202
-        if LOG.level <= logging.DEBUG:
+        if LOG.level <= logging.DEBUG or self.stdio._level <= logging.DEBUG:
             pargs = ", ".join(
                 f'"{arg}"' if isinstance(arg, str) else str(arg)
                 for arg in args
@@ -242,12 +230,15 @@ def autolog(func: callable) -> callable:
                 pargskwargs = pargs
             else:
                 pargskwargs = pargs + ", " + pkwargs
-            LOG.debug(f"{func.__name__}({pargskwargs})")
+            self.stdio.debug(f"{func.__name__}({pargskwargs})")
         try:
             return func(self, *args, **kwargs)
         except Exception as e:
-            if LOG.level <= logging.DEBUG:
-                LOG.debug(str(e))
+            if (
+                LOG.level <= logging.DEBUG or
+                self.stdio._level <= logging.DEBUG
+            ):
+                self.stdio.debug(str(e))
             raise e
 
     return wrapper
@@ -255,6 +246,37 @@ def autolog(func: callable) -> callable:
 
 class Scene(ViewerState):
     """A neuroglancer scene with a programmatic interface."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        """
+
+        Other Parameters
+        ----------------
+        stdout : TextIO | str
+            Output stream.
+        stderr : TextIO  | str
+            Error stream.
+        level : {"debug", "info", "warning", "error", "any"} | int | None
+            Level of printing.
+            * If None:      no printing
+            * If "error":   print errors
+            * If "warning": print errors and warnings
+            * If "info":    print errors, warnings and infos
+            * If "debug":   print errors, warnings, infos and debug messages.
+            * If "any:      print any message.
+        """
+        stdio = kwargs.pop("stdio", None)
+        if stdio is None:
+            stdin = kwargs.pop("stdout", sys.stdin)
+            stdout = kwargs.pop("stdout", sys.stdout)
+            stderr = kwargs.pop("stderr", sys.stderr)
+            level = kwargs.pop("level", "info")
+            stdio = StandardIO(
+                stdin=stdin, stdout=stdout, stderr=stderr,
+                level=level, logger=LOG
+            )
+        super().__init__(*args, **kwargs)
+        self.stdio = stdio
 
     @autolog
     def load(
@@ -274,12 +296,20 @@ class Scene(ViewerState):
             If a dictionary, maps layer names to file names.
         transform : array_like | list[float] | str | None
             Affine transform to apply to the loaded volume.
+
+        Other Parameters
+        ----------------
+        name : str | list[str]
+            Alternative way of providing layer names.
+            If used, `uri` cannot be a `dict`.
         """
         # prepare names and URLs
         names = []
         if isinstance(uri, dict):
             names = list(uri.keys())
             uri = list(uri.values())
+        else:
+            names = kwargs.pop("name", [])
         uris = _ensure_list(uri or [])
         names = _ensure_list(names or [])
 
@@ -342,8 +372,10 @@ class Scene(ViewerState):
         raise ValueError('No layer named', src)
 
     @autolog
-    def world_axes(self, axes: dict[str, str] | list[str] | str | None = None
-                   ) -> dict[str, str]:
+    def world_axes(
+        self, axes: dict[str, str] | list[str] | str | None = None,
+        **kwargs,
+    ) -> dict[str, str]:
         """
         Map native model axes (`"x"`, `"y"`, `"z"`, `"t"`) to
         neuroanatomical or arbitrary names.
@@ -354,6 +386,11 @@ class Scene(ViewerState):
             Mapping from native to user names.
             If None, simply return current mapping.
 
+        Other Parameters
+        ----------------
+        src, dst : str | list[str]
+            Native/New axes names. If used, `axes` cannot be used.
+
         Returns
         -------
         axes : dict[str, str]
@@ -362,6 +399,25 @@ class Scene(ViewerState):
         def make_local_annot() -> ng.AnnotationLayer:
             coord = ng.CoordinateSpace()
             return ng.AnnotationLayer(ng.LocalAnnotationLayer(coord))
+
+        # check if keywords were used
+        if "dst" in kwargs:
+            if axes is not None:
+                msg = "Cannot use `axes` if `src` is used."
+                self.stdio.error(msg)
+                raise ValueError(msg)
+            axes = _ensure_list(kwargs["dst"])
+        if "src" in kwargs:
+            if isinstance(axes, dict):
+                msg = "Cannot use `axes` if `dst` is used."
+                self.stdio.error(msg)
+                raise ValueError(msg)
+            if axes is None:
+                msg = "Missing user-defined names for axes."
+                self.stdio.error(msg)
+                raise ValueError(msg)
+            native = _ensure_list(kwargs["src"])
+            axes = {src: dst for src, dst in zip(native, axes)}
 
         # We save the mapping using the output dimensions of two
         # different local annotation layers.
@@ -431,6 +487,7 @@ class Scene(ViewerState):
         self,
         axes: str | list[str] | dict[str],
         layer: str | list[str] | None = None,
+        **kwargs
     ) -> dict[str]:
         """
         Rename world axes.
@@ -444,11 +501,36 @@ class Scene(ViewerState):
         layer : str | list[str] | None
             Layers to rename. By default, all.
 
+        Other Parameters
+        ----------------
+        src, dst : str | list[str]
+            Old/New axes names. If used, `axes` cannot be used.
+
         Returns
         -------
         axes : dict[str]
             Mapping from old names to new names
         """
+        # check if keywords were used
+        if "dst" in kwargs:
+            if axes is not None:
+                msg = "Cannot use `axes` if `src` is used."
+                self.stdio.error(msg)
+                raise ValueError(msg)
+            axes = _ensure_list(kwargs["dst"])
+        if "src" in kwargs:
+            if isinstance(axes, dict):
+                msg = "Cannot use `axes` if `dst` is used."
+                self.stdio.error(msg)
+                raise ValueError(msg)
+            if axes is None:
+                msg = "Missing user-defined names for axes."
+                self.stdio.error(msg)
+                raise ValueError(msg)
+            native = _ensure_list(kwargs["src"])
+            axes = {src: dst for src, dst in zip(native, axes)}
+
+        # format axis names
         if isinstance(axes, str):
             axes = S.name_compact2full(axes)
         if isinstance(axes, (list, tuple)):
@@ -506,7 +588,7 @@ class Scene(ViewerState):
 
         # If no input arguments, simply return known dimensions
         if mode is None and layer is None:
-            LOG.info(current_mode)
+            self.stdio.info(current_mode)
             return current_mode
         mode = mode or current_mode
 
@@ -566,8 +648,6 @@ class Scene(ViewerState):
 
         # Set transform
         self.cross_section_orientation = to_layer.tolist()
-        print(self.display_dimensions)
-        print(self.cross_section_orientation)
         return mode
 
     @autolog
@@ -604,12 +684,14 @@ class Scene(ViewerState):
                           for letter in dimensions]
         self.display_dimensions = dimensions
 
+    _TransformLike = (
+        ng.CoordinateSpaceTransform | ArrayLike | str | PathLike | BytesIO
+    )
+
     @autolog
     def transform(
         self,
-        transform: (
-            ng.CoordinateSpaceTransform | ArrayLike | str | PathLike | BytesIO
-        ),
+        transform: _TransformLike,
         layer: str | list[str] | None = None,
         inv: bool = False,
         *,
@@ -644,7 +726,6 @@ class Scene(ViewerState):
 
         # prepare transformation matrix
         transform = self._load_transform(transform, inv, mov=mov, fix=fix)
-        print(transform)
 
         # apply transform
         self._apply_transform(transform, layer)
@@ -672,7 +753,6 @@ class Scene(ViewerState):
         if isinstance(layer_names, str):
             layer_names = [layer_names]
 
-        print("layers before", self.layers)
         for layer in self.layers:
             layer: ng.ManagedLayer
             layer_name = layer.name
@@ -680,24 +760,13 @@ class Scene(ViewerState):
                 continue
             if layer_name.startswith('__'):
                 continue
-            manager = layer
-            print("manager before", manager)
             layer = layer.layer
             if isinstance(layer, ng.ImageLayer):
-                print("layer before", layer)
-                print("sources before", layer.source)
                 for source in layer.source:
                     source: LayerDataSource
-                    print("source before", source)
                     source.transform = T.compose(
                         transform, source.transform, adapt=adapt
                     )
-                    print("source after", source)
-                print("sources after", layer.source)
-                print("layer after", layer)
-            print("manager after", manager)
-
-        print("layers after", self.layers)
 
     @staticmethod
     def _load_transform(
@@ -754,7 +823,7 @@ class Scene(ViewerState):
 
         Parameters
         ----------
-        mode : {"local", "channel", "spatial"}
+        mode : {"local", "channel", "global"}
             How to interpret this dimension:
 
             - "local": enables a switch/slider to change which channel
@@ -990,7 +1059,7 @@ class Scene(ViewerState):
             for x, d, s, u in zip(position, dim.names, dim.scales, dim.units):
                 x = float(x) * float(s)
                 string += [f'{d}: {x:g} {u}']
-            LOG.info(', '.join(string))
+            self.stdio.info(', '.join(string))
             return position
 
         # Preproc dimensions
@@ -1060,7 +1129,7 @@ class Scene(ViewerState):
             if hasattr(layer, "shader"):
                 layer.shader = shader
 
-        LOG.info(shader)
+        self.stdio.info(shader)
         return shader
 
     @autolog
@@ -1114,7 +1183,7 @@ class Scene(ViewerState):
             Current JSON layout
         """  # noqa: E501
         if not layout and (remove is None):
-            LOG.info(self.layout)
+            self.stdio.info(self.layout)
             return self.layout
 
         layout = _ensure_list(layout or [])
@@ -1303,7 +1372,7 @@ class Scene(ViewerState):
             if url:
                 state = urlquote(json.dumps(state))
                 state = f'{DEFAULT_URL}#!' + state
-                LOG.info(state)
+                self.stdio.info(state)
             else:
-                LOG.info(json.dumps(state, indent=4))
+                self.stdio.info(json.dumps(state, indent=4))
         return state

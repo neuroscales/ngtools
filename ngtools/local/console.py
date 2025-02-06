@@ -7,7 +7,7 @@ We use it to implement a shell-like UI for neuroglancer.
 """
 # stdlib
 import argparse
-import atexit  # do stuff whe exiting (save history...)
+import logging
 import os
 import re
 import readline  # autocomplete/history in user input
@@ -17,10 +17,13 @@ import traceback
 from gettext import gettext  # to fix usage string
 
 # internals
-from ngtools.local.termcolors import bcolors
+from ngtools.local.iostream import StandardIO
+from ngtools.local.termcolors import bformat, iformat
+
+LOG = logging.getLogger(__name__)
 
 
-class ParserApp(argparse.ArgumentParser):
+class Console(argparse.ArgumentParser):
     """
     An ArgumentParser that can be used as a commandline app.
     It handles history and autocomplete.
@@ -30,6 +33,49 @@ class ParserApp(argparse.ArgumentParser):
     DEFAULT_HISTSIZE = 1000
 
     def __init__(self, *args: tuple, **kwargs: dict) -> None:
+        """
+        Parameters
+        ----------
+        prog : str, default=os.path.basename(sys.argv[0])
+            The name of the program.
+        usage : str, optional
+            A usage message. Default: auto-generated from arguments.
+        description : str, default=""
+            A description of what the program does.
+        epilog : str, default=""
+            Text following the argument descriptions
+        prefix_chars : str, default="-"
+            Characters that prefix optional arguments
+        fromfile_prefix_chars: str | None, default=None
+            Characters that prefix files containing additional arguments
+        argument_default : object, default=None
+            The default value for all arguments
+        conflict_handler : {"error", "resolve"}, default="error"
+            String indicating how to handle conflicts
+        add_help : bool, default=True
+            Add a -h/-help option
+        allow_abbrev: bool, default=True
+            Allow long options to be abbreviated unambiguously
+
+        Other Parameters
+        ----------------
+        debug : bool, default=False
+            Print traceback on error.
+        history_file : str, default="~/.neuroglancer_history"
+            Path to history file.
+        history_size : int, default=1000
+            History size.
+        exit_on_error : bool, default=False
+            Exit (non-gracefully) on error
+        exit_on_help : bool, default=False
+            Exist on help.
+        stdin : TextIO | str, default=sys.stdin
+            Input stream.
+        stdout : TextIO | str, default=sys.stdout
+            Output stream.
+        stderr : TextIO | str, default=sys.stderr
+            Error stream.
+        """
         self.debug = kwargs.pop('debug', False)
         # Commandline behavior
         self.history_file = kwargs.pop('history_file', self.DEFAULT_HISTFILE)
@@ -37,10 +83,20 @@ class ParserApp(argparse.ArgumentParser):
             self.history_file = os.path.expanduser(self.history_file)
         self.history_size = kwargs.pop('history_size', self.DEFAULT_HISTSIZE)
         # Exit behavior
-        kwargs.setdefault('exit_on_error', False)
+        self.exit_on_error = kwargs.pop('exit_on_error', False)
         self.exit_on_help = kwargs.pop('exit_on_help', False)
-        if sys.version_info < (3, 9):
-            self.exit_on_error = kwargs.pop('exit_on_error')
+        # Input/output
+        stdio = kwargs.pop("stdio", None)
+        if stdio is None:
+            stdin = kwargs.pop("stdout", sys.stdin)
+            stdout = kwargs.pop("stdout", sys.stdout)
+            stderr = kwargs.pop("stderr", sys.stderr)
+            level = kwargs.pop("level", "info")
+            stdio = StandardIO(
+                stdin=stdin, stdout=stdout, stderr=stderr,
+                level=level, logger=LOG
+            )
+        self.stdio = stdio
         # ArgumentParser.__init__
         super().__init__(*args, **kwargs)
         # Fixed usage formatter (monkey patch)
@@ -61,21 +117,19 @@ class ParserApp(argparse.ArgumentParser):
 
     def exit(self, status: int = 0, message: str | None = None) -> None:
         """Overload ArgumentParser.exit to disable it."""
-        raise self.InterruptParsing
-        # if self.exit_on_help:
-        #     return super().exit(status, message)
-        # if message:
-        #     print(message, file=sys.stderr)
+        # We overload (and do not call) ArgumentParser.exit
+        # This is called (e.g.) after running a help command.
+        if message:
+            self.stdio.print(message)
+        raise self.InterruptParsing(status)
 
-    def error(self, message: str) -> None:
-        """Overload ArgumentParser.error to disable it."""
-        pass
-        # if sys.version_info >= (3, 9) or self.exit_on_error:
-        #     return super().error(message)
-        # try:
-        #     return super().error(message)
-        # except SystemExit:
-        #     pass
+    def error(self, *args, **kwargs) -> None:
+        """Error -- Print something to the stderr in red."""
+        # We overload (and do not call) ArgumentParser.error
+        if self.exit_on_error:
+            raise SystemExit(*args)
+        else:
+            self.stdio.error(*args, **kwargs)
 
     def enter_console(self) -> None:
         """Set up history and auto-complete."""
@@ -96,7 +150,6 @@ class ParserApp(argparse.ArgumentParser):
                     pass
             readline.read_history_file(self.history_file)
             readline.set_history_length(self.history_size)
-            atexit.register(self.exit_console)
 
     def exit_console(self) -> None:
         """Save history."""
@@ -108,31 +161,27 @@ class ParserApp(argparse.ArgumentParser):
         """Wait for next user input."""
         self.enter_console()
 
-        print(
-            f'\nType {bcolors.bold}help{bcolors.endc} to list available '
-            f'commands, or {bcolors.bold}help <command>{bcolors.endc} '
+        self.stdio.print(
+            f'\nType {bformat.bold("help")} to list available '
+            f'commands, or {bformat.bold("help <command>")} '
             f'for specific help.\n'
-            f'Type {bcolors.bold}Ctrl+C{bcolors.endc} to interrupt the '
-            f'current command and {bcolors.bold}Ctrl+D{bcolors.endc} to '
+            f'Type {bformat.bold("Ctrl+C")} to interrupt the '
+            f'current command and {bformat.bold("Ctrl+D")} to '
             f'exit the app.'
         )
-
-        def green(s: str) -> str:
-            return '\001' + bcolors.fg.green + str(s) + bcolors.endc + '\002'
 
         count = 1
         try:
             while True:
                 try:
                     # Query input
-                    args = input(green(f'[{count}] '))
+                    args = self.stdio.input(iformat.fg.green(f'[{count}] '))
                     if not args.strip():
-                        print('')
                         continue
                     count += 1
                 except KeyboardInterrupt:
                     # Ctrl+C -> generate new input
-                    print('')
+                    self.stdio.print("", end="")
                     continue
 
                 try:
@@ -145,14 +194,13 @@ class ParserApp(argparse.ArgumentParser):
                     raise e
                 except self.InterruptParsing:
                     # Caught "exit" call in parser. Silent it.
+                    # (This is triggered by --help)
                     continue
                 except Exception as e:
                     # Other exceptions -> print + new input field
                     if self.debug:
-                        print(traceback.print_tb(e.__traceback__),
-                              file=sys.stderr)
-                    print(f"{bcolors.fail}(PARSE ERROR)", e, bcolors.endc,
-                          file=sys.stderr)
+                        self.stdio.debug(traceback.print_tb(e.__traceback__))
+                    self.error("(PARSE ERROR)", e)
                     continue
 
                 try:
@@ -164,21 +212,19 @@ class ParserApp(argparse.ArgumentParser):
                     raise e
                 except self.InterruptParsing:
                     # Caught "exit" call in parser. Silent it.
+                    # (This is triggered by --help)
                     continue
                 except Exception as e:
                     # Other exceptions -> print + new input field
                     if self.debug:
-                        print(traceback.print_tb(e.__traceback__),
-                              file=sys.stderr)
-                    print(f"{bcolors.fail}(EXEC ERROR)", e, bcolors.endc,
-                          file=sys.stderr)
+                        self.stdio.debug(traceback.print_tb(e.__traceback__))
+                    self.error("(EXEC ERROR)", e)
                     continue
 
         except EOFError:
             # Ctrl+D -> graceful exit
-            self.exit_console()
-            print('exit')
-            sys.exit()
+            self.stdio.print('exit', end="")
+            raise SystemExit
         finally:
             self.exit_console()
 
@@ -253,6 +299,8 @@ class ParserApp(argparse.ArgumentParser):
 
 def _fixhelpformatter(klass: type) -> type:
     """
+    Fix help to say that positionals must be given before options.
+
     argparse default usage string says that positional arguments
     should be given after optional arguments, whereas it's really the
     opposite.

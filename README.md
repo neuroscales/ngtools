@@ -29,7 +29,15 @@ neuroglancer
 ```
 in your shell. It will open a neuroglancer window, and a shell-like
 interface:
-<pre><code>fileserver:   http://127.0.0.1:9123/
+<pre><code>
+             _              _
+ _ __   __ _| |_ ___   ___ | |___
+| '_ \ / _` | __/ _ \ / _ \| / __|
+| | | | (_| | || (_) | (_) | \__ \
+|_| |_|\__, |\__\___/ \___/|_|___/
+       |___/
+
+fileserver:   http://127.0.0.1:9123/
 neuroglancer: http://127.0.0.1:9321/v/1/
 
 Type <b>help</b> to list available commands, or <b>help &lt;command&gt;</b> for specific help.

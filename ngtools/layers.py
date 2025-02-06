@@ -72,13 +72,17 @@ class LayerFactory(type):
 
         # Convert to JSON (slower but more robust)
         if hasattr(json_data, "to_json"):
-            json_data = json_data.to_json()
+            really_json_data = json_data.to_json()
+        else:
+            really_json_data = json_data
 
         # Get source
         if "source" in kwargs:
             source = kwargs.pop("source")
-        elif "source" in json_data:
-            source = json_data.pop("source")
+        elif hasattr(json_data, "source"):
+            source = json_data.source
+        elif "source" in really_json_data:
+            source = really_json_data.pop("source")
         else:
             source = json_data
             json_data = None
@@ -95,26 +99,26 @@ class LayerFactory(type):
         if uri_as_str:
             layer_type = parse_protocols(uri_as_str)[0]
             GuessedLayer = {
-                'image': ImageLayer,
-                'volume': ImageLayer,
-                'segmentation': SegmentationLayer,
-                'labels': SegmentationLayer,
-                'mesh': MeshLayer,
-                'surface': MeshLayer,
-                'skeleton': SkeletonLayer,
-                'tracts': TractLayer,
-                'annotation': AnnotationLayer,
+                "image": ImageLayer,
+                "volume": ImageLayer,
+                "segmentation": SegmentationLayer,
+                "labels": SegmentationLayer,
+                "mesh": MeshLayer,
+                "surface": MeshLayer,
+                "skeleton": SkeletonLayer,
+                "tracts": TractLayer,
+                "annotation": AnnotationLayer,
             }.get(layer_type, None)
             if GuessedLayer:
                 return GuessedLayer(json_data, *args, **kwargs)
 
         # switch based on type keyword
-        if "type" in (json_data or {}):
+        if "type" in (really_json_data or {}):
             GuessedLayer = {
-                'image': ImageLayer,
-                'segmentation': SegmentationLayer,
-                'mesh': SingleMeshLayer,
-                'annotation': AnnotationLayer,
+                "image": ImageLayer,
+                "segmentation": SegmentationLayer,
+                "mesh": SingleMeshLayer,
+                "annotation": AnnotationLayer,
             }.get(layer_type, None)
             if GuessedLayer:
                 return GuessedLayer(json_data, *args, **kwargs)
@@ -183,8 +187,7 @@ class Layer(Wraps(ng.Layer), metaclass=LayerFactory):
     def apply_transform(self, *args: ng.CoordinateSpaceTransform) -> "Layer":
         """Apply an additional transform in model space."""
         for source in getattr(self, "source", []):
-            if hasattr(source, "apply_transform"):
-                source.apply_transform(*args)
+            getattr(source, "apply_transform", (lambda *_: None))(*args)
         return self
 
 
@@ -340,8 +343,8 @@ class SkeletonFactory(LayerFactory):
         if isinstance(uri, (str, PathLike)):
             layer_type = parse_protocols(uri)[0]
             layer = {
-                'tracts': TractLayer,
-                'skeleton': SkeletonLayer,
+                "tracts": TractLayer,
+                "skeleton": SkeletonLayer,
             }.get(layer_type, lambda *a, **k: None)(uri, *args, **kwargs)
             if layer:
                 return layer

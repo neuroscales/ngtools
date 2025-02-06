@@ -2,7 +2,6 @@
 # stdlib
 import argparse
 import os.path
-import sys
 import textwrap
 
 # externals
@@ -11,8 +10,8 @@ import numpy as np
 from neuroglancer.server import global_server_args
 
 # internals
+from ngtools.local.console import Console, _fixhelpformatter
 from ngtools.local.fileserver import LocalFileServer, find_available_port
-from ngtools.local.parserapp import ParserApp, _fixhelpformatter
 from ngtools.local.termcolors import bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
@@ -32,7 +31,7 @@ def action(needstate: bool = False) -> callable:
     def decorator(func: callable) -> callable:
 
         def wrapper(
-            self: LocalNeuroglancer, *args: tuple, **kwargs: dict
+            self: "LocalNeuroglancer", *args: tuple, **kwargs: dict
         ) -> callable:
             args = list(args)
             if args and isinstance(args[0], argparse.Namespace):
@@ -64,7 +63,7 @@ def state_action(name: str) -> callable:
 
     @action(needstate=True)
     def func(
-        self: LocalNeuroglancer, *args, state: ng.ViewerState, **kwargs
+        self: "LocalNeuroglancer", *args, state: ng.ViewerState, **kwargs
     ) -> object | None:
         scene = Scene(state.to_json())
         out = getattr(scene, name)(*args, **kwargs)
@@ -117,7 +116,10 @@ class LocalNeuroglancer:
         debug : bool
             Print full trace when an error is encountered.
         """
-        if fileserver is True or isinstance(fileserver, int):
+        if (
+            fileserver is not False and
+            not isinstance(fileserver, LocalFileServer)
+        ):
             portf = fileserver if isinstance(fileserver, int) else 0
             fileserver = LocalFileServer(ip=ip, port=portf, interrupt=EOFError)
         self.fileserver = fileserver
@@ -129,7 +131,7 @@ class LocalNeuroglancer:
         global_server_args['bind_port'] = str(port)
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
-        self.parser = self._make_parser(debug)
+        self.console = self._make_console(debug)
 
     # ==================================================================
     #
@@ -139,14 +141,18 @@ class LocalNeuroglancer:
 
     def await_input(self) -> None:
         """Launch shell-like interface."""
+        # return self.console.await_input()
+        # return self.console.await_input()
         try:
-            return self.parser.await_input()
+            return self.console.await_input()
         except SystemExit:
             # exit gracefully (cleanup the fileserver process, etc)
-            self.exit()
+            if self.fileserver:
+                self.fileserver.stop()
+            raise
 
-    def _make_parser(self, debug: bool = False) -> ParserApp:
-        mainparser = ParserApp('', debug=debug)
+    def _make_console(self, debug: bool = False) -> Console:
+        mainparser = Console('', debug=debug)
         parsers = mainparser.add_subparsers()
         formatter = _fixhelpformatter(argparse.RawDescriptionHelpFormatter)
         F = dict(formatter_class=formatter)
@@ -160,144 +166,178 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         #   HELP
         # --------------------------------------------------------------
-        help = add_parser('help', help='Display help')
-        help.set_defaults(func=self.help)
-        help.add_argument(
+        _ = add_parser('help', help='Display help')
+        _.set_defaults(func=self.help)
+        _.add_argument(
             dest='action', nargs='?', help='Command for which to display help')
 
         # --------------------------------------------------------------
         #   LOAD
         # --------------------------------------------------------------
-        load = add_parser('load', help='Load a file')
-        load.set_defaults(func=self.load)
-        load.add_argument(
+        _ = add_parser('load', help='Load a file')
+        _.set_defaults(func=self.load)
+        _.add_argument(
             dest='filename', nargs='+', metavar='FILENAME',
             help='Filename(s) with protocols')
-        load.add_argument(
+        _.add_argument(
             '--name', nargs='+', help='A name for the image layer')
-        load.add_argument(
+        _.add_argument(
             '--transform', nargs='+', help='Apply a transform')
 
         # --------------------------------------------------------------
         #   UNLOAD
         # --------------------------------------------------------------
-        unload = add_parser('unload', help='Unload a file')
-        unload.set_defaults(func=self.unload)
-        unload.add_argument(
+        _ = add_parser('unload', help='Unload a file')
+        _.set_defaults(func=self.unload)
+        _.add_argument(
             dest='layer', nargs='+', metavar='LAYER',
             help='Name(s) of layer(s) to unload')
 
         # --------------------------------------------------------------
         #   RENAME
         # --------------------------------------------------------------
-        rename = add_parser('rename', help='Rename a file')
-        rename.set_defaults(func=self.rename)
-        rename.add_argument(
+        _ = add_parser('rename', help='Rename a file')
+        _.set_defaults(func=self.rename)
+        _.add_argument(
             dest='src', metavar='SOURCE', help='Current layer name')
-        rename.add_argument(
+        _.add_argument(
             dest='dst', metavar='DEST', help='New layer name')
+
+        # --------------------------------------------------------------
+        #   WORLD AXES
+        # --------------------------------------------------------------
+        _ = add_parser('world_axes', help='Rename native axes')
+        _.set_defaults(func=self.world_axes)
+        _.add_argument(
+            dest='axes', metavar='DEST', nargs="*", help='New axis names')
+        _.add_argument(
+            "--dst", metavar='DEST', nargs="+", help='New axis names')
+        _.add_argument(
+            '--src', metavar='SOURCE', nargs="*", help='Native axis names')
+
+        # --------------------------------------------------------------
+        #   RENAME AXES
+        # --------------------------------------------------------------
+        _ = add_parser('rename_axes', help='Rename axes')
+        _.set_defaults(func=self.rename_axes)
+        _.add_argument(
+            dest='axes', metavar='DEST', nargs="+", help='New axis names')
+        _.add_argument(
+            "--dst", metavar='DEST', nargs="+", help='New axis names')
+        _.add_argument(
+            '--src', metavar='SOURCE', nargs="*", help='Old axis names')
+        _.add_argument(
+            '--layer', nargs="*", help='Layer(s) to rename')
+
+        # --------------------------------------------------------------
+        #   SPACE
+        # --------------------------------------------------------------
+        MODES = ("radio", "neuro")
+        _ = add_parser('space', help='Cross-section orientation')
+        _.set_defaults(func=self.space)
+        _.add_argument(
+            dest='mode', nargs="?", help='New axis names', choices=MODES)
+        _.add_argument(
+            '--layer', nargs="*",
+            help='If the name of a layer, align the cross-section with its '
+                 'voxel grid. If "world", align the cross section with the '
+                 'canonical axes.')
 
         # --------------------------------------------------------------
         #   TRANSFORM
         # --------------------------------------------------------------
-        transform = add_parser('transform', help='Apply a transform')
-        transform.set_defaults(func=self.transform)
-        transform.add_argument(
+        _ = add_parser('transform', help='Apply a transform')
+        _.set_defaults(func=self.transform)
+        _.add_argument(
             dest='transform', nargs='+', metavar='TRANSFORM',
             help='Path to transform file or flattened transformation '
                  'matrix (row major)')
-        transform.add_argument(
+        _.add_argument(
             '--layer', nargs='+', help='Name(s) of layer(s) to transform')
-        transform.add_argument(
+        _.add_argument(
             '--inv', action='store_true', default=False,
             help='Invert the transform before applying it')
-        transform.add_argument(
+        _.add_argument(
             '--mov', help='Moving image (required by some formats)')
-        transform.add_argument(
+        _.add_argument(
             '--fix', help='Fixed image (required by some formats)')
 
         # --------------------------------------------------------------
         #   AXIS MODE
         # --------------------------------------------------------------
-        channelmode = add_parser(
+        _ = add_parser(
             'channel_mode', help='Change the way a dimension is interpreted')
-        channelmode.set_defaults(func=self.channel_mode)
-        channelmode.add_argument(
+        _.set_defaults(func=self.channel_mode)
+        _.add_argument(
             dest='mode', metavar='MODE',
-            choices=('local', 'channel', 'spatial'),
+            choices=('local', 'channel', 'global'),
             help='How to interpret the channel (or another) axis')
-        channelmode.add_argument(
+        _.add_argument(
             '--layer', nargs='+', default=None,
             help='Name(s) of layer(s) to transform')
-        channelmode.add_argument(
+        _.add_argument(
             '--dimension', nargs='+', default=['c'],
             help='Name(s) of axes to transform')
 
         # --------------------------------------------------------------
         #   SHADER
         # --------------------------------------------------------------
-        shader = add_parser('shader', help='Apply a shader')
-        shader.set_defaults(func=self.shader)
-        shader.add_argument(
+        _ = add_parser('shader', help='Apply a shader')
+        _.set_defaults(func=self.shader)
+        _.add_argument(
             dest='shader', metavar='SHADER',
             help='Shader name or GLSL shader code')
-        shader.add_argument(
+        _.add_argument(
             '--layer', nargs='+', help='Layer(s) to apply shader to')
 
         # --------------------------------------------------------------
         #   DISPLAY
         # --------------------------------------------------------------
-        display = add_parser('display', help='Dimensions to display')
-        display.set_defaults(func=self.display)
-        display.add_argument(
+        _ = add_parser('display', help='Dimensions to display')
+        _.set_defaults(func=self.display)
+        _.add_argument(
             dest='dimensions', nargs='*', metavar='DIMENSIONS',
             help='Dimensions to display')
-        display.add_argument(
-            '--layer', default=None,
-            help='Show in this layer\'s canonical space')
-        display.add_argument(
-            '--world', dest='layer', action='store_const', const=self._WORLD,
-            help='Show in world space', default=None)
 
         # --------------------------------------------------------------
         #   LAYOUT
         # --------------------------------------------------------------
         LAYOUTS = ["xy", "yz", "xz", "xy-3d", "yz-3d", "xz-3d", "4panel", "3d"]
-        layout = add_parser('layout', help='Layout')
-        layout.set_defaults(func=self.layout)
-        layout.add_argument(
+        _ = add_parser('layout', help='Layout')
+        _.set_defaults(func=self.layout)
+        _.add_argument(
             dest='layout', nargs='*', choices=LAYOUTS, metavar='LAYOUT',
             help='Layout')
-        layout.add_argument(
+        _.add_argument(
             '--stack', choices=("row", "column"), help="Stack direction")
-        layout.add_argument(
+        _.add_argument(
             '--layer', nargs='*', help="Layer(s) to include")
-        layout.add_argument(
+        _.add_argument(
             '--flex', type=float, default=1, help="Flex")
-        layout.add_argument(
+        _.add_argument(
             '--append', type=int, nargs='*',
             help="Append to existing (nested) layout")
-        layout.add_argument(
+        _.add_argument(
             '--insert', type=int, nargs='+',
             help="Insert in existing (nested) layout")
-        layout.add_argument(
+        _.add_argument(
             '--remove', type=int, nargs='+',
             help="Remove from an existing (nested) layout")
 
         # --------------------------------------------------------------
         #   STATE
         # --------------------------------------------------------------
-        state = add_parser('state', help='Return the viewer\'s state')
-        state.set_defaults(func=self.state)
-        state.add_argument(
+        _ = add_parser('state', help='Return the viewer\'s state')
+        _.set_defaults(func=self.state)
+        _.add_argument(
             '--no-print', action='store_false', default=True, dest='print',
             help='Do not print the state.')
-        state.add_argument(
+        _.add_argument(
             '--save', help='Save JSON state to this file.')
-        state.add_argument(
+        _.add_argument(
             '--load', help='Load JSON state from this file. '
                            'Can also be a JSON string or a URL.')
-        state.add_argument(
+        _.add_argument(
             '--url', action='store_true', default=False,
             help='Load (or print) the url form of the state')
 
@@ -332,37 +372,37 @@ class LocalNeuroglancer:
         # --------------------------------------------------------------
         #   ZORDER
         # --------------------------------------------------------------
-        zorder = add_parser('zorder', help='Reorder layers')
-        zorder.set_defaults(func=self.zorder)
-        zorder.add_argument(
+        _ = add_parser('zorder', help='Reorder layers')
+        _.set_defaults(func=self.zorder)
+        _.add_argument(
             dest='layer', nargs='+', metavar='LAYER',
             help='Layer(s) name(s)')
-        zorder.add_argument(
+        _.add_argument(
             '--up', '-u', '-^', action='count', default=0,
             help='Move upwards')
-        zorder.add_argument(
+        _.add_argument(
             '--down', '-d', '-v', action='count', default=0,
             help='Move downwards')
 
         # --------------------------------------------------------------
         #   NAVIGATION
         # --------------------------------------------------------------
-        cd = add_parser('cd', help='Change directory')
-        cd.set_defaults(func=self.cd)
-        cd.add_argument(dest='path', metavar='PATH')
+        _ = add_parser('cd', help='Change directory')
+        _.set_defaults(func=self.cd)
+        _.add_argument(dest='path', metavar='PATH')
 
-        ls = add_parser('ls', help='List files')
-        ls.set_defaults(func=self.ls)
-        ls.add_argument(dest='path', nargs='?', default='.', metavar='PATH')
+        _ = add_parser('ls', help='List files')
+        _.set_defaults(func=self.ls)
+        _.add_argument(dest='path', nargs='?', default='.', metavar='PATH')
 
-        pwd = add_parser('pwd', help='Path to working directory')
-        pwd.set_defaults(func=self.pwd)
+        _ = add_parser('pwd', help='Path to working directory')
+        _.set_defaults(func=self.pwd)
 
         # --------------------------------------------------------------
         #   EXIT
         # --------------------------------------------------------------
-        exit = add_parser('exit', aliases=['quit'], help='Exit neuroglancer')
-        exit.set_defaults(func=self.exit)
+        _ = add_parser('exit', aliases=['quit'], help='Exit neuroglancer')
+        _.set_defaults(func=self.exit)
         return mainparser
 
     # ==================================================================
@@ -397,13 +437,13 @@ class LocalNeuroglancer:
     def ls(self, path: str) -> list[str]:
         """List files."""
         files = os.listdir(os.path.expanduser(path))
-        print(*files)
+        self.console.print(*files)
         return files
 
     @action
     def pwd(self) -> str:
         """Path to working directory."""
-        print(os.getcwd())
+        self.console.print(os.getcwd())
         return os.getcwd()
 
     @action
@@ -417,16 +457,14 @@ class LocalNeuroglancer:
             Action for which to display help
         """
         if action:
-            self.parser.parse_args([action, '--help'])
+            self.console.parse_args([action, '--help'])
         else:
-            self.parser.parse_args(['--help'])
+            self.console.parse_args(['--help'])
 
     @action
     def exit(self) -> None:
         """Exit gracefully."""
-        if hasattr(self, 'fileserver'):
-            del self.fileserver
-        sys.exit()
+        raise SystemExit
 
     # ==================================================================
     #
