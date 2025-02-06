@@ -29,8 +29,7 @@ neuroglancer
 ```
 in your shell. It will open a neuroglancer window, and a shell-like
 interface:
-<pre><code>
-             _              _
+<pre><code>             _              _
  _ __   __ _| |_ ___   ___ | |___
 | '_ \ / _` | __/ _ \ / _ \| / __|
 | | | | (_| | || (_) | (_) | \__ \
