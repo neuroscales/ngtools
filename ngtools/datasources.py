@@ -440,9 +440,9 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
     def input_bbox(self) -> list[list[float]]:
         """Bounding box, in input_dimensions space and units."""
         shape = self.shape
-        scales = self.input_dimensions.scales
+        # FIXME: should there be a half voxel shift?
         min = [0.0] * self.rank
-        max = [x * scl for x, scl in zip(shape, scales)]
+        max = shape
         return [min, max]
 
     @property
@@ -460,7 +460,7 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             mat[:, -1] = coord
             coord = ng.CoordinateSpaceTransform(
                 input_dimensions=self.input_dimensions,
-                output_dimensions=self.output_dimensions,
+                output_dimensions=self.input_dimensions,
                 matrix=mat,
             )
 
@@ -477,7 +477,7 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
     def input_center(self) -> list[float]:
         """Center of the field of view in input dimensions space and units."""
         bbox = np.asarray(self.input_bbox)
-        return ((bbox[0] + bbox[1]) / 2). tolist()
+        return ((bbox[0] + bbox[1]) / 2).tolist()
 
     @property
     def output_center(self) -> list[float]:

@@ -332,17 +332,17 @@ class ViewerState(Wraps(ng.ViewerState)):
                 continue
             if not hasattr(source, "output_voxel_size"):
                 continue
-            odims = source.output_dimensions
+            odims = source.transform.output_dimensions.to_json()
+            onames = list(odims.keys())
             bbox = source.output_bbox_size
             for name, (scale, unit) in dimensions.items():
-                if name not in odims.names:
+                if name not in onames:
                     continue
-                j = odims.names.index(name)
-                scale0 = odims.scales[j]
+                j = onames.index(name)
+                scale0, unit0 = odims[name]
                 scale_ratio = scale0 / scale
-                unit0 = odims.units[j]
                 bbox_value = convert_unit(bbox[j], unit0, unit) * scale_ratio
-                scl[name] = bbox_value / (1024 * 4)
+                scl[name] = bbox_value / 256
             break
         dims = self.display_dimensions[:3]
         if len(dims) == 0:
@@ -386,14 +386,18 @@ class ViewerState(Wraps(ng.ViewerState)):
             source = layer.source[0]
             if not hasattr(source, "output_center"):
                 continue
+            odims = source.transform.output_dimensions.to_json()
+            onames = list(odims.keys())
             center = source.output_center
             for i, (name, (scale, unit)) in enumerate(dimensions.items()):
-                if name not in source.output_dimensions.names:
+                if name not in onames:
                     continue
-                j = source.output_dimensions.names.index(name)
-                unit0 = source.output_dimensions.units[j]
+                j = onames.index(name)
+                scale0, unit0 = odims[name]
+                scale_ratio = scale0 / scale
                 value = convert_unit(center[j], unit0, unit)
-                pos[i] = value / scale
+                value *= scale_ratio
+                pos[i] = value
             break
         return pos
 
@@ -548,7 +552,7 @@ class Scene(ViewerState):
             self.layers.append(name=name, layer=layer)
 
         # rename axes according to current naming scheme
-        self.rename_axes(self.world_axes(), layer=onames)
+        self.rename_axes(self.world_axes(print=False), layer=onames)
 
         # apply transform
         if transform is not None:
@@ -1023,7 +1027,7 @@ class Scene(ViewerState):
             if layer_name.startswith('__'):
                 continue
             layer = layer.layer
-            if isinstance(layer, ng.ImageLayer):
+            if hasattr(layer, "source"):
                 for source in layer.source:
                     source: LayerDataSource
                     source.transform = T.compose(
@@ -1280,7 +1284,7 @@ class Scene(ViewerState):
     @autolog
     def move(
         self,
-        coord: float | list[float] | dict[str, float],
+        coord: float | list[float] | dict[str, float] = 0,
         dimensions: str | list[str] | None = None,
         unit: str | None = None,
         **kwargs,
@@ -1311,7 +1315,7 @@ class Scene(ViewerState):
         """
         if kwargs.pop('reset', not isinstance(coord, Sequence) and coord == 0):
             self.position = self.__default_position__
-            return self.postion
+            return self.position
 
         if not self.dimensions:
             raise RuntimeError(
@@ -1360,6 +1364,66 @@ class Scene(ViewerState):
         self.position = list(coord.values())
 
         return list(map(float, self.position))
+
+    @autolog
+    def zoom(self, factor: float | None = 2.0, reset: bool = False) -> float:
+        """Zoom by some factor.
+
+        Parameters
+        ----------
+        factor : float
+            Zoom factor
+        reset : bool
+            Reset zoom level to default
+
+        Returns
+        -------
+        scale : float
+            Current zoom level
+        """
+        if reset:
+            self.cross_section_scale = self.__default_cross_section_scale__
+            return self.cross_section_scale
+        scale = self.cross_section_scale
+        factor = float(factor or 1.0)
+        if factor != 0:
+            # cross_section_scale is the _resolution_ of the view,
+            # therefore smaller means more zoomed.
+            scale /= factor
+            self.cross_section_scale = scale
+        else:
+            self.stdio.print(scale)
+        return scale
+
+    @autolog
+    def unzoom(self, factor: float | None = 2.0, reset: bool = False) -> float:
+        """Unzoom by some factor.
+
+        Parameters
+        ----------
+        factor : float
+            Unzoom factor
+        reset : bool
+            Reset zoom level to default
+
+        Returns
+        -------
+        scale : float
+            Current zoom level
+        """
+        if reset:
+            self.cross_section_scale = self.__default_cross_section_scale__
+            return self.cross_section_scale
+        scale = self.cross_section_scale
+        factor = float(factor or 1.0)
+        if factor != 1:
+            # cross_section_scale is the _resolution_ of the view,
+            # therefore bigger means less zoomed.
+            scale *= factor
+            self.cross_section_scale = scale
+        else:
+            self.stdio.print(scale)
+        return scale
 
     @autolog
     def shader(

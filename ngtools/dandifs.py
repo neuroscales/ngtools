@@ -2,6 +2,7 @@
 # stdlib
 import json
 import logging
+import os
 import re
 from os import PathLike
 from typing import Iterator
@@ -155,46 +156,50 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         return cls(dandiset, version, instance)
 
     @classmethod
+    def _auth_apply(
+        cls, fn: callable, client: DandiAPIClient, auth: bool | None = None
+    ) -> object:
+        is_401 = lambda e: (  # noqa: E731
+            e.response is not None
+            and e.response.status_code == 401
+            and auth is not False
+        )
+        if auth:
+            client.dandi_authenticate()
+        try:
+            return fn()
+        except requests.HTTPError as e:
+            if not is_401(e):
+                raise e
+        try:
+            client.authenticate(os.environ.get("LINCBRAIN_API_KEY", ""))
+            return fn()
+        except requests.HTTPError as e:
+            if not is_401(e):
+                raise e
+            exc = e
+        raise exc
+
+    @classmethod
     def _get_dandiset(
         cls, client: DandiAPIClient, *args, **kwargs
     ) -> RemoteDandiset:
         auth = kwargs.pop("auth", None)
-        if auth:
-            client.dandi_authenticate()
-        try:
-            return client.get_dandiset(*args, **kwargs)
-        except requests.HTTPError as e:
-            if (
-                e.response is not None
-                and e.response.status_code == 401
-                and auth is not False
-            ):
-                client.dandi_authenticate()
-                return client.get_dandiset(*args, **kwargs)
-            else:
-                raise e
+        return cls._auth_apply(
+            lambda: client.get_dandiset(*args, **kwargs),
+            client, auth
+        )
 
     @classmethod
-    def _get_asset(
-        cls, client: DandiAPIClient, *args, auth: bool | None = None,
-    ) -> BaseRemoteAsset:
-        if auth:
-            client.dandi_authenticate()
-        try:
-            return client.get_asset(*args)
-        except requests.HTTPError as e:
-            if (
-                e.response is not None
-                and e.response.status_code == 401
-                and auth is not False
-            ):
-                client.dandi_authenticate()
-                return client.get_asset(*args)
-            else:
-                raise e
+    def _get_asset(cls, client: DandiAPIClient, *a, **k) -> BaseRemoteAsset:
+        auth = k.pop("auth", None)
+        return cls._auth_apply(
+            lambda: client.get_asset(*a, **k),
+            client, auth
+        )
 
     def get_dandiset(
-        self, path: str, auth: bool | None = True,
+        self, path: str, auth: bool | None = None,
         dandiset: RemoteDandiset | None = None,
     ) -> tuple[RemoteDandiset, str]:
         """
@@ -266,7 +271,10 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         dandiset, asset = self.get_dandiset(path, **kwargs)
         if not isinstance(path, RemoteAsset):
             try:
-                asset = dandiset.get_asset_by_path(asset)
+                asset = self._auth_apply(
+                    lambda: dandiset.get_asset_by_path(asset),
+                    dandiset.client, kwargs.get("auth", None)
+                )
 
             except NotFoundError:
                 path = asset.rstrip("/")
@@ -282,7 +290,10 @@ class RemoteDandiFileSystem(AbstractFileSystem):
                     path_prefix = '/'.join(path_prefix)
 
                     try:
-                        asset = dandiset.get_asset_by_path(path_prefix)
+                        asset = self._auth_apply(
+                            lambda: dandiset.get_asset_by_path(path_prefix),
+                            dandiset.client, kwargs.get("auth", None)
+                        )
                         url = self._s3_url_from_asset(asset).rstrip("/")
                         url += "/" + path_suffix
                         return url

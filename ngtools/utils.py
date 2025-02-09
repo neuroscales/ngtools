@@ -99,7 +99,7 @@ def Wraps(kls: type) -> type:
             def __getattr__(self, name: str) -> object | type:
                 if name in self.__dict__:
                     return self.__fix_none_value__(name, self.__dict__[name])
-                value = self._wrapped.__getattr__(name)
+                value = getattr(self._wrapped, name)
                 return self.__fix_none_value__(name, value)
 
             def __setattr__(self, name: str, value: object | type) -> None:

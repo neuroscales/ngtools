@@ -463,6 +463,27 @@ class LocalNeuroglancer(OSMixin):
             help='Reset coordinates to zero')
 
         # --------------------------------------------------------------
+        #   ZOOM
+        # --------------------------------------------------------------
+        _ = add_parser('zoom', help='Zoom')
+        _.set_defaults(func=self.zoom)
+        _.add_argument(
+            dest='factor', nargs='?', type=float, default=2.0,
+            help='Zoom factor.')
+        _.add_argument(
+            '--reset', action='store_true', default=False,
+            help='Reset zoom level to default.')
+
+        _ = add_parser('unzoom', help='Zoom')
+        _.set_defaults(func=self.unzoom)
+        _.add_argument(
+            dest='factor', nargs='?', type=float, default=2.0,
+            help='Inverse zoom factor.')
+        _.add_argument(
+            '--reset', action='store_true', default=False,
+            help='Reset zoom level to default.')
+
+        # --------------------------------------------------------------
         #   ZORDER
         # --------------------------------------------------------------
         _ = add_parser('zorder', help='Reorder layers')
@@ -521,6 +542,8 @@ class LocalNeuroglancer(OSMixin):
     transform = state_action("transform")
     channel_mode = state_action("channel_mode")
     move = state_action("move")
+    zoom = state_action("zoom")
+    unzoom = state_action("unzoom")
     shader = state_action("shader")
     layout = state_action("change_layout")
     zorder = state_action("zorder")

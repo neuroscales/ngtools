@@ -60,6 +60,7 @@ def main(args: list[str] | None = None) -> None:
 
     logging.basicConfig()
     logging.getLogger().setLevel(1000)
+    logging.getLogger("dandi").setLevel(1000)
     logging.getLogger("ngtools").setLevel(log_map[args.log_level[0].lower()])
 
     if args.ip == 'auto':

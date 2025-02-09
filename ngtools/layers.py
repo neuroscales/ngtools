@@ -558,10 +558,8 @@ class PointAnnotationLayer(Wraps(ng.PointAnnotationLayer), Layer):
 class ManagedLayer(Wraps(ng.ManagedLayer)):
     """Named layer."""
 
-    def __getattr__(self, name: str) -> Layer:
-        if name == "layer":
-            return Layer(super().__getattr__(name))
-        return super().__getattr__(name)
+    def __get_layer__(self) -> Layer:
+        return Layer(self._wrapped.layer)
 
 
 class Layers(Wraps(ng.Layers)):
