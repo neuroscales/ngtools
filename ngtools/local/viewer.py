@@ -11,10 +11,8 @@ from functools import partial
 # externals
 import neuroglancer as ng
 import numpy as np
-from neuroglancer.server import (
-    set_server_bind_address as ng_set_server_bind_address,
-    stop as ng_stop_server
-)
+from neuroglancer.server import set_server_bind_address as ng_bind_address
+from neuroglancer.server import stop as ng_stop_server
 
 # internals
 from ngtools.local.console import Console, _fixhelpformatter
@@ -224,7 +222,7 @@ class LocalNeuroglancer(OSMixin):
 
         # Setup neuroglancer instance
         port, ip = find_available_port(port, ip)
-        ng_set_server_bind_address(str(ip), str(port))
+        ng_bind_address(str(ip), str(port))
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
@@ -235,6 +233,8 @@ class LocalNeuroglancer(OSMixin):
     def __del__(self) -> None:
         ng_stop_server()
         del self.viewer
+        if self.fileserver:
+            self.fileserver.stop()
         del self.fileserver
         atexit.unregister(self.__del__)
 
@@ -246,8 +246,6 @@ class LocalNeuroglancer(OSMixin):
 
     def await_input(self) -> None:
         """Launch shell-like interface."""
-        # return self.console.await_input()
-        # return self.console.await_input()
         try:
             return self.console.await_input()
         except SystemExit:

@@ -67,8 +67,7 @@ def main(args: list[str] | None = None) -> None:
 
     # instantiate file server
     if not args.no_fileserver:
-        fileserver = LocalFileServer(
-            port=args.port_fileserver, ip=args.ip, interrupt=EOFError)
+        fileserver = LocalFileServer(port=args.port_fileserver, ip=args.ip)
     else:
         fileserver = False
 
