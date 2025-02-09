@@ -1,5 +1,7 @@
 """A `fsspec` File System for (remote) DANDI."""
 # stdlib
+import json
+import logging
 import re
 from os import PathLike
 from typing import Iterator
@@ -8,6 +10,7 @@ from urllib.parse import unquote as url_unquote
 # externals
 import requests
 from dandi.dandiapi import (
+    BaseRemoteAsset,
     DandiAPIClient,
     DandiInstance,
     NotFoundError,
@@ -15,9 +18,13 @@ from dandi.dandiapi import (
     RemoteDandiset,
 )
 from dandi.utils import get_instance
+from fsspec import register_implementation
 from fsspec.implementations.http import HTTPFileSystem
+from fsspec.registry import known_implementations
 from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
 from fsspec.utils import stringify_path, tokenize
+
+LOG = logging.getLogger(__name__)
 
 
 class RemoteDandiFileSystem(AbstractFileSystem):
@@ -102,7 +109,7 @@ class RemoteDandiFileSystem(AbstractFileSystem):
             else:
                 client = DandiAPIClient(client)
             if dandiset:
-                dandiset = client.get_dandiset(dandiset, version)
+                dandiset = self.get_dandiset(client, dandiset, version)
         self._dandiset = dandiset
         self._client = None if dandiset else client
 
@@ -147,7 +154,49 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         instance, dandiset, version, *_ = split_dandi_url(url)
         return cls(dandiset, version, instance)
 
-    def get_dandiset(self, path: str) -> tuple[RemoteDandiset, str]:
+    @classmethod
+    def _get_dandiset(
+        cls, client: DandiAPIClient, *args, **kwargs
+    ) -> RemoteDandiset:
+        auth = kwargs.pop("auth", None)
+        if auth:
+            client.dandi_authenticate()
+        try:
+            return client.get_dandiset(*args, **kwargs)
+        except requests.HTTPError as e:
+            if (
+                e.response is not None
+                and e.response.status_code == 401
+                and auth is not False
+            ):
+                client.dandi_authenticate()
+                return client.get_dandiset(*args, **kwargs)
+            else:
+                raise e
+
+    @classmethod
+    def _get_asset(
+        cls, client: DandiAPIClient, *args, auth: bool | None = None,
+    ) -> BaseRemoteAsset:
+        if auth:
+            client.dandi_authenticate()
+        try:
+            return client.get_asset(*args)
+        except requests.HTTPError as e:
+            if (
+                e.response is not None
+                and e.response.status_code == 401
+                and auth is not False
+            ):
+                client.dandi_authenticate()
+                return client.get_asset(*args)
+            else:
+                raise e
+
+    def get_dandiset(
+        self, path: str, auth: bool | None = True,
+        dandiset: RemoteDandiset | None = None,
+    ) -> tuple[RemoteDandiset, str]:
         """
         If path is a relative path, return (self.dandiset, path)
         Else, the path is an absolute URL and we instantiate the correct
@@ -155,7 +204,7 @@ class RemoteDandiFileSystem(AbstractFileSystem):
 
         Returns: (dandiset, path) or (dandiset, asset)
         """
-        dandiset = self.dandiset
+        dandiset = dandiset or self.dandiset
         if path.startswith(('http://', 'https://', 'dandi://', 'DANDI:')):
             instance, dandiset_id, version_id, path, asset_id \
                 = split_dandi_url(path)
@@ -166,39 +215,82 @@ class RemoteDandiFileSystem(AbstractFileSystem):
                 client = DandiAPIClient.for_dandi_instance(instance)
                 dandiset = None
             if not asset_id:
+                args = (dandiset_id, version_id)
                 if not dandiset or dandiset.identifier != dandiset_id:
-                    dandiset = client.get_dandiset(dandiset_id, version_id)
+                    dandiset = self._get_dandiset(client, *args, auth=auth)
                 if not dandiset or dandiset.version_id != version_id:
-                    dandiset = client.get_dandiset(dandiset_id, version_id)
+                    dandiset = self._get_dandiset(client, *args, auth=auth)
             else:
-                asset = client.get_asset(asset_id)
+                asset = self._get_asset(client, asset_id, auth=auth)
                 return dandiset, asset
-        elif not self.dandiset:
+        elif not dandiset:
             raise ValueError('File system must be linked to a dandiset to '
                              'use relative paths.')
         return dandiset, path
 
-    def s3_url(self, path: str) -> str:
-        """Get the the asset url on AWS S3."""
-        dandiset, asset = self.get_dandiset(path)
-        if not isinstance(asset, RemoteAsset):
-            asset = dandiset.get_asset_by_path(asset)
-        info = requests.request(url=asset.api_url, method='get').json()
+    def _get_json(self, url: str) -> dict:
+        with self._httpfs.open(url, "rt") as f:
+            info = json.load(f)
+        return info
+
+    def _s3_url_from_asset(self, asset: RemoteAsset) -> str:
+        info = self._get_json(asset.api_url)
+        # info = requests.request(url=asset.api_url, method='get').json()
         url = ''
+        if "neuroglancerUrl" in info:
+            # LINC: use neuroglancer url but drop format protocol
+            url = info["neuroglancerUrl"]
+            url = url.split("://")
+            url = "://".join(url[1:])
+            if 'neuroglancer.lincbrain.org' not in url:
+                raise NotFoundError(asset, url)
+            return url
         for url in info['contentUrl']:
-            if url.startswith('https://dandiarchive.s3.amazonaws.com'):
-                break
-        if not url.startswith('https://dandiarchive.s3.amazonaws.com'):
-            return None
-        return url
+            if "s3.amazonaws.com" in url:
+                return url
+        raise NotFoundError(asset, url)
 
     def _maybe_to_s3(self, url: str) -> str:
         url = stringify_path(url)
-        is_s3 = url.startswith('https://dandiarchive.s3.amazonaws.com')
         # FIXME: not very generic test
+        is_s3 = (
+            's3.amazonaws.com' in url or
+            'neuroglancer.lincbrain.org' in url
+        )
         if not is_s3:
             url = self.s3_url(url)
         return url
+
+    def s3_url(self, path: str, **kwargs) -> str:
+        """Get the the asset url on AWS S3."""
+        dandiset, asset = self.get_dandiset(path, **kwargs)
+        if not isinstance(path, RemoteAsset):
+            try:
+                asset = dandiset.get_asset_by_path(asset)
+
+            except NotFoundError:
+                path = asset.rstrip("/")
+                path_prefix, path_suffix = path, ''
+                while path_prefix:
+
+                    *path_prefix, new_suffix = path_prefix.split('/')
+                    if not path_suffix:
+                        path_suffix = new_suffix
+                    else:
+                        path_suffix = path_suffix.split('/')
+                        path_suffix = '/'.join([new_suffix, *path_suffix])
+                    path_prefix = '/'.join(path_prefix)
+
+                    try:
+                        asset = dandiset.get_asset_by_path(path_prefix)
+                        url = self._s3_url_from_asset(asset).rstrip("/")
+                        url += "/" + path_suffix
+                        return url
+                    except NotFoundError:
+                        continue
+                raise NotFoundError(path)
+
+        return self._s3_url_from_asset(asset)
 
     # ------------------------------------------------------------------
     #   FileSystem API
@@ -310,21 +402,28 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         dandiset = kwargs.pop('dandiset', None)
         if not dandiset:
             dandiset, path = self.get_dandiset(path)
+        if isinstance(path, BaseRemoteAsset):
+            return True
+        # check if it is a file
         try:
-            # check if it is a file
             dandiset.get_asset_by_path(path)
             return True
         except NotFoundError:
             pass
         # check if it is a directory
-        if not path.endswith('/'):
-            path = path + '/'
+        path = path.rstrip('/') + '/'
         assets = dandiset.get_assets_with_path_prefix(path)
         try:
             next(assets)
             return True
         except StopIteration:
-            return False
+            pass
+        # it might be a path to something inside a zarr -- let's try to find it
+        try:
+            return self._httpfs.exists(self.s3_url(path, dandiset=dandiset))
+        except NotFoundError:
+            pass
+        return False
 
     def open(  # noqa: D102
         self,
@@ -416,3 +515,7 @@ def split_dandi_url(url: str) -> tuple[str, str, str, str, str]:
         instance = 'https://' + server
 
     return instance, dandiset_id, version, path, asset_id
+
+
+if "dandi" not in known_implementations:
+    register_implementation("dandi", RemoteDandiFileSystem)

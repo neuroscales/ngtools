@@ -24,9 +24,11 @@ which embeds a NIfTI header in OME-Zarr files.
 ### Getting started
 
 To run the app, simply type
+
 ```shell
 neuroglancer
 ```
+
 in your shell. It will open a neuroglancer window, and a shell-like
 interface:
 <pre><code>             _              _

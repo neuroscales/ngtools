@@ -52,16 +52,25 @@ from ngtools.protocols import FORMATS, LAYERS, PROTOCOLS
 
 LOG = logging.getLogger(__name__)
 
-LINCBRAIN_API: str = "https://api.lincbrain.org/api"
+DANDI_API = {
+    "linc": "https://api.lincbrain.org/api",
+    "dandi": "https://api.dandiarchive.org/api",
+}
 
 # Cache for LINC cookies
 _LINC_AUTH_CACHE = {}
+_DANDI_AUTH_CACHE = {}
 
 # Cache for fsspec filesystems
 _FILESYSTEMS_CACHE = {}
 
+# Hints
+URILike = PathLike | str
+FileLike = IO | URILike
+FileSystem = fsspec.AbstractFileSystem
 
-def stringify_path(filename: IO | PathLike | str) -> IO | str:
+
+def stringify_path(filename: FileLike) -> IO | str:
     """Ensure that the input is a str or a file-like object."""
     if isinstance(filename, PathLike):
         return filename.__fspath__()
@@ -70,55 +79,13 @@ def stringify_path(filename: IO | PathLike | str) -> IO | str:
     return filename
 
 
-def linc_auth_opt(token: str | None = None) -> dict:
-    """
-    Create fsspec authentication options to access lincbrain data.
-
-    Parameters
-    ----------
-    token : str
-        Your LINCBRAIN_API_KEY
-
-    Returns
-    -------
-    opt : dict
-        options to pass to `fsspec`'s `HTTPFileSystem`.
-    """
-    token = token or environ.get('LINCBRAIN_API_KEY', None)
-    if not token:
-        return {}
-    if token in _LINC_AUTH_CACHE:
-        return _LINC_AUTH_CACHE[token]
-    # Check that credential is correct
-    session = requests.Session()
-    session.get(
-        f"{LINCBRAIN_API}/auth/token",
-        headers={"Authorization": f"token {token}"}
-    )
-    # Get cookies
-    response = session.get(
-        f"{LINCBRAIN_API}/permissions/s3/",
-        headers={"Authorization": f"token {token}"}
-    )
-    cookies = response.cookies.get_dict()
-    # Pass cookies to FileSystem
-    opt = dict(client_kwargs={'cookies': cookies})
-    _LINC_AUTH_CACHE[token] = opt
-    return opt
-
-
-# def remote_protocols() -> tuple[str]:
-#     """List of accepeted remote protocols."""
-#     return tuple(x + '://' for x in PROTOCOLS if x != "file")
-
-
 parsed_protocols = namedtuple(
     "parsed_protocols",
     ["layer", "format", "stream", "url"]
 )
 
 
-def parse_protocols(url: str | PathLike) -> tuple[str, str, str, str]:
+def parse_protocols(url: URILike) -> parsed_protocols:
     """
     Parse protocols out of a url.
 
@@ -164,40 +131,132 @@ def parse_protocols(url: str | PathLike) -> tuple[str, str, str, str]:
     return parsed_protocols(layer, format, stream, path)
 
 
-def filesystem(
-    protocol: str | PathLike | fsspec.AbstractFileSystem,
-    **opt
-) -> fsspec.AbstractFileSystem:
+def linc_auth_opt(token: str | None = None) -> dict:
+    """
+    Create fsspec authentication options to access lincbrain data.
+
+    These options should only be used when accessing data behind
+    `neuroglancer.lincbrain.org`.
+
+    Parameters
+    ----------
+    token : str
+        Your LINCBRAIN_API_KEY
+
+    Returns
+    -------
+    opt : dict
+        options to pass to `fsspec`'s `HTTPFileSystem`.
+    """
+    API = DANDI_API['linc']
+    token = token or environ.get('LINCBRAIN_API_KEY', None)
+    if not token:
+        return {}
+    if token in _LINC_AUTH_CACHE:
+        return _LINC_AUTH_CACHE[token]
+    headers = {"Authorization": f"token {token}"}
+    # Check that credential is correct
+    session = requests.Session()
+    session.get(f"{API}/auth/token", headers=headers)
+    # Get cookies
+    response = session.get(f"{API}/permissions/s3/", headers=headers)
+    cookies = response.cookies.get_dict()
+    # Pass cookies to FileSystem
+    opt = {'cookies': cookies}
+    _LINC_AUTH_CACHE[token] = opt
+    return opt
+
+
+def dandi_auth_opt(token: str | None = None, instance: str = "dandi") -> dict:
+    """
+    Create fsspec authentication options to access the dandi api.
+
+    These options should only be used when accessing data behind
+    `dandi://`.
+
+    Parameters
+    ----------
+    token : str
+        Your DANDI_API_KEY or LINCBRAIN_API_KEY
+    instance : {"dandi", "linc"}
+
+    Returns
+    -------
+    opt : dict
+        options to pass to `fsspec`'s `HTTPFileSystem`.
+    """
+    prefix = {"dandi": "DANDI", "linc": "LINCBRAIN"}[instance]
+    token = (
+        token
+        or environ.get(f'{prefix}_API_KEY', None)
+        or environ.get('DANDI_API_KEY', None)
+    )
+    if not token:
+        return {}
+    if token in _DANDI_AUTH_CACHE:
+        return _DANDI_AUTH_CACHE[token]
+    headers = {"Authorization": f"token {token}"}
+    # Check that credential is correct
+    session = requests.Session()
+    session.get(f"{DANDI_API[instance]}/auth/token", headers=headers)
+    # Pass cookies to FileSystem
+    opt = {"headers": headers}
+    _DANDI_AUTH_CACHE[token] = opt
+    return opt
+
+
+def filesystem(protocol: URILike | FileSystem, **opt) -> FileSystem:
     """Return the filesystem corresponding to a protocol or URI."""
     if isinstance(protocol, fsspec.AbstractFileSystem):
         return protocol
     protocol = stringify_path(protocol)
     if protocol not in PROTOCOLS:
-        protocol = parse_protocols(protocol).stream
-    if protocol in _FILESYSTEMS_CACHE:
-        return _FILESYSTEMS_CACHE[protocol]
-    try:
-        opt.update(linc_auth_opt())
-    except Exception:
-        pass
+        protocol = parse_protocols(protocol)
+        url = protocol.url
+        protocol = protocol.stream
+
+    # --- LINC/DANDI authentification ---
+    linc_auth = opt.pop("linc_auth", None)
+    if linc_auth is None:
+        linc_auth = "neuroglancer.lincbrain.org" in url
+        linc_auth = linc_auth or "dandi://linc" in url
+    dandi_auth = opt.pop("dandi_auth", None)
+    if dandi_auth is None:
+        dandi_auth = "dandi://" in url
+    # -----------------------------------
+
+    if (protocol, linc_auth, dandi_auth) in _FILESYSTEMS_CACHE:
+        return _FILESYSTEMS_CACHE[(protocol, linc_auth, dandi_auth)]
+
+    # --- LINC/DANDI authentification ---
+    opt.setdefault("client_kwargs", {})
+    if linc_auth:
+        LOG.debug(f"linc_auth - {url}")
+        opt["client_kwargs"].update(linc_auth_opt())
+    if dandi_auth:
+        LOG.debug(f"dandi_auth - {url}")
+        instance = "linc" if linc_auth else "dandi"
+        opt["client_kwargs"].update(dandi_auth_opt(instance=instance))
+    # -----------------------------------
+
     fs = fsspec.filesystem(protocol, **opt)
-    _FILESYSTEMS_CACHE[protocol] = fs
+    _FILESYSTEMS_CACHE[(protocol, linc_auth, dandi_auth)] = fs
     return fs
 
 
-def exists(uri: str | PathLike, **opt) -> bool:
+def exists(uri: URILike, **opt) -> bool:
     """Check that the file or directory pointed by a URI exists."""
     tic = time.time()
     uri0 = uri
-    uri = parse_protocols(uri)[-1]
+    uri = parse_protocols(uri).url
     fs = filesystem(uri, **opt)
     exists = fs.exists(uri)
     toc = time.time()
-    LOG.debug(f"exists({uri0}): {toc-tic} s")
+    LOG.debug(f"exists({uri0}): {exists} | {toc-tic} s")
     return exists
 
 
-def read_json(fileobj: str | PathLike | IO, *args, **kwargs) -> dict:
+def read_json(fileobj: FileLike, *args, **kwargs) -> dict:
     """Read local or remote JSON file."""
     tic = time.time()
     with open(fileobj, "rb") as f:
@@ -207,12 +266,7 @@ def read_json(fileobj: str | PathLike | IO, *args, **kwargs) -> dict:
     return data
 
 
-def write_json(
-    obj: dict,
-    fileobj: str | PathLike | IO,
-    *args,
-    **kwargs
-) -> None:
+def write_json(obj: dict, fileobj: FileLike, *args, **kwargs) -> None:
     """Write local or remote JSON file."""
     tic = time.time()
     with open(fileobj, "w") as f:
@@ -222,18 +276,13 @@ def write_json(
     return
 
 
-def update_json(
-    obj: dict,
-    fileobj: str | PathLike | IO,
-    *args,
-    **kwargs
-) -> dict:
+def update_json(obj: dict, fileobj: FileLike, *args, **kwargs) -> dict:
     """Read local or remote JSON file."""
     write_json(read_json(fileobj).update(obj), fileobj, *args, **kwargs)
 
 
 def fsopen(
-    uri: str | PathLike,
+    uri: URILike,
     mode: str = "rb",
     compression: str | None = None
 ) -> fsspec.spec.AbstractBufferedFile:
@@ -359,7 +408,7 @@ class open:
 
     def __init__(
         self,
-        fileobj: str | PathLike | IO,
+        fileobj: FileLike,
         mode: str = 'rb',
         compression: str | None = None,
         open: bool = True,

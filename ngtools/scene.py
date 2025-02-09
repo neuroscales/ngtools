@@ -3,6 +3,7 @@
 import functools
 import json
 import logging
+import os.path as op
 import sys
 from io import BytesIO
 from os import PathLike
@@ -16,7 +17,6 @@ import neuroglancer as ng
 import numpy as np
 from neuroglancer.viewer_state import wrapped_property
 from numpy.typing import ArrayLike
-from upath import UPath
 
 # import to trigger datasource registration
 import ngtools.local.datasources  # noqa: F401
@@ -28,7 +28,7 @@ import ngtools.transforms as T
 from ngtools.datasources import LayerDataSource, LayerDataSources
 from ngtools.layers import Layer, Layers
 from ngtools.local.iostream import StandardIO
-from ngtools.opener import exists, open, parse_protocols
+from ngtools.opener import exists, filesystem, open, parse_protocols
 from ngtools.shaders import colormaps, shaders
 from ngtools.units import convert_unit, split_unit
 from ngtools.utils import DEFAULT_URL, Wraps
@@ -57,12 +57,138 @@ SourceType = ng.LayerDataSource | ng.LocalVolume | ng.skeleton.SkeletonSource
 
 
 class ViewerState(Wraps(ng.ViewerState)):
-    """Smart ng.ViewerState that knows default values set in the frontend."""
+    """Smart ng.ViewerState that knows default values set in the frontend.
 
-    def __get_layers(self) -> Layers:
+    Attributes
+    ----------
+    title : str, default=None
+        Window title
+    dimensions : CoordinateSpace
+        All "global" dimensions.
+    relative_display_scales : dict[str, float]
+        ???
+    display_dimensions : list[str]
+        The 2 or 3 dimensions that are displayed in the cross section.
+        Their order matters, as they map to the red, green and blue axes.
+    position : LinkedType[vector[float]]
+        Position in the "global frame".
+        This vector must have as many values as there are dimensions.
+    velocity : dict[str, DimensionPlaybackVelocity]
+        ???
+    cross_section_orientation : vector[float], default=(0, 0, 0, 1)
+        Orientation of the cross-sections in the "displayed global frame".
+        It is a quaternion ordered as `[i, j, k, r]`.
+    cross_section_scale : float, default=1
+        Zoom level of the cross-sections.
+    cross_section_depth : float
+        ???
+    projection_scale : float
+        Zoom level of the 3D window.
+    projection_depth : float
+        ???
+    projection_orientation : vector[float], default=[0, 0, 0, 1]
+        Orientation of the 3D window in the "displayed global frame".
+        It is a quaternion ordered as `[i, j, k, r]`.
+    show_slices : bool, default=True
+        Whether to display orthogonal cross sections in the 3D window.
+    wire_frame : bool, default=False
+        Whether to display mesh wire frams in the 3D window.
+    enable_adaptive_downsampling : bool, default=True
+        ???
+    show_scale_bar : bool, default=True
+        Whether to show the scale bar.
+    show_default_annotations : bool, default=True
+        ???
+    gpu_memory_limit : int
+        Maximum GPU usage.
+    system_memory_limit : int
+        Maximum CPU usage.
+    concurrent_downloads : int
+        Maximum number of concurrent downloads.
+    prefetch : bool, default=True
+        Prefetch chunks.
+    layers : Layers
+        List of (named) registered layers.
+    layout : StackLayout | LayerGroupViewer | DataPanelLayout | str
+        If a string, can be one of
+        `{"xy", "yz", "xz", "xy-3d", "yz-3d", "xz-3d", "4panel", "3d"}`.
+    cross_section_background_color : str, default="black"
+        Background color of cross-sections.
+    projection_background_color : str, default="black"
+        Background color of 3D window.
+    selected_layer : SelectedLayerState
+        With fields
+        * `layer : str, default=layers[0].name`
+            Selected layer
+        * `visible : bool, default=False`
+            Whether the right panel is visible.
+        * `size : int`
+            Width of the right panel, in voxels.
+    statistics : StatisticsDisplayState
+        With fields
+        * `visible : bool, default=False`
+            Whether the statistics panel is visible.
+        * `size : int`
+            Height of the panel, in voxels.
+    help_panel : HelpPanelState
+        With fields
+        * `visible : bool, default=False`
+            Whether the help panel is visible.
+        * `size : int`
+            Width of the panel, in voxels.
+        * `flex : float, default=1.0`
+            Relative height of the panel.
+    layer_list_panel : LayerListPanelState
+        With fields
+        * `visible : bool, default=False`
+            Whether the layer list panel is visible.
+        * `size : int`
+            Width of the panel, in voxels.
+        * `flex : float, default=1.0`
+            Relative height of the panel.
+    partial_viewport : vector[float], default=[0, 0, 1, 1]
+        Top-left and bottom-right corner of the visible portion of the
+        viewer, where `[0, 0, 1, 1]` corresponds to the entire viewer.
+    tool_bindings : dict[str, Tool | str]
+        User-specific key bindings.
+
+    """
+
+    # --- non-ng attributes --------------------------------------------
+
+    @property
+    def spatial_dimensions(self) -> ng.CoordinateSpace:
+        """All spatial dimensions (with meter-like unit)."""
+        return ng.CoordinateSpace({
+            key: [scale, unit]
+            for key, (scale, unit) in self.dimensions.to_json()
+            if unit[-1:] == "m"
+        })
+
+    @property
+    def time_dimensions(self) -> ng.CoordinateSpace:
+        """All time dimensions (with second-like unit)."""
+        return ng.CoordinateSpace({
+            key: [scale, unit]
+            for key, (scale, unit) in self.dimensions.to_json()
+            if unit[-1:] == "s"
+        })
+
+    @property
+    def _space(self) -> str:
+        """Current space."""
+        return "".join(x[:1].lower() for x in self.spatial_dimensions.names)
+
+    # --- layer --------------------------------------------------------
+
+    def __get_layers__(self) -> Layers:
         return Layers(getattr(super(), "layers"))
 
-    def _default_dimensions(self) -> ng.CoordinateSpace:
+    # --- dimensions ---------------------------------------------------
+
+    @property
+    def __default_dimensions__(self) -> ng.CoordinateSpace:
+        print("__default_dimensions__")
         dims = {}
         for layer in self.layers:
             layer: ng.ManagedLayer
@@ -77,46 +203,43 @@ class ViewerState(Wraps(ng.ViewerState)):
                 for name, (_, unit) in odims.to_json().items()
                 if not name.endswith(("^", "'"))
             })
-        return dims
+            dims = odims.to_json()
+        print(f"__default_dimensions__ = {dims}")
+        return ng.CoordinateSpace(dims)
 
-    def __set_dimensions(
+    def __get_dimensions__(self) -> ng.CoordinateSpace:
+        # NOTE: we must define it explicitly because ng's default is not None
+        value = self._wrapped.dimensions
+        if value is None or len(value.names) == 0:
+            dim = self.__default_dimensions__
+            self.dimensions = dim
+        return self._wrapped.dimensions
+
+    def __set_dimensions__(
         self, value: ng.CoordinateSpace | None
     ) -> ng.CoordinateSpace:
-        default_value = self._default_dimensions()
+        default_value = self.__default_dimensions__
         if value is None:
             value = default_value
         value = value.to_json()
         default_value = default_value.to_json()
         value = {
-            name: val for name, val in value.to_json()
+            name: val for name, val in value.items()
             if name in default_value
         }
         value.update({
             name: val for name, val in default_value.items()
             if name not in value
         })
-        return value
+        return ng.CoordinateSpace(value)
 
-    def __get_dimensions(self) -> ng.CoordinateSpace:
-        """All non-local dimensions."""
-        self.dimensions = getattr(super(), "dimensions")
-        return getattr(super(), "dimensions")
+    # --- relative_display_scales --------------------------------------
 
     @property
-    def spatial_dimensions(self) -> ng.CoordinateSpace:
-        """All spatial dimensions (with meter-like unit)."""
-        return ng.CoordinateSpace({
-            key: [scale, unit]
-            for key, (scale, unit) in self.dimensions.to_json()
-            if unit[-1:] == "m"
-        })
+    def __default_relative_display_scales__(self) -> dict[str, float]:
+        return self.__set_relative_display_scales__(None)
 
-    @property
-    def _space(self) -> str:
-        """Current space."""
-        return "".join(x[:1].lower() for x in self.spatial_dimensions.names)
-
-    def __set_relative_display_scales(
+    def __set_relative_display_scales__(
         self, value: dict[str, float] | None
     ) -> dict[str, float]:
         dimensions = self.dimensions
@@ -131,22 +254,18 @@ class ViewerState(Wraps(ng.ViewerState)):
         })
         return value
 
-    def __get_relative_display_scales(self) -> dict[str, float]:
-        """Relative display scales."""
-        self.relative_display_scales \
-            = getattr(super(), "relative_display_scales")
-        return getattr(super(), "relative_display_scales")
+    __default__relativeDisplayScales__ = __default_relative_display_scales__
+    __set_relativeDisplayScales__ = __set_relative_display_scales__
 
-    __get_relativeDisplayScales = __get_relative_display_scales
+    # --- display_dimensions -------------------------------------------
 
-    # def __get_display_dimensions(self) -> list[str]:
-    #     """Name of (up to three) displayed dimensions."""
-    #     self.display_dimensions \
-    #         = super().__getattribute__("display_dimensions")
-    #     return super().__getattribute__("display_dimensions")
+    @property
+    def __default_display_dimensions__(self) -> list[str]:
+        value = self.__set_display_dimensions__(None)
+        return value
 
-    def __set_display_dimensions(self, value: list[str] | None) -> None:
-        dimensions = self.dimensions.items()
+    def __set_display_dimensions__(self, value: list[str] | None) -> list[str]:
+        dimensions = self.dimensions.names
         if value is None:
             value = []
         value = [name for name in value if name in dimensions]
@@ -154,60 +273,131 @@ class ViewerState(Wraps(ng.ViewerState)):
         value = (value + dimensions)[:3]
         return value
 
-    # def __get_cross_section_orientation(self) -> np.ndarray:
-    #     """Orientation of the cross section view."""
-    #     self.cross_section_orientation \
-    #         = super().__getattribute__("cross_section_orientation")
-    #     return super().__getattribute__("cross_section_orientation")
+    def __get_display_dimensions__(self) -> list[float]:
+        value = self._wrapped.display_dimensions
+        if hasattr(value, "_data"):
+            # NOTE: when assigning into a TypedList attribute (which is
+            # the case for ng.ViewerState.display_dimensions), we can
+            # only assign basic lists (list, tuple, ndarray), not
+            # an existing TypedList.
+            # So we return the underlying list instead.
+            return value._data
+        return value
 
-    # def __set_cross_section_orientation(self, value: ArrayLike) -> None:
-    #     if value is None:
-    #         value = [0, 0, 0, 1]
-    #     value = np.ndarray(value).tolist()
-    #     value = value + max(0, 4 - len(value)) * [0]
-    #     value = value[:4]
-    #     value = np.ndarray(value)
-    #     value /= (value**2).sum()**0.5
-    #     super().cross_section_orientation = value
+    __default_displayDimensions__ = __default_display_dimensions__
+    __set_displayDimensions__ = __set_display_dimensions__
+    __get_displayDimensions__ = __get_display_dimensions__
 
-    # __get_crossSectionOrientation = __get_cross_section_orientation
-    # __set_crossSectionOrientation = __set_cross_section_orientation
+    # --- cross_section_orientation ------------------------------------
 
-    # def _default_position(self) -> list[float]:
-    #     """
-    #     Compute a smart default position (center of the fist).
+    __default_cross_section_orientation__: list[float] = [0, 0, 0, 1]
 
-    #     NOTE: positions are expressed in "model scaled space". That is,
-    #     it the "z" dimension listed in `dimensions` has scale (0.5, "mm"),
-    #     a position increment of 1 will correspond to an effective increment
-    #     of 0.5 mm.
-    #     """
-    #     pos = [0.0] * len(self.dimensions.names)
-    #     for layer in self.layers:
-    #         layer: ng.ManagedLayer
-    #         if not layer.visible:
-    #             continue
-    #         layer = layer.layer
-    #         if getattr(layer, "source", []) == 0:
-    #             continue
-    #         source = layer.source[0]
-    #         if not hasattr(source, "output_center"):
-    #             continue
-    #         center = source.output_center
-    #         for i, (name, (scale, unit)) \
-    #                 in enumerate(self.dimensions.to_json().items()):
-    #             if name not in source.output_dimensions.names:
-    #                 continue
-    #             j = source.output_dimensions.names.index(name)
-    #             unit0 = source.output_dimensions.units[j]
-    #             value = convert_unit(center[j], unit0, unit)
-    #             pos[i] = value / scale
-    #     return pos
+    def __set_cross_section_orientation__(self, value: ArrayLike) -> ArrayLike:
+        if value is None:
+            value = self.__default_cross_section_orientation__
+        value = np.ndarray(value).tolist()
+        value = value + max(0, 4 - len(value)) * [0]
+        value = value[:4]
+        value = np.ndarray(value)
+        value /= (value**2).sum()**0.5
+        return value
 
-    # def __get_position(self) -> list[float]:
-    #     if not super().__getattribute__("position"):
-    #         self.position = self._default_position()
-    #     return super().__getattribute__("position")
+    __default_crossSectionOrientation__ = __default_cross_section_orientation__
+    __set_crossSectionOrientation__ = __set_cross_section_orientation__
+
+    # --- cross_section_scale ------------------------------------------
+
+    @property
+    def __default_cross_section_scale__(self) -> float:
+        """
+        Compute a smart default scale (bbox of the fist layer).
+
+        NOTE: scales are expressed in "model scaled space".
+        """
+        dimensions = self.dimensions
+        # print(dimensions)
+        dimensions = dimensions.to_json()
+        scl = {key: 1.0 for key in dimensions}
+        for layer in self.layers:
+            layer: ng.ManagedLayer
+            if not layer.visible:
+                continue
+            layer = layer.layer
+            if len(getattr(layer, "source", [])) == 0:
+                continue
+            source = layer.source[0]
+            if not hasattr(source, "output_bbox_size"):
+                continue
+            if not hasattr(source, "output_voxel_size"):
+                continue
+            odims = source.output_dimensions
+            bbox = source.output_bbox_size
+            vx = source.output_voxel_size
+            for name, (scale, unit) in dimensions.items():
+                if name not in odims.names:
+                    continue
+                j = odims.names.index(name)
+                unit0 = odims.units[j]
+                bbox_value = convert_unit(bbox[j], unit0, unit) * scale
+                vx_value = convert_unit(vx[j], unit0, unit) * scale
+                scl[name] = (bbox_value / vx_value) / (1024 * 4)
+            break
+        dims = self.display_dimensions[:3]
+        scl = sum(scl[name] for name in dims) / len(dims)
+        return scl
+
+    __default_crossSectionScale__ = __default_cross_section_scale__
+
+    # --- projection_scale ------------------------------------------
+
+    @property
+    def __default_projection_scale__(self) -> float:
+        value = 512 * self.__default_cross_section_scale__
+        return value
+
+    __default_projectionScale__ = __default_projection_scale__
+
+    # --- position -----------------------------------------------------
+
+    @property
+    def __default_position__(self) -> list[float]:
+        """
+        Compute a smart default position (center of the fist layer).
+
+        NOTE: positions are expressed in "model scaled space". That is,
+        it the "z" dimension listed in `dimensions` has scale (0.5, "mm"),
+        a position increment of 1 will correspond to an effective increment
+        of 0.5 mm.
+        """
+        dimensions = self.dimensions.to_json()
+        pos = [0.0] * len(dimensions)
+        for layer in self.layers:
+            layer: ng.ManagedLayer
+            if not layer.visible:
+                continue
+            layer = layer.layer
+            if getattr(layer, "source", []) == 0:
+                continue
+            source = layer.source[0]
+            if not hasattr(source, "output_center"):
+                continue
+            center = source.output_center
+            for i, (name, (scale, unit)) in enumerate(dimensions.items()):
+                if name not in source.output_dimensions.names:
+                    continue
+                j = source.output_dimensions.names.index(name)
+                unit0 = source.output_dimensions.units[j]
+                value = convert_unit(center[j], unit0, unit)
+                pos[i] = value / scale
+            break
+        return pos
+
+    def __get_position__(self) -> list[float]:
+        value = self._wrapped.position
+        if value is None or len(value) == 0:
+            pos = self.__default_position__
+            self.position = pos
+        return self._wrapped.position
 
 
 def autolog(func: callable) -> callable:
@@ -238,7 +428,7 @@ def autolog(func: callable) -> callable:
                 LOG.level <= logging.DEBUG or
                 self.stdio._level <= logging.DEBUG
             ):
-                self.stdio.debug(str(e))
+                self.stdio.debug(f"{type(e).__name__}({e})")
             raise e
 
     return wrapper
@@ -281,7 +471,7 @@ class Scene(ViewerState):
     @autolog
     def load(
         self,
-        uri: URILike | list[URILike] | dict[str, URILike],
+        uri: URILike | list[URILike] | dict[str, URILike] = None,
         transform: ArrayLike | list[float] | URILike | None = None,
         **kwargs
     ) -> None:
@@ -303,6 +493,11 @@ class Scene(ViewerState):
             Alternative way of providing layer names.
             If used, `uri` cannot be a `dict`.
         """
+        if "filename" in kwargs:
+            if uri is not None:
+                raise ValueError("filename and uri cannot be used together")
+            uri = kwargs.pop("filename")
+
         # prepare names and URLs
         names = []
         if isinstance(uri, dict):
@@ -313,14 +508,29 @@ class Scene(ViewerState):
         uris = _ensure_list(uri or [])
         names = _ensure_list(names or [])
 
-        # nb_layers_0 = len(self.layers)
+        nb_layers_0 = len(self.layers)
 
         # load layers
         onames = []
         for n, uri in enumerate(uris):
             uri = str(uri).rstrip("/")
-            short_uri = parse_protocols(uri)[-1]
-            name = names[n] if names else UPath(short_uri).name
+            parsed = parse_protocols(uri)
+            short_uri = parsed.url
+            name = names[n] if names else op.basename(short_uri)
+
+            if parsed.stream == "dandi":
+                fs = filesystem(uri)
+                short_uri = uri = fs.s3_url(short_uri)
+                if parsed.format:
+                    uri = parsed.format + "://" + uri
+                elif parsed.url.endswith(".zarr"):
+                    uri = "zarr://" + uri
+                elif parsed.url.endswith((".nii", ".nii.gz")):
+                    uri = "nifti://" + uri
+                if parsed.layer:
+                    uri = parsed.layer + "://" + uri
+                uri = str(uri).rstrip("/")
+
             onames.append(name)
             layer = Layer(uri, **kwargs)
             self.layers.append(name=name, layer=layer)
@@ -332,8 +542,12 @@ class Scene(ViewerState):
         if transform is not None:
             self.transform(transform, layer=onames)
 
-        # if nb_layers_0 == 0:
-        #     self.position = self._default_position()
+        if nb_layers_0 == 0:
+            # trigger default values
+            self.dimensions
+            self.position
+            self.cross_section_scale
+            self.projection_scale
 
     @autolog
     def unload(
@@ -398,7 +612,7 @@ class Scene(ViewerState):
         """
         def make_local_annot() -> ng.AnnotationLayer:
             coord = ng.CoordinateSpace()
-            return ng.AnnotationLayer(ng.LocalAnnotationLayer(coord))
+            return ng.LocalAnnotationLayer(coord)
 
         # check if keywords were used
         if "dst" in kwargs:
@@ -544,8 +758,11 @@ class Scene(ViewerState):
         for named_layer in self.layers:
             if layers and named_layer.name not in layers:
                 continue
+            if named_layer.name.startswith("__"):
+                continue
             layer = named_layer.layer
-            transform = layer.source[0].transform
+            source = layer.source[0]
+            transform = source.transform
             transform.output_dimensions = ng.CoordinateSpace({
                 axes.get(name): scl
                 for name, scl in transform.output_dimensions.to_json().items()
@@ -1016,7 +1233,7 @@ class Scene(ViewerState):
                 layer.channelDimensions = ng.CoordinateSpace(channelDimensions)
 
     @autolog
-    def position(
+    def move(
         self,
         coord: float | list[float],
         dimensions: str | list[str] | None = None,

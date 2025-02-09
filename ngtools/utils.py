@@ -1,11 +1,13 @@
 """Various utilities."""
 # stdlib
 import json
-from typing import Any
+import logging
 from urllib.parse import quote
 
 # externals
 import neuroglancer as ng
+
+LOG = logging.getLogger(__name__)
 
 DEFAULT_URL = (
     "https://neuroglancer.lincbrain.org/cloudfront/frontend/index.html"
@@ -32,6 +34,9 @@ def neuroglancer_state_to_neuroglancer_url(
     return f"{base_url}#!{encoded_json}"
 
 
+_NG_TYPE_WRAPPERS = {}
+
+
 def Wraps(kls: type) -> type:
     """
     Return a wrapper type that inherits from `kls` but never calls
@@ -43,48 +48,78 @@ def Wraps(kls: type) -> type:
 
     This is necessary when wrapping neuroglancer types into our own types.
     """
+    if kls not in _NG_TYPE_WRAPPERS:
 
-    class _Wraps(kls):
+        class _Wraps(kls):
 
-        __name__ = "Wrapped" + kls.__name__
-        __doc__ = kls.__doc__
+            __name__ = "Wrapped" + kls.__name__
+            __doc__ = kls.__doc__
 
-        def __init__(self, *args, **kwargs) -> None:
-            if args and isinstance(args[0], kls):
-                self._wrapped = args[0]
-            else:
-                self._wrapped = kls(*args, **kwargs)
+            def __init__(self, *args, **kwargs) -> None:
+                if args and isinstance(args[0], kls):
+                    wrapped = args[0]
+                    if type(wrapped) is _NG_TYPE_WRAPPERS[kls]:
+                        wrapped = wrapped._wrapped
+                else:
+                    wrapped = kls(*args, **kwargs)
+                object.__setattr__(self, "_wrapped", wrapped)
 
-        def __getattribute__(self, name: str) -> object:
-            try:
-                return super().__getattribute__(f"__get_{name}")()
-            except AttributeError:
-                ...
-            return super().__getattribute__(name)
+            def __fix_none_value__(self, name: str, value: object) -> object:
+                if name.startswith("__"):
+                    return value
+                if value is None:
+                    has_default = hasattr(self, f"__default_{name}__")
+                    if has_default:
+                        value = getattr(self, f"__default_{name}__")
+                        setattr(self, name, value)
+                        value = getattr(self._wrapper, name)
+                return value
 
-        def __getattr__(self, name: str) -> Any:  # noqa: ANN401
-            if name == "_wrapped":
-                return super().__getattr__(name)
-            if name in self.__dict__:
-                return super().__getattr__(name)
-            return getattr(self._wrapped, name)
+            def __getattribute__(self, name: str) -> object:
+                # magic objects -- never defer to _wrapped
+                if name.startswith("__"):
+                    return super().__getattribute__(name)
+                # check if a getter is available
+                try:
+                    value = object.__getattribute__(self, f"__get_{name}__")()
+                    return self.__fix_none_value__(name, value)
+                except AttributeError:
+                    ...
+                # check if attribute exists in _wrapped
+                if name != "_wrapped" and "_wrapped" in self.__dict__:
+                    try:
+                        value = self._wrapped.__getattribute__(name)
+                        return self.__fix_none_value__(name, value)
+                    except AttributeError:
+                        ...
+                # fallback to default implementation
+                value = object.__getattribute__(self, name)
+                return self.__fix_none_value__(name, value)
 
-        def __setattr__(self, name: str, value: Any) -> None:  # noqa: ANN401
-            if hasattr(self, f"__set_{name}"):
-                value = getattr(self, f"__set_{name}")(value)
-            if name == "_wrapped":
+            def __getattr__(self, name: str) -> object | type:
+                if name in self.__dict__:
+                    return self.__fix_none_value__(name, self.__dict__[name])
+                value = self._wrapped.__getattr__(name)
+                return self.__fix_none_value__(name, value)
+
+            def __setattr__(self, name: str, value: object | type) -> None:
+                if hasattr(self, f"__set_{name}"):
+                    value = getattr(self, f"__set_{name}__")(value)
+                if name in self.__dict__:
+                    return object.__setattr__(self, name, value)
+                if hasattr(self._wrapped, name):
+                    return setattr(self._wrapped, name, value)
                 return super().__setattr__(name, value)
-            if name in self.__dict__:
-                return super().__setattr__(name, value)
-            if hasattr(self, "_wrapped") and hasattr(self._wrapped, name):
-                return setattr(self._wrapped, name, value)
-            return super().__setattr__(name, value)
 
-        def __delattr__(self, name: str) -> None:
-            if name in self.__dict__:
+            def __delattr__(self, name: str) -> None:
+                if name in self.__dict__:
+                    return super().__delattr__(name)
+                if hasattr(self, "_wrapped") and hasattr(self._wrapped, name):
+                    return delattr(self._wrapped, name)
                 return super().__delattr__(name)
-            if hasattr(self, "_wrapped") and hasattr(self._wrapped, name):
-                return delattr(self._wrapped, name)
-            return super().__delattr__(name)
 
-    return _Wraps
+        _Wraps.__wrapper_class__ = _Wraps
+        _Wraps.__wrapped_class__ = kls
+        _NG_TYPE_WRAPPERS[kls] = _Wraps
+
+    return _NG_TYPE_WRAPPERS[kls]

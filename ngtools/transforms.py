@@ -248,6 +248,9 @@ def load_affine(
         ras2ras = klass.from_filename(fileobj).to_ras(moving, fixed)
         if isinstance(ras2ras, list):
             ras2ras = ras2ras[0]
+        return _make_transform(ras2ras)
+
+    def _make_transform(ras2ras: np.ndarray) -> ng.CoordinateSpaceTransform:
         dims = ng.CoordinateSpace(names=names, scales=[1]*3, units=["mm"]*3)
         return ng.CoordinateSpaceTransform(
             matrix=ras2ras[:3],
@@ -260,6 +263,7 @@ def load_affine(
         # (nitransforms does not like nitorch's cropped LTAs)
         try:
             out = LinearTransformArray(fileobj).matrix()[0]
+            out = _make_transform(out)
             LOG.debug(f'Succesfully read format "{format}".')
             return out
         except Exception as e:

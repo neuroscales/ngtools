@@ -59,7 +59,8 @@ def main(args: list[str] | None = None) -> None:
     args = parser.parse_args(args)
 
     logging.basicConfig()
-    logging.getLogger().setLevel(log_map[args.log_level[0].lower()])
+    logging.getLogger().setLevel(1000)
+    logging.getLogger("ngtools").setLevel(log_map[args.log_level[0].lower()])
 
     if args.ip == 'auto':
         args.ip = ''

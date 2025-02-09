@@ -35,7 +35,24 @@ from ngtools.utils import Wraps
 
 LOG = logging.getLogger(__name__)
 
+
+class _SizedCache(dict):
+    def __init__(self, max_size: int | None = None) -> None:
+        self._max_size = max_size
+        self._keys = []
+
+    def __setitem__(self, key: object, value: object) -> None:
+        if key in self:
+            del self[key]
+        super().__setitem__(key, value)
+        if self._max_size:
+            keys = list(self.keys())
+            while len(self) > self._max_size:
+                del self[keys.pop(0)]
+
+
 _DATASOURCE_REGISTRY = {}
+_DATASOURCE_INFO_CACHE = _SizedCache(128)
 
 
 def _quantiles(q: float | list[float], data: ArrayLike) -> np.ndarray[float]:
@@ -76,10 +93,6 @@ SourceType = (
     ng.LayerDataSource |                            # data source
     ng.LocalVolume | ng.skeleton.SkeletonSource     # local source
 )
-
-
-def _LDS(*a, **k):
-    return LayerDataSource(*a, **k)
 
 
 class LayerDataSources(Wraps(ng.LayerDataSources)):
@@ -123,7 +136,7 @@ class LayerDataSources(Wraps(ng.LayerDataSources)):
         return LayerDataSource(super().__getitem__(*args, **kwargs))
 
     @functools.wraps(ng.LayerDataSources.pop)
-    def pop(self, *args, **kwargs) -> "LayerDataSource":
+    def pop(self, *args, **kwargs) -> "LayerDataSource":  # noqa: D102
         return LayerDataSource(super().pop(*args, **kwargs))
 
 
@@ -161,7 +174,7 @@ class _LayerDataSourceFactory(type):
         # objects (and therefore download header bytes), which is a bit
         # slow. But I am not sure how to avoid that while inheriting
         # ng types.
-        if isinstance(json_data, ng.LayerDataSource):
+        if hasattr(json_data, "to_json"):
             really_json_data = json_data.to_json()
         else:
             really_json_data = json_data
@@ -176,12 +189,39 @@ class _LayerDataSourceFactory(type):
         if isinstance(url, ng.skeleton.SkeletonSource):
             return LocalSkeletonDataSource(json_data, *args, **kwargs)
 
+        if url == "local://annotations":
+            return LocalAnnotationDataSource(json_data, *args, **kwargs)
+
         # If format protocol provided, use it
-        format = parse_protocols(url)[1]
-        if format in _DATASOURCE_REGISTRY:
+        parsed_url = parse_protocols(url)
+        if parsed_url.format in _DATASOURCE_REGISTRY:
+            format = parsed_url.format
+            LOG.debug(f"LayerDataSource - use format hint: {format}")
             return _DATASOURCE_REGISTRY[format](json_data, *args, **kwargs)
 
+        # Otherwise, check for extensions
+        for format, kls in _DATASOURCE_REGISTRY.items():
+            if parsed_url.url.endswith((format, format+".gz", format+".bz2")):
+                LOG.debug(f"LayerDataSource - found extension: {format}")
+                try:
+                    obj = kls(json_data, *args, **kwargs)
+                    LOG.debug(f"LayerDataSource - {format} (success)")
+                    return obj
+                except Exception:
+                    continue
+
+        # Otherwise, try all
+        for format, kls in _DATASOURCE_REGISTRY.items():
+            LOG.debug(f"LayerDataSource - try format: {format}")
+            try:
+                obj = kls(json_data, *args, **kwargs)
+                LOG.debug(f"LayerDataSource - {format} (success)")
+                return obj
+            except Exception:
+                continue
+
         # Otherwise. build a simple source
+        LOG.debug("LayerDataSource - Fallback to simple LayerDataSource")
         return super().__call__(json_data, *args, **kwargs)
 
 
@@ -220,7 +260,17 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
     def info(self) -> DataSourceInfo:
         """Lazy access to format-specific metadata."""
         if not getattr(self, '_info', None):
-            self._info = self._compute_info()
+            LOG.debug("Trigger _compute_info")
+            url = self.local_url
+            if url:
+                url = parse_protocols(url).url
+            key = (type(self), url)
+            if key not in _DATASOURCE_INFO_CACHE:
+                LOG.debug("Recompute info")
+                _DATASOURCE_INFO_CACHE[key] = self._compute_info()
+            else:
+                LOG.debug("Use cached info")
+            self._info = _DATASOURCE_INFO_CACHE[key]
         return self._info
 
     @classmethod
@@ -229,30 +279,23 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             f"`{name}` not implemented for this format ({cls.__name__})."
         )
 
-    @property
-    def url(self) -> str:  # noqa: D102
-        return self._wrapped.url
-
-    @url.setter
-    def url(self, value: str) -> str:
+    def __set__url__(self, value: str) -> str:
         LocalObject = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
-        if isinstance(value, LocalObject):
-            self._wrapped.url = value
-        else:
+        if not isinstance(value, LocalObject):
             format = parse_protocols(value)[1]
             if format not in self.PROTOCOLS:
                 raise ValueError(
                     "Cannot assign uri with protocol", format, "in "
                     "data source of type:", type(self)
                 )
-            self._wrapped.url = value
             self._info = None
+        return value
 
     @property
     def local_url(self) -> str:
         """Path to url, even if file is local."""
         url = self.url
-        if isinstance(url, ng.LocalVolume, ng.skeleton.SkeletonSource):
+        if isinstance(url, (ng.LocalVolume, ng.skeleton.SkeletonSource)):
             if hasattr(self, '_url'):
                 return self._url
             if hasattr(url, 'url'):
@@ -260,8 +303,7 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             return None
         return url
 
-    @property
-    def transform(self) -> ng.CoordinateSpaceTransform:
+    def __get_transform__(self) -> ng.CoordinateSpaceTransform:
         """
         If a transform has been explicitely set, return it,
         else, return the transform implicitely defined by neuroglancer.
@@ -304,10 +346,6 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             return self._wrapped.transform
         else:
             return assigned_trf
-
-    @transform.setter
-    def transform(self, value: ng.CoordinateSpaceTransform | dict) -> None:
-        self._wrapped.transform = value
 
     @property
     def shape(self) -> list[int]:
@@ -449,12 +487,38 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
         mat[:, -1] = center
         center = ng.CoordinateSpaceTransform(
             input_dimensions=self.input_dimensions,
-            output_dimensions=self.output_dimensions,
+            output_dimensions=self.input_dimensions,
             matrix=mat,
         )
         center = T.compose(self.transform, center)
         center = center.matrix[:, -1]
         return center
+
+    @property
+    def input_bbox_size(self) -> list[float]:
+        """Center of the field of view in input dimensions space and units."""
+        bbox = np.asarray(self.input_bbox)
+        return (bbox[1] - bbox[0]).tolist()
+
+    @property
+    def output_bbox_size(self) -> list[float]:
+        """Center of the field of view in output dimensions space and units."""
+        bbox = np.asarray(self.output_bbox)
+        return (bbox[1] - bbox[0]).tolist()
+
+    @property
+    def output_voxel_size(self) -> list[float]:
+        """Voxel size in model space."""
+        mat = np.eye(self.rank+1)[:-1]
+        mat[:, -1] = 1
+        size = ng.CoordinateSpaceTransform(
+            input_dimensions=self.input_dimensions,
+            output_dimensions=self.input_dimensions,
+            matrix=mat,
+        )
+        size = T.compose(self.transform, size)
+        size = size.matrix[range(self.rank), range(self.rank)]
+        return size.tolist()
 
 
 class VolumeInfo(DataSourceInfo):
@@ -600,6 +664,12 @@ class LocalDataSource(LayerDataSource):
 
     def _format_specific_init(self) -> None:
         pass
+
+
+class LocalAnnotationDataSource(AnnotationDataSource, LocalDataSource):
+    """Wrapper for local annotation sources."""
+
+    ...
 
 
 class LocalSkeletonDataSource(SkeletonDataSource, LocalDataSource):
@@ -800,7 +870,7 @@ class NiftiVolumeInfo(VolumeInfo):
         return self._matrix
 
 
-@datasource("nifti")
+@datasource(["nifti", "nii"])
 class NiftiDataSource(VolumeDataSource):
     """
     Wrapper for nifti sources.
@@ -1210,21 +1280,31 @@ class _ZarrDataSourceFactory(_LayerDataSourceFactory):
         #   LayerDataSource(inp: LayerDataSource) -> LayerDataSource
         if len(args) == 1 and not kwargs:
             if isinstance(args[0], cls) and cls is not ZarrDataSource:
+                LOG.debug(f"ZarrDataSource - return {type(args[0].__name__)}")
                 return args[0]
         # only use the factory if it is not called from a subclass
         if cls is not ZarrDataSource:
+            LOG.debug("ZarrDataSource - defer to super")
             return super().__call__(*args, **kwargs)
         url = ng.LayerDataSource(*args, **kwargs).url
         format = parse_protocols(url)[1]
+        LOG.debug(f"ZarrDataSource - hint: {format}")
         if format == "zarr2":
+            LOG.debug("ZarrDataSource -> Zarr2DataSource")
             return Zarr2DataSource(*args, **kwargs)
         if format == "zarr3":
+            LOG.debug("ZarrDataSource -> Zarr3DataSource")
             return Zarr3DataSource(*args, **kwargs)
+        LOG.debug("ZarrDataSource - guess version...")
         version = cls.guess_version(url)
+        LOG.debug(f"ZarrDataSource - guess version: {version}")
         if version == 2:
+            LOG.debug("ZarrDataSource -> Zarr2DataSource")
             return Zarr2DataSource(*args, **kwargs)
         elif version == 3:
+            LOG.debug("ZarrDataSource -> Zarr3DataSource")
             return Zarr3DataSource(*args, **kwargs)
+        LOG.debug("ZarrDataSource - fallback to super")
         return super().__call__(*args, **kwargs)
 
 
@@ -1252,12 +1332,12 @@ class ZarrDataSource(VolumeDataSource, metaclass=_ZarrDataSourceFactory):
     def guess_version(cls, url: str) -> int:
         """Guess zarr version."""
         url = UPath(parse_protocols(url)[-1])
-        if exists(url / "zarr.json"):
-            return 3
-        if exists(url / ".zarray"):
-            return 2
         if exists(url / ".zgroup"):
             return 2
+        if exists(url / ".zarray"):
+            return 2
+        if exists(url / "zarr.json"):
+            return 3
         return 0
 
     def _compute_info(self) -> Zarr2VolumeInfo:

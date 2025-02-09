@@ -76,7 +76,7 @@ class Console(argparse.ArgumentParser):
         stderr : TextIO | str, default=sys.stderr
             Error stream.
         """
-        self.debug = kwargs.pop('debug', False)
+        self._debug = kwargs.pop('debug', False)
         # Commandline behavior
         self.history_file = kwargs.pop('history_file', self.DEFAULT_HISTFILE)
         if self.history_file:
@@ -93,6 +93,8 @@ class Console(argparse.ArgumentParser):
             stdout = kwargs.pop("stdout", sys.stdout)
             stderr = kwargs.pop("stderr", sys.stderr)
             level = kwargs.pop("level", "info")
+            if self._debug:
+                level = "debug"
             stdio = StandardIO(
                 stdin=stdin, stdout=stdout, stderr=stderr,
                 level=level, logger=LOG
@@ -124,7 +126,7 @@ class Console(argparse.ArgumentParser):
         # We overload (and do not call) ArgumentParser.exit
         # This is called (e.g.) after running a help command.
         if message:
-            self.stdio.print(message)
+            self.print(message)
         raise self.InterruptParsing(status)
 
     def error(self, *args, **kwargs) -> None:
@@ -134,6 +136,21 @@ class Console(argparse.ArgumentParser):
             raise SystemExit(*args)
         else:
             self.stdio.error(*args, **kwargs)
+
+    def print(self, *args, **kwargs) -> None:  # noqa: D102
+        self.stdio.print(*args, **kwargs)
+
+    def debug(self, *args, **kwargs) -> None:  # noqa: D102
+        self.stdio.debug(*args, **kwargs)
+
+    def info(self, *args, **kwargs) -> None:  # noqa: D102
+        self.stdio.info(*args, **kwargs)
+
+    def warning(self, *args, **kwargs) -> None:  # noqa: D102
+        self.stdio.warning(*args, **kwargs)
+
+    def input(self, *args, **kwargs) -> str:  # noqa: D102
+        return self.stdio.input(*args, **kwargs)
 
     def enter_console(self) -> None:
         """Set up history and auto-complete."""
@@ -165,7 +182,7 @@ class Console(argparse.ArgumentParser):
         """Wait for next user input."""
         self.enter_console()
 
-        self.stdio.print(
+        self.print(
             f'\nType {bformat.bold("help")} to list available '
             f'commands, or {bformat.bold("help <command>")} '
             f'for specific help.\n'
@@ -174,18 +191,34 @@ class Console(argparse.ArgumentParser):
             f'exit the app.'
         )
 
+        def are_you_sure() -> bool:
+            try:
+                # Query input
+                args = self.input("Do you really want to exit ([y]/n)?")
+                if args[:1].lower() == "n":
+                    return False
+                else:
+                    raise EOFError
+            except KeyboardInterrupt:
+                # Ctrl+C -> do not exit
+                return False
+
         count = 1
         try:
             while True:
                 try:
                     # Query input
-                    args = self.stdio.input(iformat.fg.green(f'[{count}] '))
+                    args = self.input(iformat.fg.green(f'[{count}] '))
                     if not args.strip():
                         continue
                     count += 1
+                except EOFError:
+                    # Ctrl+D -> propagate and catch later
+                    if not are_you_sure():
+                        continue
                 except KeyboardInterrupt:
                     # Ctrl+C -> generate new input
-                    self.stdio.print("", end="")
+                    self.print("", end="")
                     continue
 
                 try:
@@ -193,17 +226,22 @@ class Console(argparse.ArgumentParser):
                     args = self.parse_args(shlex.split(args))
                     if not vars(args):
                         raise ValueError("Unknown command")
-                except EOFError as e:
-                    # Ctrl+D -> propagate anc catch later
-                    raise e
+                except EOFError:
+                    # Ctrl+D -> propagate and catch later
+                    if not are_you_sure():
+                        continue
                 except self.InterruptParsing:
                     # Caught "exit" call in parser. Silent it.
                     # (This is triggered by --help)
                     continue
+                except KeyboardInterrupt:
+                    # Ctrl+C -> Stop parsing
+                    count += 1
+                    continue
                 except Exception as e:
                     # Other exceptions -> print + new input field
-                    if self.debug:
-                        self.stdio.debug(traceback.print_tb(e.__traceback__))
+                    if self._debug:
+                        self.debug(traceback.print_tb(e.__traceback__))
                     self.error("(PARSE ERROR)", e)
                     continue
 
@@ -211,23 +249,24 @@ class Console(argparse.ArgumentParser):
                     # Execute
                     func = getattr(args, 'func', lambda x: None)
                     func(args)
-                except EOFError as e:
-                    # Ctrl+D -> propagate anc catch later
-                    raise e
+                except EOFError:
+                    # Ctrl+D -> propagate and catch later
+                    if not are_you_sure():
+                        continue
                 except self.InterruptParsing:
                     # Caught "exit" call in parser. Silent it.
                     # (This is triggered by --help)
                     continue
-                except Exception as e:
+                except (Exception, KeyboardInterrupt) as e:
                     # Other exceptions -> print + new input field
-                    if self.debug:
-                        self.stdio.debug(traceback.print_tb(e.__traceback__))
+                    if self._debug:
+                        self.debug(traceback.print_tb(e.__traceback__))
                     self.error("(EXEC ERROR)", e)
                     continue
 
         except EOFError:
             # Ctrl+D -> graceful exit
-            self.stdio.print('exit', end="")
+            self.print('exit', end="")
             raise SystemExit
         finally:
             self.exit_console()

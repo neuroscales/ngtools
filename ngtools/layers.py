@@ -1,6 +1,8 @@
 """A neuroglancer scene with a programmatic interface."""
 # stdlib
+import logging
 from os import PathLike
+from typing import Iterator
 
 # externals
 import neuroglancer as ng
@@ -18,6 +20,8 @@ from ngtools.local.tracts import TractDataSource
 from ngtools.opener import parse_protocols
 from ngtools.shaders import shaders
 from ngtools.utils import Wraps
+
+LOG = logging.getLogger(__name__)
 
 URILike = str | PathLike
 SourceType = ng.LayerDataSource | ng.LocalVolume | ng.skeleton.SkeletonSource
@@ -68,6 +72,7 @@ class LayerFactory(type):
                 json_data.get("type", "") == "pointAnnotation"
             )
         ):
+            LOG.debug("Layer - PointAnnotationLayer")
             return PointAnnotationLayer(json_data, *args, **kwargs)
 
         # Convert to JSON (slower but more robust)
@@ -87,9 +92,11 @@ class LayerFactory(type):
             source = json_data
             json_data = None
         kwargs["source"] = source
+        LOG.debug(f"Layer - source: {source}")
 
         # Only use the factory if it is not called from a subclass
         if cls is not Layer:
+            LOG.debug(f"Layer - defer to {cls.__name__}")
             return super().__call__(json_data, *args, **kwargs)
 
         GuessedLayer = None
@@ -97,7 +104,11 @@ class LayerFactory(type):
         # switch based on layer protocol
         uri_as_str = _get_url(source)
         if uri_as_str:
+            if uri_as_str == "local://annotations":
+                return LocalAnnotationLayer(json_data, *args, **kwargs)
+
             layer_type = parse_protocols(uri_as_str)[0]
+            LOG.debug(f"Layer - hint: {layer_type}")
             GuessedLayer = {
                 "image": ImageLayer,
                 "volume": ImageLayer,
@@ -114,6 +125,8 @@ class LayerFactory(type):
 
         # switch based on type keyword
         if "type" in (really_json_data or {}):
+            layer_type = really_json_data["type"]
+            LOG.debug(f"Layer - json hint: {layer_type}")
             GuessedLayer = {
                 "image": ImageLayer,
                 "segmentation": SegmentationLayer,
@@ -127,28 +140,28 @@ class LayerFactory(type):
         if source:
             source = LayerDataSources(source)
             kwargs["source"] = source
+            LOG.debug(f"Layer - source type: {type(source[0]).__name__}")
             if isinstance(source[0], VolumeDataSource):
+                LOG.debug("Layer - guess ImageLayer")
                 GuessedLayer = ImageLayer
             if isinstance(source[0], SkeletonDataSource):
+                LOG.debug("Layer - guess SkeletonLayer")
                 GuessedLayer = SkeletonLayer
             if isinstance(source[0], MeshDataSource):
+                LOG.debug("Layer - guess MeshLayer")
                 GuessedLayer = MeshLayer
             if GuessedLayer:
                 return GuessedLayer(json_data, *args, **kwargs)
 
         # Fallback
+        LOG.debug("Layer - fallback to simple Layer")
         return super().__call__(json_data, *args, **kwargs)
 
 
 class _SourceMixin:
 
-    @property
-    def source(self):
+    def __get_source__(self) -> LayerDataSources:
         return LayerDataSources(self._wrapped.source)
-
-    @source.setter
-    def source(self, value):
-        self._wrapped.source = value
 
 
 class Layer(Wraps(ng.Layer), metaclass=LayerFactory):
@@ -525,6 +538,12 @@ class AnnotationLayer(_SourceMixin, Wraps(ng.AnnotationLayer), Layer):
     ...
 
 
+class LocalAnnotationLayer(Wraps(ng.LocalAnnotationLayer), AnnotationLayer):
+    """TODO."""
+
+    ...
+
+
 class PointAnnotationLayer(Wraps(ng.PointAnnotationLayer), Layer):
     """Point annotation layer.
 
@@ -539,16 +558,18 @@ class PointAnnotationLayer(Wraps(ng.PointAnnotationLayer), Layer):
 class ManagedLayer(Wraps(ng.ManagedLayer)):
     """Named layer."""
 
-    def __getattr__(self, name):
-        return Layer(super().__getattr__(name))
+    def __getattr__(self, name: str) -> Layer:
+        if name == "layer":
+            return Layer(super().__getattr__(name))
+        return super().__getattr__(name)
 
 
 class Layers(Wraps(ng.Layers)):
     """List of named layers."""
 
-    def __getitem__(self, *args, **kwargs):
+    def __getitem__(self, *args, **kwargs) -> ManagedLayer:
         return ManagedLayer(super().__getitem__(*args, **kwargs))
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[ManagedLayer]:
         for layer in super().__iter__():
             yield ManagedLayer(layer)

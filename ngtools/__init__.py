@@ -1,22 +1,26 @@
 """Miscelaneous tools to build and manipulate Neuroglancer scenes."""
 __all__ = ["__version__"]
 
-from ._version import __version__  # type: ignore
+import threading
 
 # Monkey patch neuroglancer
-
-import threading
 from neuroglancer.viewer_state import JsonObjectWrapper
 
+# import to trigger fsspec registration
+from . import dandifs  # noqa: F401
 
-def _is_compatible(obj, kls):
+# version
+from ._version import __version__  # type: ignore
+
+
+def _is_compatible(obj: object, kls: type) -> bool:
     if isinstance(obj, kls):
         return True
     bases = (base for base in kls.__bases__ if base is not object)
     return any(map(lambda x: _is_compatible(obj, x), bases))
 
 
-def __patched_init__(self, json_data=None, _readonly=False, **kwargs):
+def __patched_init__(self, json_data=None, _readonly=False, **kwargs) -> None:
     if json_data is None:
         json_data = {}
     elif _is_compatible(json_data, type(self)):  # !!! patched line

@@ -58,4 +58,6 @@ PROTOCOLS = [
     "gcs",           # Google Cloud
     "s3",            # Amazon S3
     "ftp",           # FTP
+    "dandi",         # DANDI/LINC
+    "local",         # protocol for LocalAnnotationLayer sources
 ]

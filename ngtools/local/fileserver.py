@@ -53,9 +53,7 @@ class LocalFileServer:
     All paths should be absolute!
     """
 
-    def __init__(
-        self, port: int = 0, ip: str = "", interrupt: bool = True
-    ) -> None:
+    def __init__(self, port: int = 0, ip: str = "") -> None:
         """
         Parameters
         ----------
@@ -63,24 +61,11 @@ class LocalFileServer:
             Port number to use
         ip : str
             IP address
-        interrupt : bool
-            Whether we can keyboard-interrupt the server.
-            If instantiated inside a background process, useful to set
-            to False so that the exception is handled in the main thread.
         """
         port, ip = find_available_port(port, ip)
         self.port = port
         self.ip = ip
         self.thread = None
-
-        if interrupt is True:
-            interrupt = KeyboardInterrupt
-        if not interrupt:
-            interrupt = tuple()
-        if not isinstance(interrupt, (list, tuple)):
-            interrupt = (interrupt,)
-        interrupt = tuple(interrupt)
-        self.interrupt = interrupt
 
         self.server = make_server(self.ip, self.port, self._serve,
                                   handler_class=_NoLoggingWSGIRequestHandler)

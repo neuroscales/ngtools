@@ -1,7 +1,10 @@
 """Local neuroglancer instance with a shell-like interface."""
 # stdlib
 import argparse
+import datetime
+import json
 import os.path
+import stat
 import textwrap
 
 # externals
@@ -15,6 +18,13 @@ from ngtools.local.fileserver import LocalFileServer, find_available_port
 from ngtools.local.termcolors import bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
+
+# unix-specific imports
+try:
+    import grp
+    import pwd
+except ImportError:
+    pwd = grp = None
 
 SourceType = ng.LayerDataSource | ng.LocalVolume | ng.skeleton.SkeletonSource
 
@@ -65,10 +75,13 @@ def state_action(name: str) -> callable:
     def func(
         self: "LocalNeuroglancer", *args, state: ng.ViewerState, **kwargs
     ) -> object | None:
+        print(json.dumps(state.to_json(), indent=4))
         scene = Scene(state.to_json())
         out = getattr(scene, name)(*args, **kwargs)
         for key in scene.to_json().keys():
-            setattr(state, key, getattr(scene, key))
+            val = getattr(scene, key)
+            setattr(state, key, val)
+        print(json.dumps(state.to_json(), indent=4))
         return out
 
     return func
@@ -83,7 +96,85 @@ def ensure_list(x: object) -> list:
     return list(x)
 
 
-class LocalNeuroglancer:
+class OSMixin:
+    """Operating system actions."""
+
+    @action
+    def cd(self, path: str) -> str:
+        """Change directory."""
+        os.chdir(os.path.expanduser(path))
+        return os.getcwd()
+
+    @action
+    def ls(self, path: str, **kwargs) -> list[str]:
+        """List files."""
+        long = kwargs.pop("long", False)
+        hidden = kwargs.pop("hidden", False)
+
+        if long:
+            files = os.scandir(os.path.expanduser(path))
+            files = sorted(files, key=lambda x: x.name)
+            keys = ("perms", "nlinks", "owners", "groups", "sizes",
+                    "months", "days", "times", "names")
+            mystat = dict([(key, []) for key in keys])
+            for entry in files:
+                if not hidden and entry.name[:1] == ".":
+                    continue
+                lstat = entry.stat(follow_symlinks=False)
+                mystat["perms"].append(stat.filemode(lstat.st_mode))
+                mystat["nlinks"].append(lstat.st_nlink)
+                if pwd:
+                    mystat["owners"].append(pwd.getpwuid(lstat.st_uid).pw_name)
+                else:
+                    mystat["owners"].append(lstat.st_uid)
+                if grp:
+                    mystat["groups"].append(grp.getgrgid(lstat.st_gid)[0])
+                else:
+                    mystat["groups"].append("")
+                mystat["sizes"].append(lstat.st_size)
+                date = datetime.datetime.fromtimestamp(lstat.st_mtime)
+                mystat["months"].append(date.strftime("%b"))
+                mystat["days"].append(date.strftime("%d"))
+                if date.year != datetime.datetime.today().year:
+                    mystat["times"].append(date.strftime("%Y"))
+                else:
+                    mystat["times"].append(date.strftime("%H:%M"))
+                if entry.is_symlink():
+                    fname = bformat.bold(bformat.fg.magenta(entry.name))
+                    fname += " -> " + os.readlink(entry.path)
+                elif entry.is_dir():
+                    fname = bformat.bold(bformat.fg.blue(entry.name))
+                elif "x" in mystat["perms"][-1]:
+                    fname = bformat.bold(bformat.fg.green(entry.name))
+                else:
+                    fname = entry.name
+                mystat["names"].append(fname)
+
+            colsizes = [max(len(str(y)) for y in x) for x in mystat.values()]
+            for values in zip(*mystat.values()):
+                for key, value, colsize in zip(keys, values, colsizes):
+                    align = (
+                        ">" if key in ("nlinks", "sizes", "days", "times")
+                        else ""
+                    )
+                    fmt = "{:" + align + str(colsize) + "s}"
+                    print(fmt.format(str(value)), end=" ")
+                print("")
+        else:
+            files = os.listdir(os.path.expanduser(path))
+            if not hidden:
+                files = [file for file in files if file[:1] != "."]
+            self.console.print(*files)
+        return files
+
+    @action
+    def pwd(self) -> str:
+        """Path to working directory."""
+        self.console.print(os.getcwd())
+        return os.getcwd()
+
+
+class LocalNeuroglancer(OSMixin):
     """
     A local instance of neuroglancer that can launch its own local fileserver.
 
@@ -116,21 +207,25 @@ class LocalNeuroglancer:
         debug : bool
             Print full trace when an error is encountered.
         """
+        # Setup file server
         if (
             fileserver is not False and
             not isinstance(fileserver, LocalFileServer)
         ):
             portf = fileserver if isinstance(fileserver, int) else 0
-            fileserver = LocalFileServer(ip=ip, port=portf, interrupt=EOFError)
+            fileserver = LocalFileServer(ip=ip, port=portf)
         self.fileserver = fileserver
         if self.fileserver:
             self.fileserver.start()
 
+        # Setup neuroglancer instance
         port, ip = find_available_port(port, ip)
         global_server_args['bind_address'] = str(ip)
         global_server_args['bind_port'] = str(port)
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
+
+        # Setup console
         self.console = self._make_console(debug)
 
     # ==================================================================
@@ -394,6 +489,8 @@ class LocalNeuroglancer:
         _ = add_parser('ls', help='List files')
         _.set_defaults(func=self.ls)
         _.add_argument(dest='path', nargs='?', default='.', metavar='PATH')
+        _.add_argument('--long', '-l', action="store_true")
+        _.add_argument('--hidden', '-a', action="store_true")
 
         _ = add_parser('pwd', help='Path to working directory')
         _.set_defaults(func=self.pwd)
@@ -421,30 +518,11 @@ class LocalNeuroglancer:
     redisplay = state_action("redisplay")
     transform = state_action("transform")
     channel_mode = state_action("channel_mode")
-    position = state_action("position")
+    move = state_action("move")
     shader = state_action("shader")
     layout = state_action("layout")
     zorder = state_action("zorder")
     state = state_action("state")
-
-    @action
-    def cd(self, path: str) -> str:
-        """Change directory."""
-        os.chdir(os.path.expanduser(path))
-        return os.getcwd()
-
-    @action
-    def ls(self, path: str) -> list[str]:
-        """List files."""
-        files = os.listdir(os.path.expanduser(path))
-        self.console.print(*files)
-        return files
-
-    @action
-    def pwd(self) -> str:
-        """Path to working directory."""
-        self.console.print(os.getcwd())
-        return os.getcwd()
 
     @action
     def help(self, action: str | None = None) -> None:
@@ -495,60 +573,60 @@ class LocalNeuroglancer:
 
 _clihelp = type('_clihelp', (object,), {})
 
-bold = bformat.bold
-red = bformat.fg.red
-green = bformat.fg.green
-blue = bformat.fg.blue
+b = bformat.bold
+R = bformat.fg.red
+G = bformat.fg.green
+B = bformat.fg.blue
 
 _clihelp.load = textwrap.dedent(
 f"""
 Load a file, which can be local or remote.
 
-{bold("Paths and URLs")}
-{bold("--------------")}
+{b("Paths and URLs")}
+{b("--------------")}
 Each path or url may be prepended by:
 
 1)  A layer type protocol, which indicates the kind of object that the file
     contains.
-    Examples: {bold("volume://")}, {bold("labels://")}, {bold("tracts://")}.
+    Examples: {b("volume://")}, {b("labels://")}, {b("tracts://")}.
 
 2)  A format protocol, which indicates the exact file format.
-    Examples: {bold("nifti://")}, {bold("zarr://")}, {bold("mgh://")}.
+    Examples: {b("nifti://")}, {b("zarr://")}, {b("mgh://")}.
 
 3)  An access protocol, which indices the protocol used to  access the files.
-    Examples: {bold("https://")}, {bold("s3://")}, {bold("dandi://")}.
+    Examples: {b("https://")}, {b("s3://")}, {b("dandi://")}.
 
 All of these protocols are optional. If absent, a guess is made using the
 file extension.
 
-{bold("Examples")}
-{bold("--------")}
+{b("Examples")}
+{b("--------")}
 
-- Absolute path to local file:  {bold("/absolute/path/to/mri.nii.gz")}
-- Relative path to local file:  {bold("relative/path/to/mri.nii.gz")}
-- Local file with format hint:  {bold("mgh://relative/path/to/linkwithoutextension")}
-- Remote file:                  {bold("https://url.to/mri.nii.gz")}
-- Remote file with format hint: {bold("zarr://https://url.to/filewithoutextension")}
-- File on dandiarchive:         {bold("dandi://dandi/<dandiset>/sub-<id>/path/to/file.ome.zarr")}
+- Absolute path to local file:  {b("/absolute/path/to/mri.nii.gz")}
+- Relative path to local file:  {b("relative/path/to/mri.nii.gz")}
+- Local file with format hint:  {b("mgh://relative/path/to/linkwithoutextension")}
+- Remote file:                  {b("https://url.to/mri.nii.gz")}
+- Remote file with format hint: {b("zarr://https://url.to/filewithoutextension")}
+- File on dandiarchive:         {b("dandi://dandi/<dandiset>/sub-<id>/path/to/file.ome.zarr")}
 
-{bold("Layer names")}
-{bold("-----------")}
+{b("Layer names")}
+{b("-----------")}
 Neuroglancer layers are named. The name of the layer can be specified with
-the {bold("--name")} option. Otherwise, the base name of the file is used (that
+the {b("--name")} option. Otherwise, the base name of the file is used (that
 is, without the folder hierarchy).
 
 If multiple files are loaded _and_ the --name option is used, then there
 should be as many names as files.
 
-{bold("Transforms")}
-{bold("----------")}
+{b("Transforms")}
+{b("----------")}
 A spatial transform (common to all files) can be applied to the loaded
-volume. The transform is specified with the {bold("--transform")} option, which
+volume. The transform is specified with the {b("--transform")} option, which
 can be a flattened affine matrix (row major) or the path to a transform file.
-Type {bold("help transform")} for more information.
+Type {b("help transform")} for more information.
 
-{bold("Arguments")}
-{bold("----------")}"""  # noqa: E122, E501
+{b("Arguments")}
+{b("----------")}"""  # noqa: E122, E501
 )
 
 _clihelp.unload = "Unload layers"
@@ -560,8 +638,8 @@ f"""
 Applies a colormap, or a more advanced shading function to all or some of
 the layers.
 
-{bold("List of builtin colormaps")}
-{bold("-------------------------")}
+{b("List of builtin colormaps")}
+{b("-------------------------")}
 """  # noqa: E122
 ) + textwrap.indent(pretty_colormap_list(), ' ')
 
@@ -581,12 +659,12 @@ There are two ways of using this command:
 
 1)  Provide the new order (top-to-bottom) of the layers
 
-2)  Provide a positive ({bold("--up")}) or negative ({bold("--down")})
+2)  Provide a positive ({b("--up")}) or negative ({b("--down")})
     number of steps by which to move the listed layers.
     In this case, more than one up or down step can be provided, using
     repeats of the option.
-    Examples: {bold("-vvvv")} moves downward 4 times
-              {bold("-^^^^")} moves upwards 4 times
+    Examples: {b("-vvvv")} moves downward 4 times
+              {b("-^^^^")} moves upwards 4 times
 """  # noqa: E122
 )
 
@@ -597,8 +675,8 @@ different orientation (RAS, LPI, and permutations thereof)
 
 By default, neuroglancer displays data in their "native" space, where
 native means a "XYZ" coordinate frame, whose mapping from and to voxels
-is format-spacific. In {bold("nifti://")} volumes, XYZ always corresponds to
-the RAS+ world space, whereas in {bold("zarr://")}, XYZ correspond to canonical
+is format-spacific. In {b("nifti://")} volumes, XYZ always corresponds to
+the RAS+ world space, whereas in {b("zarr://")}, XYZ correspond to canonical
 axes ordered according to the OME metadata.
 
 Because of our neuroimaging bias, we choose to interpret XYZ as RAS+ (which
@@ -606,22 +684,22 @@ is consistant with the nifti behavior).
 
 The simplest usage of this command is therefore to switch between
 different representations of the world coordinate system:
-    . {bold("display RAS")}  (alias: {bold(" display right anterior superior")})
-      maps the {red("red")}, {green("green")} and {bold("blue")} axes to {red("right")}, {green("anterior")}, {bold("superior")}.
-    . {bold("display LPI")}  (alias: {bold(" display left posterior inferior")})
-      maps the {red("red")}, {green("green")} and {bold("blue")} axes to {red("left")}, {green("posterior")}, {bold("inferior")}.
+    . {b("display RAS")}  (alias: {b(" display right anterior superior")})
+      maps the {R("red")}, {G("green")} and {B("blue")} axes to {R("right")}, {G("anterior")}, {B("superior")}.
+    . {b("display LPI")}  (alias: {b(" display left posterior inferior")})
+      maps the {R("red")}, {G("green")} and {B("blue")} axes to {R("left")}, {G("posterior")}, {B("inferior")}.
 
 A second usage allows switching between displaying the data in the world
 frame and displaying the data in the canonical frame of one of the layers
 (that is, the frame axes are aligned with the voxel dimensions).
-    . {bold("display --layer <name>")} maps the {red("red")}/{green("green")}/{bold("blue")}
+    . {b("display --layer <name>")} maps the {R("red")}/{G("green")}/{B("blue")}
       axes to the canonical axes of the layer <name>
-    . {bold("display --world")} maps (back) the {red("red")}/{green("green")}/{bold("blue")}
+    . {b("display --world")} maps (back) the {R("red")}/{G("green")}/{B("blue")}
       axes to the axes of world frame.
 
 Of course, both usages can be combined:
-    . {bold("display RAS --layer <name>")}
-    . {bold("display LPI --world")}
+    . {b("display RAS --layer <name>")}
+    . {b("display LPI --world")}
 
 """  # noqa: E122, E501
 )
@@ -631,20 +709,20 @@ f"""
 Change the viewer's layout (i.e., the quadrants and their layers)
 
 Neuroglancer has 8 different window types:
-. xy     : {red("X")}{green("Y")} cross-section
-. yz     : {green("Y")}{bold("Z")} cross-section
-. xz     : {red("X")}{bold("Z")} cross-section
-. xy-3d  : {red("X")}{green("Y")} cross-section in a {bold("3D")} window
-. yz-3d  : {green("Y")}{bold("Z")} cross-section in a {bold("3D")} window
-. xz-3d  : {red("X")}{bold("Z")} cross-section in a {bold("3D")} window
-. 4panel : Four quadrants ({red("X")}{green("Y")}, {red("X")}{bold("Z")}, {bold("3D")}, {green("Y")}{bold("Z")})
-. 3d     : {bold("3D")} window
+. xy     : {R("X")}{G("Y")} cross-section
+. yz     : {G("Y")}{B("Z")} cross-section
+. xz     : {R("X")}{B("Z")} cross-section
+. xy-3d  : {R("X")}{G("Y")} cross-section in a {b("3D")} window
+. yz-3d  : {G("Y")}{B("Z")} cross-section in a {b("3D")} window
+. xz-3d  : {R("X")}{B("Z")} cross-section in a {b("3D")} window
+. 4panel : Four quadrants ({R("X")}{G("Y")}, {R("X")}{B("Z")}, {b("3D")}, {G("Y")}{B("Z")})
+. 3d     : {b("3D")} window
 
 It is possible to build a user-defined layout by stacking these basic
 windows into a row or a column -- or even nested rows and columns --
-using the {bold("--stack")} option. The {bold("--layer")} option allows assigning
-specific layers to a specific window. We also define {bold("--append")} and
-{bold("--insert")} to add a new window into an existing stack of windows.
+using the {b("--stack")} option. The {b("--layer")} option allows assigning
+specific layers to a specific window. We also define {b("--append")} and
+{b("--insert")} to add a new window into an existing stack of windows.
 
 """  # noqa: E122, E501
 )
