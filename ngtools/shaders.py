@@ -14,6 +14,7 @@ from typing import IO
 
 # internals
 from ngtools import cmdata
+from ngtools.local.termcolors import bformat
 
 
 def _flatten(x: list[list]) -> tuple:
@@ -21,22 +22,52 @@ def _flatten(x: list[list]) -> tuple:
     return tuple(z for y in x for z in y)
 
 
-def pretty_colormap_list(linewidth: int = 79) -> str:
+def pretty_colormap_list(linewidth: int = 79, colorbar: bool = True) -> str:
     """List all existing colormaps."""
     names = list(filter(lambda x: not x[0] == '_', dir(cmdata)))
     names = ['greyscale', 'orientation'] + names
     names = list(sorted(names))
     longest_name = max(map(len, names))
+
+    if colorbar:
+        colors = []
+        for name in names:
+            if name == "greyscale":
+                name = "blackwhite"
+            if hasattr(cmdata, name):
+                if not isinstance(getattr(cmdata, name), (list, tuple, dict)):
+                    print("skip:", name)
+                    colorstr = " " * longest_name
+                else:
+                    colormap = pycolormaps.make_colormap(name)
+                    colorstr = ""
+                    for i in range(longest_name):
+                        i = i / (longest_name - 1)
+                        color = [255 * c for c in colormap(i)]
+                        colorstr += bformat.bg.rgb256(*color)(" ")
+            else:
+                colorstr = " " * longest_name
+            colors += [colorstr]
+
     nbcol = max(1, linewidth // (longest_name + 2))
     nbrow = int(math.ceil(len(names) / nbcol))
     cell = " {:<" + str(longest_name) + "s}"
     row = cell * nbcol
     lastrow = cell * (len(names) % nbcol)
+    rep = 2 if colorbar else 1
     if lastrow:
-        rows = "\n".join([row] * (nbrow-1) + [lastrow])
+        rows = "\n".join([row] * (nbrow-1) * rep + [lastrow] * rep)
     else:
-        rows = "\n".join([row] * nbrow)
-    return rows.format(*names)
+        rows = "\n".join([row] * nbrow * rep)
+
+    if colorbar:
+        cells = []
+        for i in range(nbrow):
+            cells += names[nbcol*i:nbcol*(i+1)]
+            cells += colors[nbcol*i:nbcol*(i+1)]
+    else:
+        cells = names
+    return rows.format(*cells)
 
 
 def load_fs_lut(
@@ -63,8 +94,122 @@ def load_fs_lut(
     return lut
 
 
+class pycolormaps:
+    """
+    Namespace for dynamic colormaps.
+
+    Functions in this class return python functions.
+    """
+
+    _DEFAULT_LENGTH = object()
+
+    @staticmethod
+    def make_colormap(
+        name: str,
+        data: object | None = None,
+    ) -> str:
+        """Generate GLSL code for a colormap."""
+        data = data or getattr(cmdata, name)
+        if isinstance(data, list):
+            return pycolormaps.make_listed(name, data)
+        elif isinstance(data, tuple):
+            return pycolormaps.make_segmented(name, data)
+        elif isinstance(data, dict):
+            return pycolormaps.make_weighted(name, data)
+        return None
+
+    @staticmethod
+    def make_listed(
+        name: str,
+        data: object | None = None,
+    ) -> str:
+        """Generate GLSL code for a listed colormap."""
+        data = data or getattr(cmdata, name)
+        n = len(data)
+        data = _flatten(data)
+
+        def eval_color(x: float) -> list[float]:
+            y = x * (n - 1)
+            i = int(math.floor(y))
+            j = min(i + 1, n-1)
+            w = y - i
+            return [
+                (1.0-w) * data[3*i+0] + w * data[3*j+0],
+                (1.0-w) * data[3*i+1] + w * data[3*j+1],
+                (1.0-w) * data[3*i+2] + w * data[3*j+2],
+            ]
+
+        return eval_color
+
+    @staticmethod
+    def make_weighted(
+        name: str,
+        data: object | None = None,
+    ) -> str:
+        """Generate GLSL code for a listed colormap."""
+        data = data or getattr(cmdata, name)
+        keys = list(data.keys())
+
+        def eval_color(x: float) -> list[float]:
+            wj, dj = keys[0], next(iter(data.values()))
+            for wi, di in data.items():
+                if x <= wi:
+                    break
+                wj, dj = wi, di
+            wlow = x - wi
+            wupp = wj - x
+            wsum = wlow + wupp
+            if wsum == 0:
+                wlow = wupp = 0.5
+            else:
+                wlow = wlow / wsum
+                wupp = wupp / wsum
+            return [
+                di[0] * wupp + dj[0] * wlow,
+                di[1] * wupp + dj[1] * wlow,
+                di[2] * wupp + dj[2] * wlow,
+            ]
+
+        return eval_color
+
+    @staticmethod
+    def make_segmented(
+        name: str,
+        data: object | None = None,
+    ) -> str:
+        """Generate GLSL code for a segmented colormap."""
+        r, g, b = data or getattr(cmdata, name)
+        r, g, b = map(_flatten, (r, g, b))
+
+        def segment(x: float, data: list[float]) -> float:
+            j = 0
+            for i in range(len(data)//3):
+                if x <= data[3*i]:
+                    break
+                j = i
+            wlow = x - data[3*i]
+            wupp = data[3*j] - x
+            wsum = wlow + wupp
+            if wsum == 0:
+                wlow = wupp = 0.5
+            else:
+                wlow = wlow / wsum
+                wupp = wupp / wsum
+            x = data[3*i+2] * wupp + data[3*j+1] * wlow
+            return min(max(x, 0), 1)
+
+        def eval_color(x: float) -> list[float]:
+            return [segment(x, r), segment(x, g), segment(x, b)]
+
+        return eval_color
+
+
 class colormaps:
-    """Namespace for dynamic colormaps."""
+    """
+    Namespace for dynamic colormaps.
+
+    Functions in this class return shader code.
+    """
 
     _DEFAULT_LENGTH = object()
 
@@ -159,7 +304,7 @@ class colormaps:
             {
                 float cmap[%d] = float[]%s;
                 int i, j;
-                for (int c = 0; c < cmap.length(); ++c) {
+                for (int c = 0; c < cmap.length()/3; ++c) {
                     if (x > cmap[3*c]) {
                         i = c;
                         break;

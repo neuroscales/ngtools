@@ -178,7 +178,7 @@ def compose_quaternions(a: np.ndarray, b: np.ndarray, *others) -> np.ndarray:
     av, ar = a[:-1], a[-1:]
     bv, br = b[:-1], b[-1:]
     cr = ar * br - np.dot(av, bv)
-    cv = ar * av + br * bv + np.cross(av, bv)
+    cv = ar * bv + br * av + np.cross(av, bv)
     c = np.concatenate([cv, cr])
     if others:
         c = compose_quaternions(c, *others)

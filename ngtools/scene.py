@@ -161,7 +161,7 @@ class ViewerState(Wraps(ng.ViewerState)):
         """All spatial dimensions (with meter-like unit)."""
         return ng.CoordinateSpace({
             key: [scale, unit]
-            for key, (scale, unit) in self.dimensions.to_json()
+            for key, (scale, unit) in self.dimensions.to_json().items()
             if unit[-1:] == "m"
         })
 
@@ -170,7 +170,7 @@ class ViewerState(Wraps(ng.ViewerState)):
         """All time dimensions (with second-like unit)."""
         return ng.CoordinateSpace({
             key: [scale, unit]
-            for key, (scale, unit) in self.dimensions.to_json()
+            for key, (scale, unit) in self.dimensions.to_json().items()
             if unit[-1:] == "s"
         })
 
@@ -188,31 +188,34 @@ class ViewerState(Wraps(ng.ViewerState)):
 
     @property
     def __default_dimensions__(self) -> ng.CoordinateSpace:
-        print("__default_dimensions__")
         dims = {}
-        for layer in self.layers:
-            layer: ng.ManagedLayer
-            if layer.name.startswith("__"):
-                continue
-            layer = layer.layer
+        for named_layer in self.layers:
+            named_layer: ng.ManagedLayer
+            layer = named_layer.layer
             source = LayerDataSources(layer.source)
             transform = source[0].transform
-            odims = transform.output_dimensions
+            if transform is None or transform.output_dimensions is None:
+                continue
+            odims = transform.output_dimensions.to_json()
             dims.update({
                 name: [1, split_unit(unit)[1]]
-                for name, (_, unit) in odims.to_json().items()
+                for name, (_, unit) in odims.items()
                 if not name.endswith(("^", "'"))
             })
-            dims = odims.to_json()
-        print(f"__default_dimensions__ = {dims}")
+        dim_order = ["x", "y", "z", "t", "right", "anterior", "superior"]
+        dims = dict(sorted(dims.items(), key=lambda x: (
+            dim_order.index(x[0]) if x[0] in dim_order else
+            float('inf')
+        )))
         return ng.CoordinateSpace(dims)
 
     def __get_dimensions__(self) -> ng.CoordinateSpace:
         # NOTE: we must define it explicitly because ng's default is not None
         value = self._wrapped.dimensions
         if value is None or len(value.names) == 0:
-            dim = self.__default_dimensions__
-            self.dimensions = dim
+            self.dimensions \
+                = self.__set_dimensions__(self.__default_dimensions__)
+            # self.dimensions = self.__default_dimensions__
         return self._wrapped.dimensions
 
     def __set_dimensions__(
@@ -267,7 +270,7 @@ class ViewerState(Wraps(ng.ViewerState)):
     def __set_display_dimensions__(self, value: list[str] | None) -> list[str]:
         dimensions = self.dimensions.names
         if value is None:
-            value = []
+            value = ['x', 'y', 'z', 't']
         value = [name for name in value if name in dimensions]
         dimensions = [name for name in dimensions if name not in value]
         value = (value + dimensions)[:3]
@@ -315,7 +318,6 @@ class ViewerState(Wraps(ng.ViewerState)):
         NOTE: scales are expressed in "model scaled space".
         """
         dimensions = self.dimensions
-        # print(dimensions)
         dimensions = dimensions.to_json()
         scl = {key: 1.0 for key in dimensions}
         for layer in self.layers:
@@ -332,18 +334,21 @@ class ViewerState(Wraps(ng.ViewerState)):
                 continue
             odims = source.output_dimensions
             bbox = source.output_bbox_size
-            vx = source.output_voxel_size
             for name, (scale, unit) in dimensions.items():
                 if name not in odims.names:
                     continue
                 j = odims.names.index(name)
+                scale0 = odims.scales[j]
+                scale_ratio = scale0 / scale
                 unit0 = odims.units[j]
-                bbox_value = convert_unit(bbox[j], unit0, unit) * scale
-                vx_value = convert_unit(vx[j], unit0, unit) * scale
-                scl[name] = (bbox_value / vx_value) / (1024 * 4)
+                bbox_value = convert_unit(bbox[j], unit0, unit) * scale_ratio
+                scl[name] = bbox_value / (1024 * 4)
             break
         dims = self.display_dimensions[:3]
-        scl = sum(scl[name] for name in dims) / len(dims)
+        if len(dims) == 0:
+            scl = 1.0
+        else:
+            scl = sum(scl[name] for name in dims) / len(dims)
         return scl
 
     __default_crossSectionScale__ = __default_cross_section_scale__
@@ -370,7 +375,7 @@ class ViewerState(Wraps(ng.ViewerState)):
         of 0.5 mm.
         """
         dimensions = self.dimensions.to_json()
-        pos = [0.0] * len(dimensions)
+        pos = [0.5] * len(dimensions)
         for layer in self.layers:
             layer: ng.ManagedLayer
             if not layer.visible:
@@ -398,6 +403,13 @@ class ViewerState(Wraps(ng.ViewerState)):
             pos = self.__default_position__
             self.position = pos
         return self._wrapped.position
+
+    def __set_position__(self, value: list[float] | None) -> list[float]:
+        if value is None:
+            value = self.__default_position__
+        value = list(value)
+        value += [0.5] * max(0, len(self.dimensions.names) - len(value))
+        return value
 
 
 def autolog(func: callable) -> callable:
@@ -545,6 +557,7 @@ class Scene(ViewerState):
         if nb_layers_0 == 0:
             # trigger default values
             self.dimensions
+            self.display_dimensions
             self.position
             self.cross_section_scale
             self.projection_scale
@@ -615,13 +628,13 @@ class Scene(ViewerState):
             return ng.LocalAnnotationLayer(coord)
 
         # check if keywords were used
-        if "dst" in kwargs:
+        if kwargs.get("dst", None):
             if axes is not None:
                 msg = "Cannot use `axes` if `src` is used."
                 self.stdio.error(msg)
                 raise ValueError(msg)
             axes = _ensure_list(kwargs["dst"])
-        if "src" in kwargs:
+        if kwargs.get("src", None):
             if isinstance(axes, dict):
                 msg = "Cannot use `axes` if `dst` is used."
                 self.stdio.error(msg)
@@ -650,16 +663,26 @@ class Scene(ViewerState):
         world_axes_native = self.layers["__world_axes_native__"]
         world_axes_current = self.layers["__world_axes_current__"]
 
+        native_transform = world_axes_native.source[0].transform
+        current_transform = world_axes_current.source[0].transform
+        if native_transform:
+            native_names = native_transform.output_dimensions.names
+        else:
+            native_names = []
+        if current_transform:
+            current_names = current_transform.output_dimensions.names
+        else:
+            current_names = []
+
         old_axes = {"x": "x", "y": "y", "z": "z", "t": "t"}
         old_axes.update({
             native: current
-            for native, current in zip(
-                world_axes_native.source[0].transform.output_dimensions.names,
-                world_axes_current.source[0].transform.output_dimensions.names
-            )
+            for native, current in zip(native_names, current_names)
         })
 
         if not axes:
+            if kwargs.get("print", True):
+                self.stdio.print(old_axes)
             return old_axes
 
         new_axes = axes
@@ -671,6 +694,8 @@ class Scene(ViewerState):
         if isinstance(new_axes, str):
             new_axes = S.name_compact2full(new_axes)
         if isinstance(new_axes, (list, tuple)):
+            if len(new_axes) == 1:
+                new_axes = S.name_compact2full(new_axes[0])
             new_axes = {
                 native: new_axis
                 for native, new_axis in zip("xyz", new_axes)
@@ -725,14 +750,18 @@ class Scene(ViewerState):
         axes : dict[str]
             Mapping from old names to new names
         """
+        # save these so they can be fixed later
+        dimensions = self.dimensions.to_json()
+        position = self.position
+
         # check if keywords were used
-        if "dst" in kwargs:
+        if kwargs.get("dst", None):
             if axes is not None:
                 msg = "Cannot use `axes` if `src` is used."
                 self.stdio.error(msg)
                 raise ValueError(msg)
             axes = _ensure_list(kwargs["dst"])
-        if "src" in kwargs:
+        if kwargs.get("src", None):
             if isinstance(axes, dict):
                 msg = "Cannot use `axes` if `dst` is used."
                 self.stdio.error(msg)
@@ -748,13 +777,13 @@ class Scene(ViewerState):
         if isinstance(axes, str):
             axes = S.name_compact2full(axes)
         if isinstance(axes, (list, tuple)):
-            model_axes = self.world_axes()
+            model_axes = self.world_axes(print=False)
             axes = {
                 model_axes[native_axis]: new_axis
                 for native_axis, new_axis in zip("xyz", axes)
             }
 
-        layers = _ensure_list(layer)
+        layers = _ensure_list(layer or [])
         for named_layer in self.layers:
             if layers and named_layer.name not in layers:
                 continue
@@ -764,10 +793,24 @@ class Scene(ViewerState):
             source = layer.source[0]
             transform = source.transform
             transform.output_dimensions = ng.CoordinateSpace({
-                axes.get(name): scl
+                axes.get(name, name): scl
                 for name, scl in transform.output_dimensions.to_json().items()
             })
             layer.source[0].transform = transform
+
+        self.dimensions = ng.CoordinateSpace({
+            axes.get(name, name): scl
+            for name, scl in dimensions.items()
+        })
+
+        self.display_dimensions = [
+            axes.get(name, name) for name in self.display_dimensions
+        ]
+
+        ndim = len(self.dimensions.names)
+        position = list(position) + [0.5] * max(0, len(position) - ndim)
+        position = position[:ndim]
+        self.position = position
 
         return axes
 
@@ -790,9 +833,11 @@ class Scene(ViewerState):
         layer
             Name of a layer or `"world"`.
         """
-        neuro = np.asarray([0, -1, 1, 0])
-        radio = np.asarray([1, 0, 0, -1])
-        current = np.asarray(self.cross_section_orientation or [0, 0, 0, 1])
+        neuro = np.asarray([0., -1., 1., 0.])
+        neuro /= np.linalg.norm(neuro)
+        radio = np.asarray([1., 0., 0., -1.])
+        radio /= np.linalg.norm(radio)
+        current = np.asarray(self.cross_section_orientation)  # or [0, 0, 0, 1]
         current_mode = ["neuro", "radio"][int(
             np.linalg.norm(current - neuro)
             <
@@ -834,7 +879,7 @@ class Scene(ViewerState):
             to_layer = rot.T
             to_layer = T.matrix_to_quaternion(rot)
         else:
-            to_layer = [0, 0, 0, 1]  # identity
+            to_layer = [0.0, 0.0, 0.0, 1.0]  # identity
 
         # canonical neuro/radio axes
         to_view = neuro if mode[0].lower() == "n" else radio
@@ -938,7 +983,7 @@ class Scene(ViewerState):
         display_dimensions = self.display_dimensions
 
         # rename axes to xyz
-        world_axes = self.world_axes()
+        world_axes = self.world_axes(print=False)
         self.world_axes({"x": "x", "y": "y", "z": "z"})
 
         # prepare transformation matrix
@@ -1235,7 +1280,7 @@ class Scene(ViewerState):
     @autolog
     def move(
         self,
-        coord: float | list[float],
+        coord: float | list[float] | dict[str, float],
         dimensions: str | list[str] | None = None,
         unit: str | None = None,
         **kwargs,
@@ -1245,13 +1290,19 @@ class Scene(ViewerState):
 
         Parameters
         ----------
-        coord : [list of] float
-            New position
+        coord : [list of] float | dict[str, float]
+            New position. If a dictionary, maps axes to values.
         dimensions : [list of] str
             Axis of each coordinate. Can be a compact name like 'RAS'.
+            Cannot be used when `coord` is a `dict`.
             Default: Currently displayed axes.
         unit : str
             Units of the coordinates. Default: Unit of current axes.
+
+        Other Parameters
+        ----------------
+        reset : bool
+            Reset position to default
 
         Returns
         -------
@@ -1259,7 +1310,8 @@ class Scene(ViewerState):
             Current cursor position.
         """
         if kwargs.pop('reset', not isinstance(coord, Sequence) and coord == 0):
-            return coord([0] * len(self.dimensions))
+            self.position = self.__default_position__
+            return self.postion
 
         if not self.dimensions:
             raise RuntimeError(
@@ -1267,7 +1319,7 @@ class Scene(ViewerState):
                 'mode? If yes, you must open a neuroglancer window to access '
                 'or modifiy the cursor position')
 
-        dim = self.dimensions
+        dim = self.dimensions.to_json()
 
         # No argument -> print current position
         if not coord:
@@ -1280,20 +1332,26 @@ class Scene(ViewerState):
             return position
 
         # Preproc dimensions
-        if isinstance(dimensions, str):
-            dimensions = [dimensions]
-        dimensions = dimensions or list(map(str, dim.names))
-        if len(dimensions) == 1 and len(dimensions[0]) > 1:
-            dimensions = S.name_compact2full(dimensions[0])
-        dimensions = dimensions[:len(coord)]
+        if not isinstance(coord, dict):
+            if isinstance(dimensions, str):
+                dimensions = [dimensions]
+            dimensions = dimensions or list(map(str, dim.names))
+            if len(dimensions) == 1 and len(dimensions[0]) > 1:
+                dimensions = S.name_compact2full(dimensions[0])
+            dimensions = dimensions[:len(coord)]
+            coord = {n: x for x, n in zip(coord, dimensions)}
+        elif dimensions:
+            raise ValueError(
+                "Cannot use `dimensions` when `coord` is a dictionary"
+                )
 
         # Convert unit
-        unitmap = {n: u for u, n in zip(dim.units, dim.names)}
-        current_units = [unitmap[d] for d in dimensions]
-        coord = convert_unit(coord, unit, current_units)
+        coord = {
+            n: convert_unit(x, unit, dim[n][1])
+            for x, n in coord.items()
+        }
 
         # Sort coordinate in same order as dim
-        coord = {n: x for x, n in zip(coord, dimensions)}
         for x, n in zip(self.position, dim.names):
             coord.setdefault(n, x)
         coord = [coord[n] for n in dim.names]
@@ -1350,7 +1408,7 @@ class Scene(ViewerState):
         return shader
 
     @autolog
-    def layout(
+    def change_layout(
         self,
         layout: str | None = None,
         stack: Literal["row", "column"] | None = None,

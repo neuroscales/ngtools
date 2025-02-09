@@ -261,7 +261,7 @@ class Console(argparse.ArgumentParser):
                     # Other exceptions -> print + new input field
                     if self._debug:
                         self.debug(traceback.print_tb(e.__traceback__))
-                    self.error("(EXEC ERROR)", e)
+                    self.error(f"(EXEC ERROR) [{type(e).__name__}]", e)
                     continue
 
         except EOFError:

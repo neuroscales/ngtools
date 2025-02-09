@@ -1,16 +1,20 @@
 """Local neuroglancer instance with a shell-like interface."""
 # stdlib
 import argparse
+import atexit
 import datetime
-import json
 import os.path
 import stat
 import textwrap
+from functools import partial
 
 # externals
 import neuroglancer as ng
 import numpy as np
-from neuroglancer.server import global_server_args
+from neuroglancer.server import (
+    set_server_bind_address as ng_set_server_bind_address,
+    stop as ng_stop_server
+)
 
 # internals
 from ngtools.local.console import Console, _fixhelpformatter
@@ -75,13 +79,13 @@ def state_action(name: str) -> callable:
     def func(
         self: "LocalNeuroglancer", *args, state: ng.ViewerState, **kwargs
     ) -> object | None:
-        print(json.dumps(state.to_json(), indent=4))
+        # print(json.dumps(state.to_json(), indent=4))
         scene = Scene(state.to_json())
         out = getattr(scene, name)(*args, **kwargs)
         for key in scene.to_json().keys():
             val = getattr(scene, key)
             setattr(state, key, val)
-        print(json.dumps(state.to_json(), indent=4))
+        # print(json.dumps(state.to_json(), indent=4))
         return out
 
     return func
@@ -164,7 +168,7 @@ class OSMixin:
             files = os.listdir(os.path.expanduser(path))
             if not hidden:
                 files = [file for file in files if file[:1] != "."]
-            self.console.print(*files)
+            print(*files)
         return files
 
     @action
@@ -220,13 +224,19 @@ class LocalNeuroglancer(OSMixin):
 
         # Setup neuroglancer instance
         port, ip = find_available_port(port, ip)
-        global_server_args['bind_address'] = str(ip)
-        global_server_args['bind_port'] = str(port)
+        ng_set_server_bind_address(str(ip), str(port))
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
         # Setup console
         self.console = self._make_console(debug)
+        atexit.register(self.__del__)
+
+    def __del__(self) -> None:
+        ng_stop_server()
+        del self.viewer
+        del self.fileserver
+        atexit.unregister(self.__del__)
 
     # ==================================================================
     #
@@ -439,30 +449,20 @@ class LocalNeuroglancer(OSMixin):
         # --------------------------------------------------------------
         #   POSITION
         # --------------------------------------------------------------
-        # FIXME: comment out until fixed
-        # def _add_common_args(parser):
-        #     parser.add_argument(
-        #         '--dimensions', '-d', nargs='+', default=None,
-        #         help='Axis name for each coordinate (can be compact)')
-        #     parser.add_argument(
-        #         '--world', '-w', action='store_true', default=False,
-        #         help='Coordinates are expressed in the world frame')
-        #     parser.add_argument(
-        #         '--layer', '-l', nargs='*', default=None,
-        #         help='Coordinates are expressed in this frame')
-        #     parser.add_argument(
-        #         '--unit', '-u',
-        #         help='Coordinates are expressed in this unit')
-        #     parser.add_argument(
-        #         '--reset', action='store_true', default=False,
-        #         help='Reset coordinates to zero')
-
-        # position = add_parser('position', help='Move cursor')
-        # position.set_defaults(func=self.position)
-        # position.add_argument(
-        #     dest='coord', nargs='*', metavar='COORD', type=float,
-        #     help='Cursor coordinates. If None, print current one.')
-        # _add_common_args(position)
+        _ = add_parser('move', help='Move cursor', aliases=("position",))
+        _.set_defaults(func=self.move)
+        _.add_argument(
+            dest='coord', nargs='*', metavar='COORD', type=float,
+            help='Cursor coordinates. If None, print current one.')
+        _.add_argument(
+            '--dimensions', '-d', nargs='+', default=None,
+            help='Axis name for each coordinate (can be compact)')
+        _.add_argument(
+            '--unit', '-u',
+            help='Coordinates are expressed in this unit')
+        _.add_argument(
+            '--reset', action='store_true', default=False,
+            help='Reset coordinates to zero')
 
         # --------------------------------------------------------------
         #   ZORDER
@@ -492,6 +492,10 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument('--long', '-l', action="store_true")
         _.add_argument('--hidden', '-a', action="store_true")
 
+        _ = add_parser('ll', help='List files (long form)')
+        _.set_defaults(func=partial(self.ls, long=True, hidden=True))
+        _.add_argument(dest='path', nargs='?', default='.', metavar='PATH')
+
         _ = add_parser('pwd', help='Path to working directory')
         _.set_defaults(func=self.pwd)
 
@@ -520,7 +524,7 @@ class LocalNeuroglancer(OSMixin):
     channel_mode = state_action("channel_mode")
     move = state_action("move")
     shader = state_action("shader")
-    layout = state_action("layout")
+    layout = state_action("change_layout")
     zorder = state_action("zorder")
     state = state_action("state")
 
