@@ -31,7 +31,7 @@ from ngtools.local.termcolors import bcolors
 from ngtools.local.tracts import TractSkeleton
 from ngtools.opener import remote_protocols
 from ngtools.shaders import colormaps, pretty_colormap_list, shaders
-from ngtools.volume import LocalSource, RemoteSource
+from ngtools.local._volume_old import LocalSource, RemoteSource
 
 # monkey-patch Layer state to expose channelDimensions
 ng.Layer.channel_dimensions = ng.Layer.channelDimensions = wrapped_property(

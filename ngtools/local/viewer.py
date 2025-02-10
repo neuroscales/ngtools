@@ -77,13 +77,11 @@ def state_action(name: str) -> callable:
     def func(
         self: "LocalNeuroglancer", *args, state: ng.ViewerState, **kwargs
     ) -> object | None:
-        # print(json.dumps(state.to_json(), indent=4))
         scene = Scene(state.to_json())
         out = getattr(scene, name)(*args, **kwargs)
         for key in scene.to_json().keys():
             val = getattr(scene, key)
             setattr(state, key, val)
-        # print(json.dumps(state.to_json(), indent=4))
         return out
 
     return func
