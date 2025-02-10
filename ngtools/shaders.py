@@ -36,7 +36,6 @@ def pretty_colormap_list(linewidth: int = 79, colorbar: bool = True) -> str:
                 name = "blackwhite"
             if hasattr(cmdata, name):
                 if not isinstance(getattr(cmdata, name), (list, tuple, dict)):
-                    print("skip:", name)
                     colorstr = " " * longest_name
                 else:
                     colormap = pycolormaps.make_colormap(name)

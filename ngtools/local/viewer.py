@@ -392,6 +392,8 @@ class LocalNeuroglancer(OSMixin):
             help='Shader name or GLSL shader code')
         _.add_argument(
             '--layer', nargs='+', help='Layer(s) to apply shader to')
+        _.add_argument(
+            '--layer-type', nargs='+', help='Layer type(s) to apply shader to')
 
         # --------------------------------------------------------------
         #   DISPLAY

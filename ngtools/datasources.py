@@ -754,7 +754,7 @@ class NiftiVolumeInfo(VolumeInfo):
             fileobj = open(url, compression=compression)
             for hdr_klass in NiftiHeaders:
                 try:
-                    hdr = hdr_klass.from_fileobj(fileobj)
+                    hdr = hdr_klass.from_fileobj(fileobj, check=False)
                     toc = time.time()
                     LOG.info(f"Load nii header: {toc-tic} s")
                     return hdr
@@ -1216,7 +1216,11 @@ class Zarr2VolumeInfo(ZarrVolumeInfo):
         if nifti is not False:
             if exists(url / "nifti" / ".zarray"):
                 url = url / "nifti" / "0"
-                self.nifti = NiftiVolumeInfo(url, affine="best")
+                try:
+                    self.nifti = NiftiVolumeInfo(url, affine="best")
+                except Exception:
+                    if nifti is True:
+                        raise
             elif nifti is True:
                 raise FileNotFoundError("Cannot find nifti group in zarr.")
 

@@ -29,7 +29,7 @@ from ngtools.datasources import LayerDataSource, LayerDataSources
 from ngtools.layers import Layer, Layers
 from ngtools.local.iostream import StandardIO
 from ngtools.opener import exists, filesystem, open, parse_protocols
-from ngtools.shaders import colormaps, shaders
+from ngtools.shaders import colormaps, load_fs_lut, shaders
 from ngtools.units import convert_unit, split_unit
 from ngtools.utils import DEFAULT_URL, Wraps
 
@@ -629,7 +629,7 @@ class Scene(ViewerState):
         """
         def make_local_annot() -> ng.AnnotationLayer:
             coord = ng.CoordinateSpace()
-            return ng.LocalAnnotationLayer(coord)
+            return ng.AnnotationLayer(ng.LocalAnnotationLayer(coord).to_json())
 
         # check if keywords were used
         if kwargs.get("dst", None):
@@ -1430,6 +1430,7 @@ class Scene(ViewerState):
         self,
         shader: str | PathLike,
         layer: str | list[str] | None = None,
+        layer_type: str | list[str] | None = None
     ) -> str:
         """
         Apply a shader (that is, a colormap or lookup table).
@@ -1441,8 +1442,11 @@ class Scene(ViewerState):
             user-defined shader code, or a LUT file.
         layer : str or list[str], optional
             Apply the shader to these layers. Default: all layers.
+        layer_type : str or list[str], optional
+            Apply the shader to these layer types. Default: all layers.
         """
         layer_names = _ensure_list(layer or [])
+        layer_types = _ensure_list(layer_type or [])
 
         if shader.lower() == 'rgb':
             for layer in self.layers:
@@ -1456,19 +1460,34 @@ class Scene(ViewerState):
 
         if hasattr(shaders, shader):
             shader = getattr(shaders, shader)
+            self.stdio.info(shader)
         elif hasattr(colormaps, shader):
             shader = shaders.colormap(shader)
+            self.stdio.info(shader)
         elif 'main()' not in shader:
             # assume it's a path
-            shader = shaders.lut(shader)
+            lut = load_fs_lut(shader)
+            shader = shaders.lut(lut)
+            f2u8 = lambda x: int(round(x*255))  # noqa: E731
+            lut = {
+                str(key): f'#{f2u8(r):02x}{f2u8(g):02x}{f2u8(b):02x}'
+                for key, (_, (r, g, b, _)) in lut.items()
+            }
+
         for layer in self.layers:
             if layer_names and layer.name not in layer_names:
                 continue
             layer = layer.layer
+            if layer_types and layer.type not in layer_types:
+                continue
             if hasattr(layer, "shader"):
                 layer.shader = shader
+            elif layer.type == "segmentation":
+                layer.segment_colors = lut
+                for key in lut:
+                    if key not in layer.starred_segments:
+                        layer.starred_segments[key] = True
 
-        self.stdio.info(shader)
         return shader
 
     @autolog

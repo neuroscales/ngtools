@@ -105,7 +105,7 @@ class LayerFactory(type):
         uri_as_str = _get_url(source)
         if uri_as_str:
             if uri_as_str == "local://annotations":
-                return LocalAnnotationLayer(json_data, *args, **kwargs)
+                return AnnotationLayer(json_data, *args, **kwargs)
 
             layer_type = parse_protocols(uri_as_str)[0]
             LOG.debug(f"Layer - hint: {layer_type}")
