@@ -22,7 +22,7 @@ implements:
 
   See: [**Local neuroglancer in python**](#Local-neuroglancer-in-python)
 
-- a **shell console** (`ngtools --help`) for the local app with thorough
+- a **shell console** (`nglocal --help`) for the local app with thorough
   documentation of each command, auto-completion and history.
 
   See: [**Local neuroglancer in the shell**](#Local-neuroglancer-in-the-shell)
