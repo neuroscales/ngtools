@@ -80,7 +80,7 @@ def Wraps(kls: type) -> type:
                     if has_default:
                         value = getattr(self, f"__default_{name}__")
                         setattr(self, name, value)
-                        value = getattr(self._wrapper, name)
+                        value = getattr(self._wrapped, name)
                 return value
 
             def __getattribute__(self, name: str) -> object:
