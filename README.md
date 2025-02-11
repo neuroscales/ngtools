@@ -2,31 +2,49 @@
 
 Advanced tools for neuroglancer (conversion, tracts visualization, ...)
 
-# Installation
+## Installation
 
 ```shell
 pip install git+https://github.com/neuroscales/ngtools
 ```
 
-## Local neuroglancer app
+## Description
 
-This package implements an application built around a local
-[neuroglancer](https://github.com/google/neuroglancer) instance.
-It comes with a set of shell-like commands that simplifies loading and
-manipulating layers, with a strong focus on neuroimaging.
+`ngtools` contains a set of user-friendly utilties to accompany
+[`neuroglancer`](https://github.com/google/neuroglancer) -- an
+in-browser viewer for peta-scale volumetric data. Specifically, it
+implements:
 
-In particular, it knows how to display data in neuroimaging cardinal axes
-(Right/Anterior/Superior and their permutations). To this end, it
-leverages the proposed
-[NIfTI-Zarr specification](https://github.com/neuroscales/nifti-zarr),
-which embeds a NIfTI header in OME-Zarr files.
+- a **local app** (`from ngtools.local.viewer import LocalNeuroglancer`)
+  that runs a local `neuroglancer` instance, allows local files to be
+  visualized, and implements additional file formats
+  (`.trk`, `.tck`, `.tiff`, `'.mgh`).
+  See: [**Local neuroglancer in python**](#Local-neuroglancer-in-python)
 
-### Getting started
+- a **shell console** (`ngtools --help`) for the local app with thorough
+  documentation of each command, auto-completion and history.
+  See: [**Local neuroglancer in the shell**](#Local-neuroglancer-in-the-shell)
+
+- a **user-friendly python API** (`from ngtools.scene import Scene`) that
+  simplifies the creation of neuroglancer scenes (and is used under
+  the hood by `LocalNeuroglancer`).
+  See: [**Scene building without running an instance**](#Scene-building-without-running-an-instance)
+
+- **smart wrappers** (`ngtools.layers`, `ngtools.datasources`) around
+  the neuroglancer python API, that can compute quantities that can
+  normally only be accessed in the neuroglancer frontend (default
+  transforms, voxel data, etc).
+
+- **utilities** (`ngtools.shaders`, `ngtools.transforms`, `ngtools.spaces`)
+  that greatly simplifies manipulating some of neuroglancer's most
+  intricate features.
+
+## Local neuroglancer in the shell
 
 To run the app, simply type
 
 ```shell
-neuroglancer
+nglocal
 ```
 
 in your shell. It will open a neuroglancer window, and a shell-like
@@ -48,20 +66,34 @@ Type <b>Ctrl+C</b> to interrupt the current command and <b>Ctrl+D</b> to exit th
 
 Let's start with the list of commands
 <pre><code><b>[1] <ins>help</ins></b>
-usage: [-h] {help,load,unload,transform,shader,state,display,exit,quit} ...
+usage: {help,load,unload,rename,...} ... [-h]
 
 positional arguments:
-  {help,load,unload,transform,shader,state,display,exit,quit}
+  {help,load,unload,rename,...}
     help                Display help
     load                Load a file
     unload              Unload a file
+    rename              Rename a file
+    world_axes          Rename native axes
+    rename_axes         Rename axes
+    space               Cross-section orientation
     transform           Apply a transform
+    channel_mode        Change the way a dimension is interpreted
     shader              Apply a shader
-    state               Return the viewer's state
     display             Dimensions to display
+    layout              Layout
+    state               Return the viewer's state
+    move (position)     Move cursor
+    zoom                Zoom
+    unzoom              Zoom
+    zorder              Reorder layers
+    cd                  Change directory
+    ls                  List files
+    ll                  List files (long form)
+    pwd                 Path to working directory
     exit (quit)         Exit neuroglancer
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
 </code></pre>
 
@@ -77,10 +109,6 @@ change their colormaps
 </code></pre>
 and apply an affine transform
 <pre><code><b>[8] <ins>transform</ins></b> /path/to/affine.lta <b>--layer</b> local_file.nii.gz
-</code></pre>
-Finally, we use an LIP frame (left, inferior, posterior)  to display
-the data
-<pre><code><b>[9] <ins>display</ins></b> LIP
 </code></pre>
 
 Note that even though we are using our own neuroglancer instance,
@@ -135,3 +163,90 @@ same scene. The state can be obtained in JSON form, or in URL form
 <pre><code><b>[11] <ins>state</ins></b> --url
 https://neuroglancer-demo.appspot.com/#!%7B%22dimensions%22%3A%20%7B%22x%22%3A%20%5B0.001%2C%20%22m%22%5D%2C%20%22y%22%3A%20%5B0.001%2C%20%22m%22%5D%2C%20%22z%22%3A%20%5B0.001%2C%20%22m%22%5D%7D%2C%20%22displayDimensions%22%3A%20%5B%22x%22%2C%20%22y%22%2C%20%22z%22%5D%2C%20%22position%22%3A%20%5B2.5%2C%201.5%2C%2022.5%5D%2C%20%22crossSectionScale%22%3A%201%2C%20%22projectionScale%22%3A%20256%2C%20%22layers%22%3A%20%5B%7B%22type%22%3A%20%22image%22%2C%20%22source%22%3A%20%22nifti%3A//http%3A//127.0.0.1%3A9123/root%3A///Users/yb947/Dropbox/data/niizarr/sub-control01_T1w.nii.gz%22%2C%20%22tab%22%3A%20%22source%22%2C%20%22shaderControls%22%3A%20%7B%22normalized%22%3A%20%7B%22range%22%3A%20%5B0%2C%201140%5D%7D%7D%2C%20%22name%22%3A%20%22sub-control01_T1w.nii.gz%22%7D%5D%2C%20%22layout%22%3A%20%224panel%22%7D
 </code></pre>
+
+## Local neuroglancer in python
+
+The example above can also be run entirely from python.
+
+Let us first instantiate a local viewer and open it in the browser:
+
+```python
+from ngtools.local.viewer import LocalNeuroglancer
+import webbrowser
+
+viewer = LocalNeuroglancer()
+print('fileserver:  ', viewer.get_fileserver_url())
+print('neuroglancer:', neuroglancer.get_viewer_url())
+
+webbrowser.open(viewer.get_viewer_url())
+```
+
+We may then apply the same set of commands as before:
+
+```python
+viewer.load("/path/to/local_file.nii.gz")
+viewer.load("tiff:///path/to/file_without_extension")
+viewer.load({"my_image": "zarr://https://url.to/remote/zarr_asset"})
+viewer.shader("blackred", layer="local_file.nii.gz")
+viewer.shader("blackgreen", layer="file_without_extension")
+viewer.shader("blackblue", layer="my_image")
+viewer.transform("/path/to/affine.lta", layer="local_file.nii.gz")
+```
+
+Note that the viewer gets refreshed after each command is called.
+Alternatively, one may group such commands so that they are
+applied to the viewer in a single step:
+
+```python
+with viewer.scene() as scene:
+    scene.load("/path/to/local_file.nii.gz")
+    scene.load("tiff:///path/to/file_without_extension")
+    scene.load({"my_image": "zarr://https://url.to/remote/zarr_asset"})
+    scene.shader("blackred", layer="local_file.nii.gz")
+    scene.shader("blackgreen", layer="file_without_extension")
+    scene.shader("blackblue", layer="my_image")
+    scene.transform("/path/to/affine.lta", layer="local_file.nii.gz")
+```
+
+While these two procedures (through the viewer or through the scene)
+should in most cases yield equivalent results, it is not assured, as
+the neuroglancer instance may discard some of the requested changes, or
+add changes of its own in-between calls.
+
+If the scene is compatible with a remote instance of neuroglancer
+(_i.e._, it does not contain local data, and does not use ngtools
+extended features such as new file formats), a url to a remote
+neuroglancer scene can be generated:
+
+```python
+webbrowser.open(viewer.state(url=True))
+```
+
+Or, the JSON state can be printed and pasted into a neuroglancer window:
+
+```python
+viewer.state(print=True)
+```
+
+## Scene building without running an instance
+
+Alternatively, a scene state may be built from scratch without ever
+running a neuroglancer instance, using the `Scene` class. The syntax is
+very similar to that of the `LocalNeuroglancer` class:
+
+```python
+from ngtools.scene import Scene
+import webbrowser
+
+scene = Scene()
+
+scene.load("/path/to/local_file.nii.gz")
+scene.load("tiff:///path/to/file_without_extension")
+scene.load({"my_image": "zarr://https://url.to/remote/zarr_asset"})
+scene.shader("blackred", layer="local_file.nii.gz")
+scene.shader("blackgreen", layer="file_without_extension")
+scene.shader("blackblue", layer="my_image")
+scene.transform("/path/to/affine.lta", layer="local_file.nii.gz")
+
+webbrowser.open(scene.state(url=True))
+```
