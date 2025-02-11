@@ -290,13 +290,6 @@ class LocalNeuroglancer(OSMixin):
     def await_input(self) -> None:
         """Launch shell-like interface."""
         return self.console.await_input()
-        # try:
-        #     return self.console.await_input()
-        # except SystemExit:
-        #     # exit gracefully (cleanup the fileserver process, etc)
-        #     if self.fileserver:
-        #         self.fileserver.stop()
-        #     raise
 
     def _make_console(self, debug: bool = False) -> Console:
         mainparser = Console('', debug=debug, max_choices=4)

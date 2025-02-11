@@ -133,6 +133,9 @@ class LocalFileServer:
         self.thread.join()
         atexit.unregister(self.stop)
 
+    def __del__(self) -> None:
+        self.stop()
+
     @staticmethod
     def _file_not_found(dest: str, start_response: callable) -> list:
         """Response when file is not found."""
