@@ -47,8 +47,9 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["ngtools"]
+# Comment -> use flat-layout auto discovery instead
+# [tool.setuptools]
+# packages = ["ngtools"]
 
 [tool.versioningit]
 default-version = "0+unknown"
