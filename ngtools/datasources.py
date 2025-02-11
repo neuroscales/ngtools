@@ -99,32 +99,30 @@ class LayerDataSources(Wraps(ng.LayerDataSources)):
     """List of data sources."""
 
     _DataSourceLike = (
-        ng.LayerDataSource |
         str |
         ng.local_volume.LocalVolume |
-        ng.skeleton.SkeletonSource
+        ng.skeleton.SkeletonSource |
+        ng.LayerDataSource
     )
     _DataSourcesLike = (
-        ng.LayerDataSources |
         _DataSourceLike |
-        list[_DataSourceLike] |
+        list[_DataSourceLike | dict | None] |
+        ng.LayerDataSources |
         dict |
-        list[dict]
+        None
     )
 
-    def __init__(
-        self, json_data: _DataSourcesLike | None = None, **kwargs
-    ) -> None:
-        """
-        Parameters
-        ----------
-        json_data : [list of] dict | [list of] (LayerDataSource | str)
-        """
-        if json_data:
-            list_like = (list, tuple, ng.LayerDataSources)
-            if not isinstance(json_data, list_like):
-                json_data = [json_data]
-        super().__init__(json_data, **kwargs)
+    # def __init__(self, arg: _DataSourcesLike = None, **kwargs) -> None:
+    #     """
+    #     Parameters
+    #     ----------
+    #     arg : [list of] dict | [list of] (LayerDataSource | str) | None
+    #     """
+    #     if arg:
+    #         list_like = (list, tuple, ng.LayerDataSources)
+    #         if not isinstance(arg, list_like):
+    #             arg = [arg]
+    #     super().__init__(arg, **kwargs)
 
     @functools.wraps(ng.LayerDataSources.__iter__)
     def __iter__(self) -> Iterator[ng.LayerDataSource]:
@@ -143,86 +141,89 @@ class LayerDataSources(Wraps(ng.LayerDataSources)):
 class _LayerDataSourceFactory(type):
     """Factory for LayerDataSource objects."""
 
+    _LocalSource = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
     _DataSourceLike = (
-        ng.LayerDataSource |
-        dict |
         str |
         ng.local_volume.LocalVolume |
-        ng.skeleton.SkeletonSource
+        ng.skeleton.SkeletonSource |
+        ng.LayerDataSource |
+        dict |
+        None
     )
 
     def __call__(
         cls,
-        json_data: _DataSourceLike | None = None,
+        arg: _DataSourceLike = None,
         *args,
         **kwargs
     ) -> "LayerDataSource":
-        # # If (single) input already a LayerDataSource, return it as is.
-        # #   LayerDataSource(inp: LayerDataSource) -> LayerDataSource
-        # if not args and not kwargs:
-        #     if isinstance(json_data, cls) and cls is not LayerDataSource:
-        #         return json_data
-
         # Only use the factory if it is not called from a subclass
         if cls is not LayerDataSource:
-            obj = super().__call__(json_data, *args, **kwargs)
+            obj = super().__call__(arg, *args, **kwargs)
             return obj
 
-        # Convert to JSON to avoid conflicting ng/ngtools types and
-        # ensure that we keep all information.
-        # It does mean that we keep re-building the same DataSourceInfo
-        # objects (and therefore download header bytes), which is a bit
-        # slow. But I am not sure how to avoid that while inheriting
-        # ng types.
-        if hasattr(json_data, "to_json"):
-            really_json_data = json_data.to_json()
-        else:
-            really_json_data = json_data
-
-        # Use  ng.LayerDataSource to get url
-        #   (deals with json_data, keywords, local volumes, etc.)
-        url = ng.LayerDataSource(really_json_data, *args, **kwargs).url
+        # Get url
+        if kwargs.get("url", ""):
+            url = kwargs["url"]
+            if isinstance(url, (str, PathLike)):
+                url = kwargs["url"] = str(url)
+        elif isinstance(arg, (str, PathLike)):
+            url = arg = str(arg)
+        elif hasattr(arg, "url"):
+            url = arg.url
+        elif isinstance(arg, dict) and "url" in arg:
+            url = arg["url"]
+        elif not isinstance(arg, cls._LocalSource):
+            raise ValueError("Missing data source url")
 
         # If local object -> delegate
         if isinstance(url, ng.LocalVolume):
-            return LocalVolumeDataSource(json_data, *args, **kwargs)
+            return LocalVolumeDataSource(arg, *args, **kwargs)
         if isinstance(url, ng.skeleton.SkeletonSource):
-            return LocalSkeletonDataSource(json_data, *args, **kwargs)
+            return LocalSkeletonDataSource(arg, *args, **kwargs)
 
+        # If python:// url -> local object, but retrieved from the viewer
+        # we have no way of retrieving the original url/object sadly.
+        if url.startswith("python://"):
+            # FIXME? Can we find the object reference from the uid?
+            return LocalDataSource(arg, *args, **kwargs)
+
+        # If local:// url -> local annotations
         if url == "local://annotations":
-            return LocalAnnotationDataSource(json_data, *args, **kwargs)
+            return LocalAnnotationDataSource(arg, *args, **kwargs)
 
         # If format protocol provided, use it
         parsed_url = parse_protocols(url)
         if parsed_url.format in _DATASOURCE_REGISTRY:
             format = parsed_url.format
             LOG.debug(f"LayerDataSource - use format hint: {format}")
-            return _DATASOURCE_REGISTRY[format](json_data, *args, **kwargs)
+            return _DATASOURCE_REGISTRY[format](arg, *args, **kwargs)
 
         # Otherwise, check for extensions
         for format, kls in _DATASOURCE_REGISTRY.items():
             if parsed_url.url.endswith((format, format+".gz", format+".bz2")):
                 LOG.debug(f"LayerDataSource - found extension: {format}")
                 try:
-                    obj = kls(json_data, *args, **kwargs)
+                    obj = kls(arg, *args, **kwargs)
                     LOG.debug(f"LayerDataSource - {format} (success)")
                     return obj
                 except Exception:
                     continue
 
-        # Otherwise, try all
-        for format, kls in _DATASOURCE_REGISTRY.items():
-            LOG.debug(f"LayerDataSource - try format: {format}")
-            try:
-                obj = kls(json_data, *args, **kwargs)
-                LOG.debug(f"LayerDataSource - {format} (success)")
-                return obj
-            except Exception:
-                continue
+        if False:  # Do not use for now -- need to implement sniffers
+            # Otherwise, try all
+            for format, kls in _DATASOURCE_REGISTRY.items():
+                LOG.debug(f"LayerDataSource - try format: {format}")
+                try:
+                    obj = kls(arg, *args, **kwargs)
+                    LOG.debug(f"LayerDataSource - {format} (success)")
+                    return obj
+                except Exception:
+                    continue
 
         # Otherwise. build a simple source
         LOG.debug("LayerDataSource - Fallback to simple LayerDataSource")
-        return super().__call__(json_data, *args, **kwargs)
+        return super().__call__(arg, *args, **kwargs)
 
 
 class DataSourceInfo:
@@ -1279,37 +1280,57 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
 
 
 class _ZarrDataSourceFactory(_LayerDataSourceFactory):
-    def __call__(cls, *args, **kwargs) -> "ZarrDataSource":
-        # If (single) input already a LayerDataSource, return it as is.
-        #   LayerDataSource(inp: LayerDataSource) -> LayerDataSource
-        if len(args) == 1 and not kwargs:
-            if isinstance(args[0], cls) and cls is not ZarrDataSource:
-                LOG.debug(f"ZarrDataSource - return {type(args[0].__name__)}")
-                return args[0]
-        # only use the factory if it is not called from a subclass
+    _DataSourceLike = _LayerDataSourceFactory._DataSourceLike
+
+    def __call__(
+            cls, arg: _DataSourceLike = None, *args, **kwargs
+    ) -> "ZarrDataSource":
+        # Only use the factory if it is not called from a subclass
         if cls is not ZarrDataSource:
-            LOG.debug("ZarrDataSource - defer to super")
-            return super().__call__(*args, **kwargs)
-        url = ng.LayerDataSource(*args, **kwargs).url
-        format = parse_protocols(url)[1]
+            obj = super().__call__(arg, *args, **kwargs)
+            return obj
+
+        # Get url
+        if kwargs.get("url", ""):
+            url = kwargs["url"]
+            if isinstance(url, (str, PathLike)):
+                url = kwargs["url"] = str(url)
+        elif isinstance(arg, (str, PathLike)):
+            url = arg = str(arg)
+        elif hasattr(arg, "url"):
+            url = arg.url
+        elif isinstance(arg, dict) and "url" in arg:
+            url = arg["url"]
+        elif isinstance(arg, cls._LocalSource):
+            raise TypeError(f"Cannot convert {type(arg)} to ZarrDataSource")
+        else:
+            raise ValueError("Missing data source url")
+
+        format = parse_protocols(url).format
         LOG.debug(f"ZarrDataSource - hint: {format}")
+
         if format == "zarr2":
             LOG.debug("ZarrDataSource -> Zarr2DataSource")
-            return Zarr2DataSource(*args, **kwargs)
+            return Zarr2DataSource(arg, *args, **kwargs)
+
         if format == "zarr3":
             LOG.debug("ZarrDataSource -> Zarr3DataSource")
-            return Zarr3DataSource(*args, **kwargs)
+            return Zarr3DataSource(arg, *args, **kwargs)
+
         LOG.debug("ZarrDataSource - guess version...")
         version = cls.guess_version(url)
         LOG.debug(f"ZarrDataSource - guess version: {version}")
+
         if version == 2:
             LOG.debug("ZarrDataSource -> Zarr2DataSource")
-            return Zarr2DataSource(*args, **kwargs)
+            return Zarr2DataSource(arg, *args, **kwargs)
+
         elif version == 3:
             LOG.debug("ZarrDataSource -> Zarr3DataSource")
-            return Zarr3DataSource(*args, **kwargs)
+            return Zarr3DataSource(arg, *args, **kwargs)
+
         LOG.debug("ZarrDataSource - fallback to super")
-        return super().__call__(*args, **kwargs)
+        return super().__call__(arg, *args, **kwargs)
 
 
 @datasource(["zarr", "zarr2", "zarr3"])

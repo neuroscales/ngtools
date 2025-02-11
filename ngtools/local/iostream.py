@@ -53,9 +53,9 @@ class StandardIO:
         if self.level <= level:
             if isinstance(file, str):
                 with open(file, "a") as f:
-                    print(format(msg), file=f, flush=flush)
+                    print(format(msg), file=f, flush=flush, end="")
             else:
-                print(format(msg), file=file, flush=flush)
+                print(format(msg), file=file, flush=flush, end="")
         return msg
 
     def debug(self, *args, **kwargs) -> str:

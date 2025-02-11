@@ -81,11 +81,11 @@ def main(args: list[str] | None = None) -> None:
     neuroglancer.console.stdio.print(logo)
 
     if neuroglancer.fileserver:
-        print('fileserver:  ', f'http://{fileserver.ip}:{fileserver.port}/')
-    print('neuroglancer:', neuroglancer.viewer.get_viewer_url())
+        print('fileserver:  ', fileserver.get_url())
+    print('neuroglancer:', neuroglancer.get_viewer_url())
 
     if not args.no_window:
-        webbrowser.open(neuroglancer.viewer.get_viewer_url())
+        webbrowser.open(neuroglancer.get_viewer_url())
 
     # load files
     for filename in args.filenames or []:

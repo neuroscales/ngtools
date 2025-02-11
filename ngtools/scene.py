@@ -25,13 +25,13 @@ import ngtools.local.tracts  # noqa: F401
 # internals
 import ngtools.spaces as S
 import ngtools.transforms as T
-from ngtools.datasources import LayerDataSource, LayerDataSources
+from ngtools.datasources import LayerDataSource
 from ngtools.layers import Layer, Layers
 from ngtools.local.iostream import StandardIO
 from ngtools.opener import exists, filesystem, open, parse_protocols
 from ngtools.shaders import colormaps, load_fs_lut, shaders
 from ngtools.units import convert_unit, split_unit
-from ngtools.utils import DEFAULT_URL, Wraps
+from ngtools.utils import NG_URLS, Wraps
 
 # monkey-patch Layer state to expose channelDimensions
 ng.Layer.channel_dimensions = ng.Layer.channelDimensions = wrapped_property(
@@ -192,8 +192,9 @@ class ViewerState(Wraps(ng.ViewerState)):
         for named_layer in self.layers:
             named_layer: ng.ManagedLayer
             layer = named_layer.layer
-            source = LayerDataSources(layer.source)
-            transform = source[0].transform
+            if len(getattr(layer, "source", [])) == 0:
+                continue
+            transform = layer.source[0].transform
             if transform is None or transform.output_dimensions is None:
                 continue
             odims = transform.output_dimensions.to_json()
@@ -298,10 +299,10 @@ class ViewerState(Wraps(ng.ViewerState)):
     def __set_cross_section_orientation__(self, value: ArrayLike) -> ArrayLike:
         if value is None:
             value = self.__default_cross_section_orientation__
-        value = np.ndarray(value).tolist()
+        value = np.asarray(value).tolist()
         value = value + max(0, 4 - len(value)) * [0]
         value = value[:4]
-        value = np.ndarray(value)
+        value = np.asarray(value, dtype="double")
         value /= (value**2).sum()**0.5
         return value
 
@@ -375,13 +376,13 @@ class ViewerState(Wraps(ng.ViewerState)):
         of 0.5 mm.
         """
         dimensions = self.dimensions.to_json()
-        pos = [0.5] * len(dimensions)
+        pos = [0.0] * len(dimensions)
         for layer in self.layers:
             layer: ng.ManagedLayer
             if not layer.visible:
                 continue
             layer = layer.layer
-            if getattr(layer, "source", []) == 0:
+            if len(getattr(layer, "source", [])) == 0:
                 continue
             source = layer.source[0]
             if not hasattr(source, "output_center"):
@@ -412,7 +413,7 @@ class ViewerState(Wraps(ng.ViewerState)):
         if value is None:
             value = self.__default_position__
         value = list(value)
-        value += [0.5] * max(0, len(self.dimensions.names) - len(value))
+        value += [0.0] * max(0, len(self.dimensions.names) - len(value))
         return value
 
 
@@ -489,6 +490,7 @@ class Scene(ViewerState):
         self,
         uri: URILike | list[URILike] | dict[str, URILike] = None,
         transform: ArrayLike | list[float] | URILike | None = None,
+        inv: bool = False,
         **kwargs
     ) -> None:
         """
@@ -502,6 +504,8 @@ class Scene(ViewerState):
             If a dictionary, maps layer names to file names.
         transform : array_like | list[float] | str | None
             Affine transform to apply to the loaded volume.
+        inv : bool
+            Invert the transform before applying it.
 
         Other Parameters
         ----------------
@@ -550,13 +554,14 @@ class Scene(ViewerState):
             onames.append(name)
             layer = Layer(uri, **kwargs)
             self.layers.append(name=name, layer=layer)
+            self.stdio.info(f"Loaded: {self.layers[name].to_json()}")
 
         # rename axes according to current naming scheme
         self.rename_axes(self.world_axes(print=False), layer=onames)
 
         # apply transform
         if transform is not None:
-            self.transform(transform, layer=onames)
+            self.transform(transform, layer=onames, inv=inv)
 
         if nb_layers_0 == 0:
             # trigger default values
@@ -793,9 +798,10 @@ class Scene(ViewerState):
                 continue
             if named_layer.name.startswith("__"):
                 continue
+            if len(getattr(layer, "source", [])) == 0:
+                continue
             layer = named_layer.layer
-            source = layer.source[0]
-            transform = source.transform
+            transform = layer.source[0].transform
             transform.output_dimensions = ng.CoordinateSpace({
                 axes.get(name, name): scl
                 for name, scl in transform.output_dimensions.to_json().items()
@@ -812,7 +818,7 @@ class Scene(ViewerState):
         ]
 
         ndim = len(self.dimensions.names)
-        position = list(position) + [0.5] * max(0, len(position) - ndim)
+        position = list(position) + [0.0] * max(0, len(position) - ndim)
         position = position[:ndim]
         self.position = position
 
@@ -861,9 +867,11 @@ class Scene(ViewerState):
         if layer:
             if layer not in self.layers:
                 raise ValueError("No layer named:", layer)
+            if len(getattr(self.layers[layer].source, [])) == 0:
+                raise ValueError(f'Layer "{layer} does not have a source')
 
             #   1. Get voxel2world matrix
-            source = LayerDataSource(self.layers[layer].source[0])
+            source = self.layers[layer].source[0]
             transform = T.subtransform(source.transform, 'm')
             transform = T.ensure_same_scale(transform)
             matrix = T.get_matrix(transform, square=True)[:-1, :-1]
@@ -1191,6 +1199,8 @@ class Scene(ViewerState):
         for layer in self.layers:
             layer: ng.ManagedLayer
             if layers and layer.name not in layers:
+                continue
+            if len(getattr(self.layer, "source", [])) == 0:
                 continue
             layer: ng.Layer = layer.layer
             for dimension in dimensions:
@@ -1684,6 +1694,7 @@ class Scene(ViewerState):
         load: str | None = None,
         save: str | None = None,
         url: bool = False,
+        instance: str | None = None,
         print: bool = True,
     ) -> dict:
         """
@@ -1728,8 +1739,18 @@ class Scene(ViewerState):
 
         if print:
             if url:
+                # guess instance
+                if instance is None:
+                    instance = "ng"
+                    for layer in self.layers:
+                        for source in getattr(layer, "source", []):
+                            url = getattr(source, "url", "")
+                            if isinstance(url, str) and "lincbrain.org" in url:
+                                instance = "linc"
+                                break
+
                 state = urlquote(json.dumps(state))
-                state = f'{DEFAULT_URL}#!' + state
+                state = f'{NG_URLS[instance]}#!' + state
                 self.stdio.info(state)
             else:
                 self.stdio.info(json.dumps(state, indent=4))

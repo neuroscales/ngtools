@@ -60,4 +60,5 @@ PROTOCOLS = [
     "ftp",           # FTP
     "dandi",         # DANDI/LINC
     "local",         # protocol for LocalAnnotationLayer sources
+    "python",        # protocol for LocalVolume/SkeletonSource
 ]

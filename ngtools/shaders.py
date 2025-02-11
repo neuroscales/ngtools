@@ -382,7 +382,6 @@ class shaders:
     # or `group` aatribute. It should selectively show or hide streamlines.
     trkorient = colormaps.orientation + '\n' + dedent(
         """
-        #uicontrol uint nbtracts slider
         #uicontrol bool orient_color checkbox(default=true)
         void main() {
             if (orient_color)

@@ -2,11 +2,13 @@
 # stdlib
 import argparse
 import atexit
+import contextlib
 import datetime
 import os.path
 import stat
 import textwrap
-from functools import partial
+from functools import partial, wraps
+from typing import Generator
 
 # externals
 import neuroglancer as ng
@@ -20,6 +22,7 @@ from ngtools.local.fileserver import LocalFileServer, find_available_port
 from ngtools.local.termcolors import bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
+from ngtools.utils import NG_URLS
 
 # unix-specific imports
 try:
@@ -42,6 +45,7 @@ def action(needstate: bool = False) -> callable:
 
     def decorator(func: callable) -> callable:
 
+        @wraps(func)
         def wrapper(
             self: "LocalNeuroglancer", *args: tuple, **kwargs: dict
         ) -> callable:
@@ -74,6 +78,7 @@ def state_action(name: str) -> callable:
     """Generate a state action that wraps a scene action."""
 
     @action(needstate=True)
+    @wraps(getattr(Scene, name))
     def func(
         self: "LocalNeuroglancer", *args, state: ng.ViewerState, **kwargs
     ) -> object | None:
@@ -212,7 +217,7 @@ class LocalNeuroglancer(OSMixin):
             fileserver is not False and
             not isinstance(fileserver, LocalFileServer)
         ):
-            portf = fileserver if isinstance(fileserver, int) else 0
+            portf = 0 if fileserver is True else int(fileserver)
             fileserver = LocalFileServer(ip=ip, port=portf)
         self.fileserver = fileserver
         if self.fileserver:
@@ -235,6 +240,33 @@ class LocalNeuroglancer(OSMixin):
             self.fileserver.stop()
         del self.fileserver
         atexit.unregister(self.__del__)
+
+    def txn(self) -> Generator[ng.ViewerState, None, None]:
+        """Wrap `self.viewer.txn`."""
+        return self.viewer.txn()
+
+    @contextlib.contextmanager
+    def scene(self) -> Generator[Scene, None, None]:
+        """
+        Context manager that returns the underlying state as a `Scene`.
+        It writes all changes to the scene back into the state on return.
+        """
+        with self.viewer.txn() as state:
+            scene = Scene(state.to_json())
+            yield scene
+            for key in scene.to_json().keys():
+                val = getattr(scene, key)
+                setattr(state, key, val)
+
+    def get_viewer_url(self) -> str:
+        """URL of the viewer."""
+        return self.viewer.get_viewer_url()
+
+    def get_fileserver_url(self) -> str | None:
+        """URL of the fileserver."""
+        if self.fileserver:
+            return self.fileserver.get_url()
+        return None
 
     # ==================================================================
     #
@@ -443,6 +475,9 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             '--url', action='store_true', default=False,
             help='Load (or print) the url form of the state')
+        _.add_argument(
+            '--instance', '-i', choices=list(NG_URLS.keys()),
+            help='Link to this neuroglancer instance')
 
         # --------------------------------------------------------------
         #   POSITION
@@ -538,7 +573,6 @@ class LocalNeuroglancer(OSMixin):
     rename_axes = state_action("rename_axes")
     space = state_action("space")
     display = state_action("display")
-    redisplay = state_action("redisplay")
     transform = state_action("transform")
     channel_mode = state_action("channel_mode")
     move = state_action("move")

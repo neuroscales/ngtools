@@ -8,16 +8,15 @@ from types import GeneratorType as generator
 from typing import Literal
 
 # externals
-import fsspec
+import neuroglancer as ng
+import neuroglancer.skeleton as ngsk
 import numpy as np
-from neuroglancer import CoordinateSpace
-from neuroglancer.skeleton import Skeleton, SkeletonSource, VertexAttributeInfo
 from nibabel.streamlines.tck import TckFile
 from nibabel.streamlines.trk import TrkFile
 
 # internals
 from ngtools.datasources import LocalSkeletonDataSource, datasource
-from ngtools.opener import parse_protocols, stringify_path
+from ngtools.opener import open, parse_protocols, stringify_path
 
 
 @datasource(["trk", "tck", "tracts"])
@@ -29,11 +28,25 @@ class TractDataSource(LocalSkeletonDataSource):
         super().__init__(*args, **kwargs)
 
     def _format_specific_init(self) -> None:
-        self._url = self.url
-        self.url = TractSkeleton(self._url, max_tracts=self.nb_tracts)
+        if not isinstance(self.url, ngsk.SkeletonSource):
+            self._url = self.url
+            self.url = TractSkeleton(self._url, max_tracts=self.nb_tracts)
+            self.transform = self.transform
+
+    @property
+    def _transform(self) -> ng.CoordinateSpaceTransform:
+        rank = len(self.url.dimensions.names)
+        return ng.CoordinateSpaceTransform(
+            input_dimensions=self.url.dimensions,
+            output_dimensions=self.url.dimensions,
+            matrix=np.eye(rank+1)[:-1],
+        )
 
 
-class TractSkeleton(SkeletonSource):
+_ONCE = []
+
+
+class TractSkeleton(ngsk.SkeletonSource):
     """
     Local tractography source loaded into a neuroglancer skeleton.
 
@@ -113,12 +126,12 @@ class TractSkeleton(SkeletonSource):
         self.displayed_orientations = None
 
         self._ensure_loaded(lazy=True)
-        super().__init__(CoordinateSpace(
+        super().__init__(ng.CoordinateSpace(
             names=["x", "y", "z"],
             units="mm",
             scales=[1, 1, 1],
         ), **kwargs)
-        self.vertex_attributes["orientation"] = VertexAttributeInfo(
+        self.vertex_attributes["orientation"] = ngsk.VertexAttributeInfo(
             data_type=np.float32,
             num_components=3,
         )
@@ -163,7 +176,7 @@ class TractSkeleton(SkeletonSource):
                 [f'{format}: {errors[format]}' for format in self.format]))
 
         if isinstance(self.fileobj, (str, PathLike)):
-            with fsspec.open(self.fileobj) as f:
+            with open(self.fileobj) as f:
                 load(f)
         else:
             load(f)
@@ -242,7 +255,7 @@ class TractSkeleton(SkeletonSource):
         orient /= length
         return orient
 
-    def get_skeleton(self, i: int = 1) -> Skeleton:
+    def get_skeleton(self, i: int = 1) -> ngsk.Skeleton:
         """
         Neuroglancer Python API.
 
@@ -259,7 +272,7 @@ class TractSkeleton(SkeletonSource):
         #     raise ValueError('Unknown segment id')
         self._filter()
         vertices, edges, orients = self._make_skeleton()
-        return Skeleton(vertices, edges, dict(orientation=orients))
+        return ngsk.Skeleton(vertices, edges, dict(orientation=orients))
 
     # ------------------------------------------------------------------
     #   Converter to Neuroglancer precomputed skeleton format

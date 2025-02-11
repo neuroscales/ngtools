@@ -10,13 +10,12 @@ import numpy as np
 
 # internals
 from ngtools.datasources import (
-    LayerDataSource,
     LayerDataSources,
     MeshDataSource,
     SkeletonDataSource,
     VolumeDataSource,
 )
-from ngtools.local.tracts import TractDataSource
+from ngtools.local.tracts import TractDataSource, TractSkeleton
 from ngtools.opener import parse_protocols
 from ngtools.shaders import shaders
 from ngtools.utils import Wraps
@@ -27,88 +26,138 @@ URILike = str | PathLike
 SourceType = ng.LayerDataSource | ng.LocalVolume | ng.skeleton.SkeletonSource
 
 
-_LayerJSONData = (
-    ng.Layer | dict |
-    ng.LayerDataSources | ng.LayerDataSource | URILike |
-    None
+_LocalType = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
+_LocalLike = ng.local_volume.LocalVolume | ng.skeleton.SkeletonSource
+_DataSourceLike = (
+    str |
+    ng.local_volume.LocalVolume |
+    ng.skeleton.SkeletonSource |
+    ng.LayerDataSource
+)
+_DataSourcesLike = (
+    _DataSourceLike |
+    list[_DataSourceLike | dict | None] |
+    (ng.LayerDataSources | dict | None)
+)
+_LayerLike = ng.Layer | dict | None
+_LayerArg = (
+    _DataSourceLike |
+    list[_DataSourceLike | dict | None] |
+    ng.LayerDataSources |
+    (ng.Layer | dict | None)
 )
 
 
-def _get_url(json_data: _LayerJSONData) -> str:
-    url = None
-    if isinstance(json_data, ng.Layer):
-        json_data = getattr(json_data, "source", None)
-    if isinstance(json_data, dict):
-        json_data = json_data.get("source", json_data)
-    if isinstance(json_data, (str, PathLike)):
-        return str(json_data)
-    if isinstance(json_data, (list, tuple)) and json_data:
-        if isinstance(json_data[0], (str, PathLike)):
-            return str(json_data[0])
-    if json_data:
-        json_data = LayerDataSources(json_data)
-    if json_data:
-        url = json_data[0].url
-    if not isinstance(url, str):
-        url = None
-    return url
+def _get_url(arg: _LayerArg, **kwargs) -> str | _LocalLike | None:
+    if kwargs.get("source", None):
+        return _get_url(kwargs.pop("source"), **kwargs)
+    if kwargs.get("url", None):
+        return _get_url(kwargs.pop("url"), **kwargs)
+    if isinstance(arg, (str, PathLike)):
+        return str(arg)
+    if isinstance(arg, _LocalType):
+        if hasattr(arg, "_url"):
+            return arg._url
+        return arg
+    if hasattr(arg, "source"):
+        return _get_url(arg.source)
+    if hasattr(arg, "url"):
+        return _get_url(arg.url)
+    if isinstance(arg, dict):
+        if arg.get("source", None):
+            return _get_url(arg.get("source", arg))
+        if arg.get("url", None):
+            return _get_url(arg.get("url", arg))
+    if hasattr(arg, "__iter__"):
+        for arg1 in arg:
+            url = _get_url(arg1, **kwargs)
+            if url is not None:
+                return url
+    print("None")
+    return None
+
+
+def _get_source(arg: _LayerArg, **kwargs) -> _DataSourcesLike:
+    if kwargs.get("source", None):
+        return _get_url(kwargs.pop("source"), **kwargs)
+    if isinstance(arg, (str, PathLike)):
+        return str(arg)
+    if isinstance(arg, _LocalType):
+        return arg
+    if hasattr(arg, "source"):
+        return _get_url(arg.source)
+    if hasattr(arg, "url"):
+        return arg
+    if isinstance(arg, dict):
+        if arg.get("source", None):
+            return _get_url(arg.get("source", arg))
+        if "url" in arg:
+            return arg
+    if hasattr(arg, "__iter__"):
+        return arg
+    if isinstance(arg, (ng.LayerDataSource, ng.LayerDataSources)):
+        return arg
+    return None
 
 
 class LayerFactory(type):
     """Metaclass for layers."""
 
-    def __call__(  # noqa: D102
-        cls,
-        json_data: _LayerJSONData = None,
-        *args, **kwargs
-    ) -> "Layer":
-
-        # Special case: pointAnnotation do not have `source`
-        if (
-            isinstance(json_data, ng.PointAnnotationLayer) or
-            kwargs.get("type", "") == "pointAnnotation" or
-            (
-                isinstance(json_data, dict) and
-                json_data.get("type", "") == "pointAnnotation"
-            )
-        ):
-            LOG.debug("Layer - PointAnnotationLayer")
-            return PointAnnotationLayer(json_data, *args, **kwargs)
-
-        # Convert to JSON (slower but more robust)
-        if hasattr(json_data, "to_json"):
-            really_json_data = json_data.to_json()
-        else:
-            really_json_data = json_data
-
-        # Get source
-        if "source" in kwargs:
-            source = kwargs.pop("source")
-        elif hasattr(json_data, "source"):
-            source = json_data.source
-        elif "source" in really_json_data:
-            source = really_json_data.pop("source")
-        else:
-            source = json_data
-            json_data = None
-        kwargs["source"] = source
-        LOG.debug(f"Layer - source: {source}")
+    def __call__(cls, arg: _LayerArg = None, *args, **kwargs) -> "Layer":
+        """
+        Parameters
+        ----------
+        arg : ng.Layer or [list of] (str | dict | None)
+        """
+        arg_json = arg.to_json() if hasattr(arg, "to_json") else arg
+        LOG.debug(f"LayerFactory({cls.__name__}, {arg_json})")
 
         # Only use the factory if it is not called from a subclass
         if cls is not Layer:
-            LOG.debug(f"Layer - defer to {cls.__name__}")
-            return super().__call__(json_data, *args, **kwargs)
+            LOG.debug(f"LayerFactory - defer to {cls.__name__}")
+            return super().__call__(arg, *args, **kwargs)
+
+        # Special case: pointAnnotation do not have `source`
+        if (
+            isinstance(arg, ng.PointAnnotationLayer) or
+            kwargs.get("type", "") == "pointAnnotation" or
+            (
+                isinstance(arg, dict) and
+                arg.get("type", "") == "pointAnnotation"
+            )
+        ):
+            LOG.debug("LayerFactory - PointAnnotationLayer")
+            return PointAnnotationLayer(arg, *args, **kwargs)
+
+        # Check whether the main input is source-like object
+        if not (
+            arg is None or
+            isinstance(arg, ng.Layer) or
+            (isinstance(arg, dict) and "url" not in arg)
+        ):
+            if "source" in kwargs:
+                raise ValueError(
+                    "source-like object found in both positional "
+                    "and keyword arguments."
+                )
+            kwargs["source"] = arg
+            arg = None
+
+        # Switch based on layer protocol
+        url = _get_url(arg, **kwargs)
+        LOG.debug(f"LayerFactory - url: {url}")
 
         GuessedLayer = None
+        if url and isinstance(url, str):
+            if url == "local://annotations":
+                if isinstance(arg, ng.LocalAnnotationLayer):
+                    odim = arg.source[0].transform.output_dimensions
+                    return LocalAnnotationLayer(odim, arg, *args, **kwargs)
+                else:
+                    return AnnotationLayer(arg, *args, **kwargs)
 
-        # switch based on layer protocol
-        uri_as_str = _get_url(source)
-        if uri_as_str:
-            if uri_as_str == "local://annotations":
-                return AnnotationLayer(json_data, *args, **kwargs)
-
-            layer_type = parse_protocols(uri_as_str)[0]
-            LOG.debug(f"Layer - hint: {layer_type}")
+            layer_type = parse_protocols(url).layer
+            LOG.debug(f"LayerFactory - hint: {layer_type}")
             GuessedLayer = {
                 "image": ImageLayer,
                 "volume": ImageLayer,
@@ -121,41 +170,46 @@ class LayerFactory(type):
                 "annotation": AnnotationLayer,
             }.get(layer_type, None)
             if GuessedLayer:
-                return GuessedLayer(json_data, *args, **kwargs)
+                return GuessedLayer(arg, *args, **kwargs)
 
-        # switch based on type keyword
-        if "type" in (really_json_data or {}):
-            layer_type = really_json_data["type"]
-            LOG.debug(f"Layer - json hint: {layer_type}")
-            GuessedLayer = {
-                "image": ImageLayer,
-                "segmentation": SegmentationLayer,
-                "mesh": SingleMeshLayer,
-                "annotation": AnnotationLayer,
-            }.get(layer_type, None)
-            if GuessedLayer:
-                return GuessedLayer(json_data, *args, **kwargs)
+        # Switch based on type keyword
+        if hasattr(arg, "type"):
+            layer_type = arg.type
+        elif isinstance(arg, dict):
+            layer_type = arg.get("type", None)
+        else:
+            layer_type = None
+        LOG.debug(f"LayerFactory - json hint: {layer_type}")
 
-        # switch based on data source type
-        if source:
-            source = LayerDataSources(source)
-            kwargs["source"] = source
-            LOG.debug(f"Layer - source type: {type(source[0]).__name__}")
-            if isinstance(source[0], VolumeDataSource):
-                LOG.debug("Layer - guess ImageLayer")
+        GuessedLayer = {
+            "image": ImageLayer,
+            "segmentation": SegmentationLayer,
+            "mesh": SingleMeshLayer,
+            "annotation": AnnotationLayer,
+        }.get(layer_type, None)
+        if GuessedLayer:
+            return GuessedLayer(arg, *args, **kwargs)
+
+        # Switch based on data source type
+        sources = LayerDataSources(kwargs.get("source", None))
+        for source in sources:
+            LOG.debug(f"LayerFactory - source: {str(type(source))}")
+            if isinstance(source, VolumeDataSource):
+                LOG.debug("LayerFactory - guess ImageLayer")
                 GuessedLayer = ImageLayer
-            if isinstance(source[0], SkeletonDataSource):
-                LOG.debug("Layer - guess SkeletonLayer")
+            elif isinstance(source, SkeletonDataSource):
+                LOG.debug("LayerFactory - guess SkeletonLayer")
                 GuessedLayer = SkeletonLayer
-            if isinstance(source[0], MeshDataSource):
-                LOG.debug("Layer - guess MeshLayer")
+            elif isinstance(source, MeshDataSource):
+                LOG.debug("LayerFactory - guess MeshLayer")
                 GuessedLayer = MeshLayer
             if GuessedLayer:
-                return GuessedLayer(json_data, *args, **kwargs)
+                kwargs["source"] = sources
+                return GuessedLayer(*args, **kwargs)
 
         # Fallback
-        LOG.debug("Layer - fallback to simple Layer")
-        return super().__call__(json_data, *args, **kwargs)
+        LOG.debug("LayerFactory - fallback to simple Layer")
+        return super().__call__(arg, *args, **kwargs)
 
 
 class _SourceMixin:
@@ -349,27 +403,80 @@ class SegmentationLayer(_SourceMixin, Wraps(ng.SegmentationLayer), Layer):
     ...
 
 
-class SkeletonFactory(LayerFactory):
+class SkeletonLayerFactory(LayerFactory):
     """Factory for skeletons."""
 
-    def __call__(self, uri: URILike, *args, **kwargs) -> "Layer":  # noqa: D102
-        if isinstance(uri, (str, PathLike)):
-            layer_type = parse_protocols(uri)[0]
-            layer = {
-                "tracts": TractLayer,
-                "skeleton": SkeletonLayer,
-            }.get(layer_type, lambda *a, **k: None)(uri, *args, **kwargs)
-            if layer:
-                return layer
-        source = LayerDataSource(uri, *args, **kwargs)
-        if isinstance(source, TractDataSource):
-            return TractLayer(source)
-        if isinstance(source, SkeletonDataSource):
-            return SkeletonLayer(source)
-        raise ValueError("Cannot guess layer type for:", source)
+    def __call__(  # noqa: D102
+        cls, arg: _LayerArg = None, *args, **kwargs
+    ) -> "SkeletonLayer":
+        json_arg = arg.to_json() if hasattr(arg, "to_json") else arg
+        LOG.debug(f"SkeletonLayerFactory({cls.__name__}, {json_arg})")
+
+        # Only use the factory if it is not called from a subclass
+        if cls is not SkeletonLayer:
+            LOG.debug(f"SkeletonLayer - defer to {cls.__name__}")
+            return super().__call__(arg, *args, **kwargs)
+
+        # Check whether the main input is source-like object
+        if not (
+            arg is None or
+            isinstance(arg, ng.Layer) or
+            (isinstance(arg, dict) and "url" not in arg)
+        ):
+            if "source" in kwargs:
+                raise ValueError(
+                    "source-like object found in both positional "
+                    "and keyword arguments."
+                )
+            kwargs["source"] = arg
+            arg = None
+
+        # Switch based on layer protocol
+        url = _get_url(arg, **kwargs)
+        LOG.debug(f"SkeletonLayerFactory - url: {url}")
+
+        GuessedLayer = None
+        if url:
+            if isinstance(url, str):
+                layer_type = parse_protocols(url).layer
+                LOG.debug(f"SkeletonLayerFactory - hint: {layer_type}")
+                GuessedLayer = {
+                    "tracts": TractLayer,
+                    "skeleton": SkeletonLayer,
+                }.get(layer_type, None)
+            elif isinstance(url, TractSkeleton):
+                GuessedLayer = TractLayer
+            elif isinstance(url, ng.skeleton.SkeletonSource):
+                GuessedLayer = SkeletonLayer
+            if GuessedLayer:
+                if GuessedLayer is SkeletonLayer:
+                    return super().__call__(arg, *args, **kwargs)
+                else:
+                    return GuessedLayer(arg, *args, **kwargs)
+
+        # Switch based on data source type
+        sources = LayerDataSources(kwargs.get("source", None))
+        for source in sources:
+            LOG.debug(f"SkeletonLayerFactory - source: {str(type(source))}")
+            if isinstance(source, TractDataSource):
+                LOG.debug("SkeletonLayerFactory - guessed TractLayer")
+                GuessedLayer = TractLayer
+            elif isinstance(source, SkeletonDataSource):
+                LOG.debug("SkeletonLayerFactory - guessed SkeletonLayer")
+                GuessedLayer = SkeletonLayer
+            if GuessedLayer:
+                kwargs["source"] = sources
+                if GuessedLayer is SkeletonLayer:
+                    return super().__call__(arg, *args, **kwargs)
+                else:
+                    return GuessedLayer(arg, *args, **kwargs)
+
+        msg = f"Cannot guess layer type for {source}"
+        LOG.error(f"SkeletonLayerFactory - {msg}")
+        raise ValueError(msg)
 
 
-class SkeletonLayer(SegmentationLayer, metaclass=SkeletonFactory):
+class SkeletonLayer(SegmentationLayer, metaclass=SkeletonLayerFactory):
     """Skeleton layer."""
 
     shader = SegmentationLayer.skeleton_shader
@@ -418,24 +525,79 @@ class SkeletonLayer(SegmentationLayer, metaclass=SkeletonFactory):
 class TractLayer(SkeletonLayer):
     """Tract layer."""
 
-    def __init__(self, *args, **kwargs) -> None:
-        source = TractDataSource(*args, **kwargs)
-        max_tracts = len(source.url.tractfile.streamlines)
-        controls = {
-            "nbtracts": {
-                "min": 0,
-                "max": max_tracts,
-                "default": source.url.max_tracts,
-            }
-        }
-        super().__init__(
-            source=[source],
-            skeleton_shader=shaders.trkorient,
-            selected_alpha=0,
-            not_selected_alpha=0,
-            segments=[1],
-            shaderControls=controls,
-        )
+    def __init__(self, arg: _LayerArg = None, *args, **kwargs) -> None:
+        json_arg = arg.to_json() if hasattr(arg, "to_json") else arg
+        LOG.debug(f"TractLayer({json_arg})")
+
+        # already a TractLayer -> no deep copy
+        if isinstance(arg, TractLayer) and not (args or kwargs):
+            LOG.debug(f"TractLayer - defer to {self.__wrapped_class__}")
+            super().__init__(arg)
+            return
+
+        # get source parameters
+        if not (
+            arg is None or
+            isinstance(arg, ng.Layer) or
+            (isinstance(arg, dict) and "url" not in arg)
+        ):
+            if "source" in kwargs:
+                raise ValueError(
+                    "source-like object found in both positional "
+                    "and keyword arguments."
+                )
+            kwargs["source"] = arg
+            arg = None
+            LOG.debug(f"TractLayer - source: {kwargs['source']}")
+
+        # split layer / source keywords
+        ksrc = {}
+        for key in kwargs:
+            if not hasattr(TractLayer, key):
+                ksrc[key] = kwargs.pop(key)
+
+        # build source
+        LOG.debug("TractLayer - build source...")
+        source = kwargs["source"]
+        if isinstance(source, (ng.LayerDataSources, list, tuple)):
+            if len(source) != 1:
+                raise ValueError(f"too many sources: {len(source)}")
+            source = source[0]
+        kwargs["source"] = TractDataSource(source, **ksrc)
+        LOG.debug(f"TractLayer - build source: {kwargs['source'].to_json()}")
+
+        # kwargs["skeleton_rendering"] = ng.SkeletonRenderingOptions(
+        #     shader=shaders.trkorient,
+        #     mode2d="lines",
+        #     lineWidth2d=0.01,
+        # )
+        # kwargs["selected_alpha"] = 1
+        # kwargs["not_selected_alpha"] = 0
+        # kwargs["segments"] = [1]
+
+        LOG.debug(f"TractLayer - defer to {self.__wrapped_class__}")
+        super().__init__(arg, *args, **kwargs)
+
+        if self.skeleton_rendering.shader is None:
+            self.skeleton_rendering.shader = shaders.trkorient
+        if self.skeleton_rendering.mode2d is None:
+            self.skeleton_rendering.mode2d = "lines"
+        if self.skeleton_rendering.lineWidth2d == 2:
+            self.skeleton_rendering.lineWidth2d = 0.01
+        if self.selected_alpha is None:
+            self.selected_alpha = 1
+        if self.not_selected_alpha is None:
+            self.not_selected_alpha = 0
+        if not self.segments:
+            self.segments = [1]
+
+        # if "nbtracts" not in self.shader_controls:
+        #     max_tracts = len(source.url.tractfile.streamlines)
+        #     self.shader_controls["nbtracts"] = {
+        #         "min": 0,
+        #         "max": max_tracts,
+        #         "default": source.url.max_tracts,
+        #     }
 
 
 class MeshLayer(Layer):
@@ -555,7 +717,7 @@ class PointAnnotationLayer(Wraps(ng.PointAnnotationLayer), Layer):
     ...
 
 
-class ManagedLayer(Wraps(ng.ManagedLayer)):
+class ManagedLayer(Wraps(ng.ManagedLayer), _SourceMixin):
     """Named layer."""
 
     def __get_layer__(self) -> Layer:

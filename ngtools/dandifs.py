@@ -164,6 +164,8 @@ class RemoteDandiFileSystem(AbstractFileSystem):
             and e.response.status_code == 401
             and auth is not False
         )
+        level = logging.getLogger("dandi").getEffectiveLevel()
+        logging.getLogger("dandi").setLevel(1000)
         if auth:
             client.dandi_authenticate()
         try:
@@ -171,14 +173,16 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         except requests.HTTPError as e:
             if not is_401(e):
                 raise e
-        try:
-            client.authenticate(os.environ.get("LINCBRAIN_API_KEY", ""))
-            return fn()
-        except requests.HTTPError as e:
-            if not is_401(e):
-                raise e
-            exc = e
-        raise exc
+            try:
+                client.authenticate(os.environ.get("LINCBRAIN_API_KEY", ""))
+                return fn()
+            except requests.HTTPError as e:
+                if not is_401(e):
+                    raise e
+                exc = e
+            raise exc
+        finally:
+            logging.getLogger("dandi").setLevel(level)
 
     @classmethod
     def _get_dandiset(

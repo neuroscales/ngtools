@@ -70,6 +70,10 @@ class LocalFileServer:
         self.server = make_server(self.ip, self.port, self._serve,
                                   handler_class=_NoLoggingWSGIRequestHandler)
 
+    def get_url(self) -> str | None:
+        """URL of the fileserver."""
+        return f'http://{self.ip}:{self.port}/'
+
     def start(self) -> None:
         """Start server and server forever."""
         if not self.thread:
