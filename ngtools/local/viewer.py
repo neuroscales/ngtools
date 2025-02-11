@@ -241,10 +241,12 @@ class LocalNeuroglancer(OSMixin):
 
     def __del__(self) -> None:
         ng_stop_server()
-        del self.viewer
-        if self.fileserver:
-            self.fileserver.stop()
-        del self.fileserver
+        if hasattr(self, "viewer"):
+            del self.viewer
+        if hasattr(self, "fileserver"):
+            if self.fileserver:
+                self.fileserver.stop()
+            del self.fileserver
         atexit.unregister(self.__del__)
 
     def txn(self) -> contextlib.AbstractContextManager[ng.ViewerState]:
