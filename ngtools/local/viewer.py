@@ -83,7 +83,7 @@ def state_action(name: str) -> callable:
         self: "LocalNeuroglancer", *args, state: ng.ViewerState, **kwargs
     ) -> object | None:
         # build scene
-        scene = Scene(state.to_json())
+        scene = Scene(state.to_json(), stdio=self.console.stdio)
         # if laoder, pass fileserver
         if name == "load":
             kwargs["fileserver"] = self.fileserver
@@ -247,24 +247,30 @@ class LocalNeuroglancer(OSMixin):
         del self.fileserver
         atexit.unregister(self.__del__)
 
-    def txn(self) -> Generator[ng.ViewerState, None, None]:
-        """Wrap `self.viewer.txn`."""
+    def txn(self) -> contextlib.AbstractContextManager[ng.ViewerState]:
+        """
+        Context manager that returns the underlying neuroglancer state.
+        Transactions are written into the viewer at exit.
+        """
         return self.viewer.txn()
 
     @contextlib.contextmanager
-    def scene(self) -> Generator[Scene, None, None]:
-        """
-        Context manager that returns the underlying state as a `Scene`.
-        It writes all changes to the scene back into the state on return.
-        """
+    def _scene(self) -> Generator[Scene, None, None]:
         with self.viewer.txn() as state:
             # Build and yield scene
-            scene = Scene(state.to_json())
+            scene = Scene(state.to_json(), stdio=self.console.stdio)
             yield scene
             # Save scene's state into viewer's state
             for key in scene.to_json().keys():
                 val = getattr(scene, key)
                 setattr(state, key, val)
+
+    def scene(self) -> contextlib.AbstractContextManager[Scene]:
+        """
+        Context manager that returns the underlying state as a `Scene`.
+        It writes all changes to the scene back into the state at exit.
+        """
+        return self._scene()
 
     def get_viewer_url(self) -> str:
         """URL of the viewer."""
