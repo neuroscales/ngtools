@@ -14,6 +14,7 @@ import readline  # autocomplete/history in user input
 import shlex  # parse user input as if a shell commandline
 import sys
 import traceback
+from functools import partial
 from gettext import gettext  # to fix usage string
 
 # internals
@@ -75,8 +76,11 @@ class Console(argparse.ArgumentParser):
             Output stream.
         stderr : TextIO | str, default=sys.stderr
             Error stream.
+        max_choices : int | None, default=None
+            Maximum numer of choices to show in usage string.
         """
         self._debug = kwargs.pop('debug', False)
+        max_choices = kwargs.pop('max_choices', None)
         # Commandline behavior
         self.history_file = kwargs.pop('history_file', self.DEFAULT_HISTFILE)
         if self.history_file:
@@ -101,22 +105,13 @@ class Console(argparse.ArgumentParser):
             )
         self.stdio = stdio
         # ArgumentParser.__init__
+        kwargs["formatter_class"] = partial(
+            MainHelpFormatter, max_choices=max_choices
+        )
         super().__init__(*args, **kwargs)
-        # Fixed usage formatter (monkey patch)
-        self.formatter_class = _fixhelpformatter(self.formatter_class)
         # Overwrite ArgumentParser attributes
         self.exit_on_error = exit_on_error
         self.exit_on_help = exit_on_help
-
-    @property
-    def parsers(self) -> argparse._SubParsersAction | None:
-        """Return registered sub parsers."""
-        parsers = None
-        for action in self._actions:
-            if isinstance(action, argparse._SubParsersAction):
-                parsers = action
-                break
-        return parsers
 
     class InterruptParsing(Exception):
         """Exception raised when parsing gets interrupted."""
@@ -218,7 +213,7 @@ class Console(argparse.ArgumentParser):
                         continue
                 except KeyboardInterrupt:
                     # Ctrl+C -> generate new input
-                    self.print("", end="")
+                    self.print("")
                     continue
 
                 try:
@@ -266,10 +261,20 @@ class Console(argparse.ArgumentParser):
 
         except EOFError:
             # Ctrl+D -> graceful exit
-            self.print('exit', end="")
+            self.print('exit')
             raise SystemExit
         finally:
             self.exit_console()
+
+    @property
+    def parsers(self) -> argparse._SubParsersAction | None:
+        """Return registered sub parsers."""
+        parsers = None
+        for action in self._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                parsers = action
+                break
+        return parsers
 
     @property
     def subcommands(self) -> list[str]:
@@ -340,7 +345,7 @@ class Console(argparse.ArgumentParser):
             return None
 
 
-def _fixhelpformatter(klass: type) -> type:
+class FixOrderHelpFormatter(argparse.HelpFormatter):
     """
     Fix help to say that positionals must be given before options.
 
@@ -435,23 +440,23 @@ def _fixhelpformatter(klass: type) -> type:
                 # if prog is short, follow it with optionals or positionals
                 if len(prefix) + len(prog) <= 0.75 * text_width:
                     indent = ' ' * (len(prefix) + len(prog) + 1)
-                    if opt_parts:
+                    if pos_parts:
+                        lines = get_lines([prog] + pos_parts, indent, prefix)
+                    elif opt_parts:
                         lines = get_lines([prog] + opt_parts, indent, prefix)
                         lines.extend(get_lines(pos_parts, indent))
-                    elif pos_parts:
-                        lines = get_lines([prog] + pos_parts, indent, prefix)
                     else:
                         lines = [prog]
 
                 # if prog is long, put it on its own line
                 else:
                     indent = ' ' * len(prefix)
-                    parts = opt_parts + pos_parts
+                    parts = pos_parts + opt_parts
                     lines = get_lines(parts, indent)
                     if len(lines) > 1:
                         lines = []
-                        lines.extend(get_lines(opt_parts, indent))
                         lines.extend(get_lines(pos_parts, indent))
+                        lines.extend(get_lines(opt_parts, indent))
                     lines = [prog] + lines
 
                 # join lines into usage
@@ -460,5 +465,48 @@ def _fixhelpformatter(klass: type) -> type:
         # prefix with 'usage:'
         return '%s%s\n\n' % (prefix, usage)
 
-    klass._format_usage = _format_usage
-    return klass
+
+class MaxChoiceHelpFormatter(argparse.HelpFormatter):
+    """Only display up to `max_choices` choices in usage string."""
+
+    def _metavar_formatter(
+        self, action, default_metavar  # noqa: ANN001
+    ) -> callable:
+        if action.metavar is not None:
+            result = action.metavar
+        elif action.choices is not None:
+            # --- begin patch ---
+            choices = list(action.choices)
+            max_choices = getattr(self, 'max_choices', None)
+            if max_choices is not None and len(choices) > max_choices:
+                choices = choices[:max_choices] + ['...']
+            result = '{%s}' % ','.join(map(str, choices))
+            # ---  end patch  ---
+        else:
+            result = default_metavar
+
+        def format(tuple_size: int) -> tuple:
+            if isinstance(result, tuple):
+                return result
+            else:
+                return (result, ) * tuple_size
+        return format
+
+
+class ActionHelpFormatter(
+    FixOrderHelpFormatter,
+    argparse.RawTextHelpFormatter,
+):
+    """Formatter used for commands."""
+
+
+class MainHelpFormatter(
+    FixOrderHelpFormatter,
+    MaxChoiceHelpFormatter,
+    argparse.RawTextHelpFormatter,
+):
+    """Formatter used for the main console."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.max_choices = kwargs.pop("max_choices", None)
+        super().__init__(*args, **kwargs)

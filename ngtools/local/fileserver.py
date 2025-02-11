@@ -12,7 +12,7 @@ LocalFileServerInBackground
     A fileserver that runs in a background process
 """
 import atexit
-import os
+import os.path as op
 import socket
 import sys
 from threading import Thread
@@ -143,12 +143,15 @@ class LocalFileServer:
         # TODO There may be a leading protocol indicating file format
 
         if path_info.endswith(('.zarr', '.zarr/')):
-            path_info = os.path.join(path_info, '.zgroup')
+            for name in (".zgroup", ".zarray", "zarr.json"):
+                if op.exists(op.join(path_info, name)):
+                    path_info = op.join(path_info, name)
+                    break
 
-        if not os.path.isfile(path_info):
+        if not op.isfile(path_info):
             return self._file_not_found(path_info, start_response)
 
-        length = lengthrange = os.path.getsize(path_info)
+        length = lengthrange = op.getsize(path_info)
 
         if range:
             start, end = range

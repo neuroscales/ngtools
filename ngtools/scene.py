@@ -513,8 +513,10 @@ class Scene(ViewerState):
             Alternative way of providing layer names.
             If used, `uri` cannot be a `dict`.
         """
-        if "filename" in kwargs:
-            if uri is not None:
+        fileserver = kwargs.pop("fileserver", None)
+
+        if kwargs.get("filename", []):
+            if uri:
                 raise ValueError("filename and uri cannot be used together")
             uri = kwargs.pop("filename")
 
@@ -528,33 +530,49 @@ class Scene(ViewerState):
         uris = _ensure_list(uri or [])
         names = _ensure_list(names or [])
 
+        # original number of layers
+        # -> will be used later to (re)set the view.
         nb_layers_0 = len(self.layers)
 
         # load layers
         onames = []
         for n, uri in enumerate(uris):
+
+            # TODO: wrap each file loading in a try/except block?
+
             uri = str(uri).rstrip("/")
             parsed = parse_protocols(uri)
             short_uri = parsed.url
             name = names[n] if names else op.basename(short_uri)
 
-            if parsed.stream == "dandi":
-                fs = filesystem(uri)
-                short_uri = uri = fs.s3_url(short_uri)
-                if parsed.format:
-                    uri = parsed.format + "://" + uri
-                elif parsed.url.endswith(".zarr"):
-                    uri = "zarr://" + uri
-                elif parsed.url.endswith((".nii", ".nii.gz")):
-                    uri = "nifti://" + uri
-                if parsed.layer:
-                    uri = parsed.layer + "://" + uri
-                uri = str(uri).rstrip("/")
+            # extension-based hint
+            if not parsed.format:
+                if name.endswith(".zarr"):
+                    parsed = parsed.with_format("zarr")
+                elif name.endswith((".nii", ".nii.gz")):
+                    parsed = parsed.with_format("nifti")
 
-            onames.append(name)
-            layer = Layer(uri, **kwargs)
+            if parsed.stream == "dandi":
+                # neuroglancer does not understand dandi:// uris,
+                # so we use the s3 url instead.
+                short_uri = filesystem(short_uri).s3_url(short_uri)
+                parsed = parsed.with_part(stream="https", url=short_uri)
+
+            elif parsed.stream == "file":
+                # neuroglancer does not understand file:// uris,
+                # so we serve it over http using a local fileserver.
+                if not fileserver:
+                    raise ValueError(
+                        "Cannot load local files without a fileserver"
+                    )
+                short_uri = fileserver.get_url() + op.abspath(short_uri)
+                parsed = parsed.with_part(stream="http", url=short_uri)
+
+            uri = str(parsed).rstrip("/")
+            layer = Layer(str(parsed), **kwargs)
             self.layers.append(name=name, layer=layer)
             self.stdio.info(f"Loaded: {self.layers[name].to_json()}")
+            onames.append(name)
 
         # rename axes according to current naming scheme
         self.rename_axes(self.world_axes(print=False), layer=onames)

@@ -182,18 +182,19 @@ class _LayerDataSourceFactory(type):
         if isinstance(url, ng.skeleton.SkeletonSource):
             return LocalSkeletonDataSource(arg, *args, **kwargs)
 
+        parsed_url = parse_protocols(url)
+
         # If python:// url -> local object, but retrieved from the viewer
         # we have no way of retrieving the original url/object sadly.
-        if url.startswith("python://"):
+        if parsed_url.stream == "python":
             # FIXME? Can we find the object reference from the uid?
             return LocalDataSource(arg, *args, **kwargs)
 
         # If local:// url -> local annotations
-        if url == "local://annotations":
+        if parsed_url.url == "local://annotations":
             return LocalAnnotationDataSource(arg, *args, **kwargs)
 
         # If format protocol provided, use it
-        parsed_url = parse_protocols(url)
         if parsed_url.format in _DATASOURCE_REGISTRY:
             format = parsed_url.format
             LOG.debug(f"LayerDataSource - use format hint: {format}")
@@ -243,7 +244,7 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
 
         # ensure that the url has the right format
         if isinstance(self.url, str):
-            url = parse_protocols(self.url)[-1]
+            url = parse_protocols(self.url).url
             if self.PROTOCOLS:
                 url = self.PROTOCOLS[0] + "://" + url
             self.url = url

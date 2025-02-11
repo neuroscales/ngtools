@@ -17,7 +17,7 @@ from neuroglancer.server import set_server_bind_address as ng_bind_address
 from neuroglancer.server import stop as ng_stop_server
 
 # internals
-from ngtools.local.console import Console, _fixhelpformatter
+from ngtools.local.console import ActionHelpFormatter, Console
 from ngtools.local.fileserver import LocalFileServer, find_available_port
 from ngtools.local.termcolors import bformat
 from ngtools.scene import Scene
@@ -82,8 +82,14 @@ def state_action(name: str) -> callable:
     def func(
         self: "LocalNeuroglancer", *args, state: ng.ViewerState, **kwargs
     ) -> object | None:
+        # build scene
         scene = Scene(state.to_json())
+        # if laoder, pass fileserver
+        if name == "load":
+            kwargs["fileserver"] = self.fileserver
+        # apply function
         out = getattr(scene, name)(*args, **kwargs)
+        # save state
         for key in scene.to_json().keys():
             val = getattr(scene, key)
             setattr(state, key, val)
@@ -252,8 +258,10 @@ class LocalNeuroglancer(OSMixin):
         It writes all changes to the scene back into the state on return.
         """
         with self.viewer.txn() as state:
+            # Build and yield scene
             scene = Scene(state.to_json())
             yield scene
+            # Save scene's state into viewer's state
             for key in scene.to_json().keys():
                 val = getattr(scene, key)
                 setattr(state, key, val)
@@ -285,10 +293,9 @@ class LocalNeuroglancer(OSMixin):
             raise
 
     def _make_console(self, debug: bool = False) -> Console:
-        mainparser = Console('', debug=debug)
+        mainparser = Console('', debug=debug, max_choices=4)
         parsers = mainparser.add_subparsers()
-        formatter = _fixhelpformatter(argparse.RawDescriptionHelpFormatter)
-        F = dict(formatter_class=formatter)
+        F = dict(formatter_class=ActionHelpFormatter)
 
         def add_parser(cmd, *args, **kwargs):  # noqa: ANN001, ANN202
             # We define long descriptions in the _clihelp class at the
