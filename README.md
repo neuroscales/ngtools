@@ -19,15 +19,18 @@ implements:
   that runs a local `neuroglancer` instance, allows local files to be
   visualized, and implements additional file formats
   (`.trk`, `.tck`, `.tiff`, `'.mgh`).
+
   See: [**Local neuroglancer in python**](#Local-neuroglancer-in-python)
 
 - a **shell console** (`ngtools --help`) for the local app with thorough
   documentation of each command, auto-completion and history.
+
   See: [**Local neuroglancer in the shell**](#Local-neuroglancer-in-the-shell)
 
 - a **user-friendly python API** (`from ngtools.scene import Scene`) that
   simplifies the creation of neuroglancer scenes (and is used under
   the hood by `LocalNeuroglancer`).
+
   See: [**Scene building without running an instance**](#Scene-building-without-running-an-instance)
 
 - **smart wrappers** (`ngtools.layers`, `ngtools.datasources`) around
