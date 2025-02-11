@@ -11,11 +11,11 @@ LocalFileServer
 LocalFileServerInBackground
     A fileserver that runs in a background process
 """
+import _thread
 import atexit
 import os.path as op
 import socket
 import sys
-from threading import Thread
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 
@@ -46,6 +46,46 @@ def find_available_port(port: int = 0, ip: str = "") -> tuple[int, str]:
     return port, ip
 
 
+class _Thread:
+    """
+    My own implementation of threading.Thread.
+
+    threading.Thread sometimes hangs when exiting IPython, whereas
+    this implementation does not. Let's hope I am not doing anything
+    stupid.
+    """
+
+    def __init__(
+        self, target: callable, args: tuple = (), kwargs: dict = {}
+    ) -> None:
+        self.lock: _thread.LockType = _thread.allocate_lock()
+        self.target: callable = target
+        self.args: tuple = args
+        self.kwargs: dict = kwargs
+        self.id: int | None = None
+
+    def start(self) -> None:
+
+        if self.is_alive():
+            return
+
+        def run(lock: _thread.LockType) -> object | type:
+            try:
+                lock.acquire()
+                return self.target(*self.args, **self.kwargs)
+            finally:
+                lock.release()
+
+        self.id = _thread.start_new_thread(run, (self.lock,))
+
+    def is_alive(self) -> bool:
+        return self.lock.locked()
+
+    def join(self) -> None:
+        self.lock.acquire()
+        self.lock.release()
+
+
 class LocalFileServer:
     """
     A fileserver that serves local files.
@@ -69,6 +109,7 @@ class LocalFileServer:
 
         self.server = make_server(self.ip, self.port, self._serve,
                                   handler_class=_NoLoggingWSGIRequestHandler)
+        self.thread = _Thread(target=self.server.serve_forever)
 
     def get_url(self) -> str | None:
         """URL of the fileserver."""
@@ -76,18 +117,20 @@ class LocalFileServer:
 
     def start(self) -> None:
         """Start server and server forever."""
-        if not self.thread:
-            self.thread = Thread(target=self.server.serve_forever)
+        if not self.thread.is_alive():
             self.thread.start()
             atexit.register(self.stop)
-        elif not self.thread.is_alive():
-            self.thread = None
-            self.start()
+
+    def is_running(self) -> bool:
+        """Check if server is running."""
+        return self.thread.is_alive()
 
     def stop(self) -> None:
         """Shutdown server."""
-        self.server.shutdown()
-        self.server.server_close()
+        if self.is_running():
+            self.server.shutdown()
+            self.server.server_close()
+        self.thread.join()
         atexit.unregister(self.stop)
 
     @staticmethod

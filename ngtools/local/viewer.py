@@ -237,17 +237,14 @@ class LocalNeuroglancer(OSMixin):
 
         # Setup console
         self.console = self._make_console(debug)
-        atexit.register(self.__del__)
+        atexit.register(self._cleanup)
+
+    def _cleanup(self) -> None:
+        ng_stop_server()  # do I need this?
+        atexit.unregister(self._cleanup)
 
     def __del__(self) -> None:
-        ng_stop_server()
-        if hasattr(self, "viewer"):
-            del self.viewer
-        if hasattr(self, "fileserver"):
-            if self.fileserver:
-                self.fileserver.stop()
-            del self.fileserver
-        atexit.unregister(self.__del__)
+        self._cleanup()
 
     def txn(self) -> contextlib.AbstractContextManager[ng.ViewerState]:
         """
@@ -292,13 +289,14 @@ class LocalNeuroglancer(OSMixin):
 
     def await_input(self) -> None:
         """Launch shell-like interface."""
-        try:
-            return self.console.await_input()
-        except SystemExit:
-            # exit gracefully (cleanup the fileserver process, etc)
-            if self.fileserver:
-                self.fileserver.stop()
-            raise
+        return self.console.await_input()
+        # try:
+        #     return self.console.await_input()
+        # except SystemExit:
+        #     # exit gracefully (cleanup the fileserver process, etc)
+        #     if self.fileserver:
+        #         self.fileserver.stop()
+        #     raise
 
     def _make_console(self, debug: bool = False) -> Console:
         mainparser = Console('', debug=debug, max_choices=4)
