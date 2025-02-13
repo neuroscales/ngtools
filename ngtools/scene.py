@@ -1714,6 +1714,7 @@ class Scene(ViewerState):
         url: bool = False,
         instance: str | None = None,
         print: bool = True,
+        **kwargs
     ) -> dict:
         """
         Print or save or load the viewer's JSON state.
@@ -1725,7 +1726,11 @@ class Scene(ViewerState):
         save : str
             Save state to JSON file
         url : bool
-            print/load a JSON URL rather than a JSON object
+            Print/load/save a JSON URL rather than a JSON object
+        open : bool
+            Open the URL in the browser.
+        instance : {"ng", "linc"}
+            Neuroglancer instance to use in the URL.
         print : bool
             print the JSON object or URL
 
@@ -1751,25 +1756,33 @@ class Scene(ViewerState):
         else:
             state = self.to_json()
 
+        json_state = state
+
+        if url or kwargs.get("open", False):
+            # guess instance
+            if instance is None:
+                instance = "ng"
+                for layer in self.layers:
+                    for source in getattr(layer, "source", []):
+                        url = getattr(source, "url", "")
+                        if isinstance(url, str) and "lincbrain.org" in url:
+                            instance = "linc"
+                            break
+
+            state = urlquote(json.dumps(state))
+            state = f'{NG_URLS[instance]}#!' + state
+
+            if kwargs.get("open", False):
+                import webbrowser
+                webbrowser.open(state)
+        else:
+            state = json.dumps(state, indent=4)
+
         if save:
-            with open(save, 'wb') as f:
-                json.dump(state, f, indent=4)
+            with open(save, 'wt') as f:
+                f.write(state + '\n')
 
         if print:
-            if url:
-                # guess instance
-                if instance is None:
-                    instance = "ng"
-                    for layer in self.layers:
-                        for source in getattr(layer, "source", []):
-                            url = getattr(source, "url", "")
-                            if isinstance(url, str) and "lincbrain.org" in url:
-                                instance = "linc"
-                                break
+            self.stdio.info(state)
 
-                state = urlquote(json.dumps(state))
-                state = f'{NG_URLS[instance]}#!' + state
-                self.stdio.info(state)
-            else:
-                self.stdio.info(json.dumps(state, indent=4))
-        return state
+        return json_state

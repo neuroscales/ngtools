@@ -796,7 +796,7 @@ class NiftiVolumeInfo(VolumeInfo):
         if not getattr(self, "_time_unit", None):
             unit = self._nib_header.get_xyzt_units()[1]
             if unit == "unknown":
-                unit = "s"
+                unit = "sec"
             unit = U.as_neuroglancer_unit(unit)
             self._time_unit = unit
         return self._time_unit
@@ -1353,6 +1353,9 @@ class ZarrDataSource(VolumeDataSource, metaclass=_ZarrDataSourceFactory):
         super().__init__(*args, **kwargs)
         self._nifti = kwargs.pop('nifti', None)
         self._align_corner = kwargs.pop("align_corner", False)
+        # trigger computation of the transform, in case it's a nifti-zarr
+        # TODO: check if nifti zarr first.
+        self.transform = self.transform
 
     @classmethod
     def guess_version(cls, url: str) -> int:

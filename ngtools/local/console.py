@@ -93,7 +93,7 @@ class Console(argparse.ArgumentParser):
         # Input/output
         stdio = kwargs.pop("stdio", None)
         if stdio is None:
-            stdin = kwargs.pop("stdout", sys.stdin)
+            stdin = kwargs.pop("stdin", sys.stdin)
             stdout = kwargs.pop("stdout", sys.stdout)
             stderr = kwargs.pop("stderr", sys.stderr)
             level = kwargs.pop("level", "info")
@@ -189,7 +189,7 @@ class Console(argparse.ArgumentParser):
         def are_you_sure() -> bool:
             try:
                 # Query input
-                args = self.input("Do you really want to exit ([y]/n)?")
+                args = self.input("\nDo you really want to exit ([y]/n)?")
                 if args[:1].lower() == "n":
                     return False
                 else:

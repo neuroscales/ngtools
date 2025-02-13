@@ -558,6 +558,9 @@ def as_short_unit(unit: str) -> str:
     """
     if unit == "":
         return unit
+    if unit.endswith("sec"):
+        # nifti
+        unit = unit[:-2]
     for units in UNIT_SHORT2LONG.values():
         if unit in units:
             return unit
@@ -593,6 +596,9 @@ def as_long_unit(unit: str) -> str:
     """
     if unit == "":
         return unit
+    if unit.endswith("sec"):
+        # nifti
+        unit = unit[:-2]
     for units in UNIT_LONG2SHORT.values():
         if unit in units:
             return unit

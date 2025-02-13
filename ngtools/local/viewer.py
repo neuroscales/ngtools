@@ -199,7 +199,7 @@ class LocalNeuroglancer(OSMixin):
         ip: str = '',
         token: int = 1,
         fileserver: bool | int | LocalFileServer = True,
-        debug: bool = False,
+        **console_kwargs,
     ) -> None:
         """
         Parameters
@@ -236,7 +236,7 @@ class LocalNeuroglancer(OSMixin):
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
         # Setup console
-        self.console = self._make_console(debug)
+        self.console = self._make_console(**console_kwargs)
         atexit.register(self._cleanup)
 
     def _cleanup(self) -> None:
@@ -291,8 +291,9 @@ class LocalNeuroglancer(OSMixin):
         """Launch shell-like interface."""
         return self.console.await_input()
 
-    def _make_console(self, debug: bool = False) -> Console:
-        mainparser = Console('', debug=debug, max_choices=4)
+    def _make_console(self, **kwargs) -> Console:
+        kwargs.setdefault('max_choices', 4)
+        mainparser = Console('', **kwargs)
         parsers = mainparser.add_subparsers()
         F = dict(formatter_class=ActionHelpFormatter)
 
@@ -481,6 +482,9 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             '--url', action='store_true', default=False,
             help='Load (or print) the url form of the state')
+        _.add_argument(
+            '--open', action='store_true', default=False,
+            help='Open the url (if `--url`) or viewer (otherwise)')
         _.add_argument(
             '--instance', '-i', choices=list(NG_URLS.keys()),
             help='Link to this neuroglancer instance')

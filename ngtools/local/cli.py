@@ -55,6 +55,9 @@ def main(args: list[str] | None = None) -> None:
                         help="run in debug mode")
     parser.add_argument('--log-level', choices=log_choices, default="none",
                         help="logging level")
+    parser.add_argument('--stdin', help="Input stream (default: stdin)")
+    parser.add_argument('--stdout', help="Output stream (default: stdout)")
+    parser.add_argument('--stderr', help="Error stream (default: stderr)")
     parser.add_argument(nargs='*', dest='filenames', help='Files to load')
     args = parser.parse_args(args)
 
@@ -74,8 +77,15 @@ def main(args: list[str] | None = None) -> None:
 
     # instantiate neuroglancer
     neuroglancer = LocalNeuroglancer(
-        port=args.port_viewer, ip=args.ip, token=args.token,
-        fileserver=fileserver, debug=args.debug)
+        port=args.port_viewer,
+        ip=args.ip,
+        token=args.token,
+        fileserver=fileserver,
+        debug=args.debug,
+        stdin=args.stdin or sys.stdin,
+        stdout=args.stdout or sys.stdout,
+        stderr=args.stderr or sys.stderr,
+    )
 
     logo = bformat.bold(bformat.fg.blue(LOGO[1:-1]))
     neuroglancer.console.stdio.print(logo)

@@ -87,7 +87,7 @@ def load_fs_lut(
         line = line.split('#')[0].strip()
         if not line:
             continue
-        label, name, r, g, b, a = line.split()
+        label, name, r, g, b, a, *_ = line.split()
         label, r, g, b, a = int(label), int(r), int(g), int(b), int(a)
         lut[label] = (name, (r/255, g/255, b/255, (a or 255)/255))
     return lut

@@ -166,9 +166,9 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         )
         level = logging.getLogger("dandi").getEffectiveLevel()
         logging.getLogger("dandi").setLevel(1000)
-        if auth:
-            client.dandi_authenticate()
         try:
+            if auth is not False:
+                client.dandi_authenticate()
             return fn()
         except requests.HTTPError as e:
             if not is_401(e):

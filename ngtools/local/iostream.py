@@ -50,7 +50,7 @@ class StandardIO:
         format = kwargs.pop("format", (lambda x: x))
 
         msg = self.format(*args, **kwargs)
-        if self.level <= level:
+        if file and self.level <= level:
             if isinstance(file, str):
                 with open(file, "a") as f:
                     print(format(msg), file=f, flush=flush, end="")
@@ -112,6 +112,6 @@ class StandardIO:
     def __del__(self) -> None:
         if hasattr(self, "_stdin_file"):
             stdin = self._stdin_file
-            if not stdin.is_closed:
+            if stdin and not stdin.closed:
                 stdin.close()
         atexit.unregister(self.__del__)
