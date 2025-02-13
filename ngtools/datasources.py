@@ -903,7 +903,7 @@ class NiftiDataSource(VolumeDataSource):
         ----------------
         url : str
             URL to the file
-        align_corner : bool
+        align_corner : bool, default=False
             If True, use neuroglancer's native behavior when computing
             the transform, which is to asume that (0, 0, 0) points to
             the corner of the first voxel. If False, use NIfTI's spec,
@@ -918,6 +918,9 @@ class NiftiDataSource(VolumeDataSource):
         self._nib_image = None
         self._stream = None
         super().__init__(*args, **kwargs)
+        # Trigger transform computation because we do not trust
+        # neuroglancer's behaviour completely.
+        self.transform = self.transform
 
     def _compute_info(self) -> NiftiVolumeInfo:
         return NiftiVolumeInfo(
@@ -1219,7 +1222,9 @@ class Zarr2VolumeInfo(ZarrVolumeInfo):
             if exists(url / "nifti" / ".zarray"):
                 url = url / "nifti" / "0"
                 try:
-                    self.nifti = NiftiVolumeInfo(url, affine="best")
+                    self.nifti = NiftiVolumeInfo(
+                        url, affine="best", align_corner=True
+                    )
                 except Exception:
                     if nifti is True:
                         raise
@@ -1271,7 +1276,9 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
         if nifti is not False:
             if exists(url / "nifti" / "zarr.json"):
                 url = url / "nifti" / "c0"
-                self.nifti = NiftiVolumeInfo(url, affine="best")
+                self.nifti = NiftiVolumeInfo(
+                    url, affine="best", align_corner=True
+                )
             elif nifti is True:
                 raise FileNotFoundError("Cannot find nifti group in zarr.")
 
