@@ -269,10 +269,13 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             key = (type(self), url)
             if key not in _DATASOURCE_INFO_CACHE:
                 LOG.debug("Recompute info")
-                _DATASOURCE_INFO_CACHE[key] = self._compute_info()
+                try:
+                    _DATASOURCE_INFO_CACHE[key] = self._compute_info()
+                except Exception:
+                    LOG.warning(f"Could not compute info for: {key}")
             else:
                 LOG.debug("Use cached info")
-            self._info = _DATASOURCE_INFO_CACHE[key]
+            self._info = _DATASOURCE_INFO_CACHE.get(key, None)
         return self._info
 
     @classmethod
@@ -1201,8 +1204,8 @@ class Zarr2VolumeInfo(ZarrVolumeInfo):
             self._zattrs = {}
 
         if is_group:
+            self._zarray = []
             try:
-                self._zarray = []
                 zattrs = self._zattrs
                 if "ome" in self._zattrs:
                     zattrs = zattrs["ome"]

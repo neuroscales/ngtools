@@ -5,6 +5,7 @@ import json
 import logging
 import os.path as op
 import sys
+from copy import deepcopy
 from io import BytesIO
 from os import PathLike
 from typing import Literal, Sequence
@@ -325,26 +326,26 @@ class ViewerState(Wraps(ng.ViewerState)):
             layer: ng.ManagedLayer
             if not layer.visible:
                 continue
-            layer = layer.layer
-            if len(getattr(layer, "source", [])) == 0:
+
+            try:
+                layer = layer.layer
+                source = layer.source[0]
+                bbox = source.output_bbox_size
+                odims = source.transform.output_dimensions.to_json()
+                onames = list(odims.keys())
+                for name, (scale, unit) in dimensions.items():
+                    if name not in onames:
+                        continue
+                    j = onames.index(name)
+                    scale0, unit0 = odims[name]
+                    bbox_value = convert_unit(bbox[j], unit0, unit)
+                    bbox_value *= scale0 / scale
+                    scl[name] = bbox_value / 256  # factor that seems to work
+
+                break
+            except Exception:
                 continue
-            source = layer.source[0]
-            if not hasattr(source, "output_bbox_size"):
-                continue
-            if not hasattr(source, "output_voxel_size"):
-                continue
-            odims = source.transform.output_dimensions.to_json()
-            onames = list(odims.keys())
-            bbox = source.output_bbox_size
-            for name, (scale, unit) in dimensions.items():
-                if name not in onames:
-                    continue
-                j = onames.index(name)
-                scale0, unit0 = odims[name]
-                scale_ratio = scale0 / scale
-                bbox_value = convert_unit(bbox[j], unit0, unit) * scale_ratio
-                scl[name] = bbox_value / 256
-            break
+
         dims = self.display_dimensions[:3]
         if len(dims) == 0:
             scl = 1.0
@@ -381,25 +382,27 @@ class ViewerState(Wraps(ng.ViewerState)):
             layer: ng.ManagedLayer
             if not layer.visible:
                 continue
-            layer = layer.layer
-            if len(getattr(layer, "source", [])) == 0:
+
+            try:
+                layer = layer.layer
+                source = layer.source[0]
+                center = source.output_center
+                odims = source.transform.output_dimensions.to_json()
+                onames = list(odims.keys())
+                for i, (name, (scale, unit)) in enumerate(dimensions.items()):
+                    if name not in onames:
+                        continue
+                    j = onames.index(name)
+                    scale0, unit0 = odims[name]
+                    scale_ratio = scale0 / scale
+                    value = convert_unit(center[j], unit0, unit)
+                    value *= scale_ratio
+                    pos[i] = value
+
+                break
+            except Exception:
                 continue
-            source = layer.source[0]
-            if not hasattr(source, "output_center"):
-                continue
-            odims = source.transform.output_dimensions.to_json()
-            onames = list(odims.keys())
-            center = source.output_center
-            for i, (name, (scale, unit)) in enumerate(dimensions.items()):
-                if name not in onames:
-                    continue
-                j = onames.index(name)
-                scale0, unit0 = odims[name]
-                scale_ratio = scale0 / scale
-                value = convert_unit(center[j], unit0, unit)
-                value *= scale_ratio
-                pos[i] = value
-            break
+
         return pos
 
     def __get_position__(self) -> list[float]:
@@ -438,8 +441,10 @@ def autolog(func: callable) -> callable:
             else:
                 pargskwargs = pargs + ", " + pkwargs
             self.stdio.debug(f"{func.__name__}({pargskwargs})")
+
         try:
             return func(self, *args, **kwargs)
+
         except Exception as e:
             if (
                 LOG.level <= logging.DEBUG or
@@ -565,12 +570,22 @@ class Scene(ViewerState):
                     raise ValueError(
                         "Cannot load local files without a fileserver"
                     )
-                short_uri = fileserver.get_url() + op.abspath(short_uri)
+                short_uri = fileserver + "local" + op.abspath(short_uri)
                 parsed = parsed.with_part(stream="http", url=short_uri)
+
+            if fileserver:
+                # if local viewer and data is on linc
+                # -> redirect to our handler that deals with credentials
+                linc_prefix = "https://neuroglancer.lincbrain.org"
+                if parsed.url.startswith(linc_prefix):
+                    path = parsed.url[len(linc_prefix):]
+                    local_url = fileserver + "linc" + path
+                    parsed = parsed.with_part(stream="http", url=local_url)
 
             uri = str(parsed).rstrip("/")
             layer = Layer(str(parsed), **kwargs)
             self.layers.append(name=name, layer=layer)
+            self.stdio.print()
             self.stdio.info(f"Loaded: {self.layers[name].to_json()}")
             onames.append(name)
 
@@ -1458,7 +1473,8 @@ class Scene(ViewerState):
         self,
         shader: str | PathLike,
         layer: str | list[str] | None = None,
-        layer_type: str | list[str] | None = None
+        layer_type: str | list[str] | None = None,
+        **kwargs
     ) -> str:
         """
         Apply a shader (that is, a colormap or lookup table).
@@ -1473,6 +1489,9 @@ class Scene(ViewerState):
         layer_type : str or list[str], optional
             Apply the shader to these layer types. Default: all layers.
         """
+        fileserver = kwargs.pop("fileserver", None)
+        segment_properties = None
+
         layer_names = _ensure_list(layer or [])
         layer_types = _ensure_list(layer_type or [])
 
@@ -1489,18 +1508,25 @@ class Scene(ViewerState):
         if hasattr(shaders, shader):
             shader = getattr(shaders, shader)
             self.stdio.info(shader)
+
         elif hasattr(colormaps, shader):
             shader = shaders.colormap(shader)
             self.stdio.info(shader)
+
         elif 'main()' not in shader:
             # assume it's a path
-            lut = load_fs_lut(shader)
+            path = shader
+            lut = load_fs_lut(path)
             shader = shaders.lut(lut)
             f2u8 = lambda x: int(round(x*255))  # noqa: E731
             lut = {
                 str(key): f'#{f2u8(r):02x}{f2u8(g):02x}{f2u8(b):02x}'
                 for key, (_, (r, g, b, _)) in lut.items()
             }
+            if fileserver:
+                segment_properties = (
+                    "precomputed://" + fileserver + "lut/" + op.abspath(path)
+                )
 
         for layer in self.layers:
             if layer_names and layer.name not in layer_names:
@@ -1515,6 +1541,10 @@ class Scene(ViewerState):
                 for key in lut:
                     if key not in layer.starred_segments:
                         layer.starred_segments[key] = True
+                if segment_properties:
+                    layer.source.append(
+                        ng.LayerDataSource(segment_properties)
+                    )
 
         return shader
 
@@ -1739,49 +1769,88 @@ class Scene(ViewerState):
         state : dict
             JSON state
         """
+        # --- load -----------------------------------------------------
         if load:
+            print("load")
             if exists(load):
+                # Load from file
                 with open(load, "rb") as f:
                     state = json.load(f)
+
             elif url:
+                # Parse from neuroglancer URL
                 if '://' in url:
                     url = urlparse(url).fragment
                     if url[0] != '!':
                         raise ValueError('Neuroglancer URL not recognized')
                     url = url[1:]
                 state = json.loads(urlunquote(url))
+
             else:
+                # Parse from JSON string
                 state = json.loads(url)
-            self.set_state(state)
-        else:
-            state = self.to_json()
 
-        json_state = state
+            # Load state in current scene
+            scene = ng.ViewerState(state)
+            for key in scene.to_json().keys():
+                val = getattr(scene, key)
+                setattr(self, key, val)
 
+        # --- convert and/or save --------------------------------------
+        state = json_state = deepcopy(self.to_json())
+
+        # guess instance
+        if instance is None:
+            instance = "ng"
+            for layer in self.layers:
+                for source in getattr(layer, "source", []):
+                    url = getattr(source, "url", "")
+                    if isinstance(url, str) and (
+                        ("lincbrain.org" in url) or
+                        ("/ngtools/linc/" in url)
+                    ):
+                        instance = "linc"
+                        break
+
+        # convert linc URLs to neuroglancer.lincbrain.org URLs
+        if instance.lower() == "linc":
+
+            def fix_url(url: str) -> str:
+                if "/ngtools/linc" in url:
+                    url = url.split("/ngtools/linc")[-1]
+                    url = "https://neuroglancer.lincbrain.org" + url
+                return url
+
+            for layer in state.get("layers", []):
+                if "source" not in layer:
+                    continue
+                if not isinstance(layer["source"], list):
+                    layer["source"] = [layer["source"]]
+                for i, source in enumerate(layer["source"]):
+                    if isinstance(source, str):
+                        layer["source"][i] = fix_url(source)
+                    elif "url" in source:
+                        source["url"] = fix_url(source["url"])
+
+        # --- to URL ---
         if url or kwargs.get("open", False):
-            # guess instance
-            if instance is None:
-                instance = "ng"
-                for layer in self.layers:
-                    for source in getattr(layer, "source", []):
-                        url = getattr(source, "url", "")
-                        if isinstance(url, str) and "lincbrain.org" in url:
-                            instance = "linc"
-                            break
-
             state = urlquote(json.dumps(state))
             state = f'{NG_URLS[instance]}#!' + state
 
             if kwargs.get("open", False):
                 import webbrowser
                 webbrowser.open(state)
+
+        # --- to JSON string ---
         else:
             state = json.dumps(state, indent=4)
 
+        # --- save -----------------------------------------------------
         if save:
             with open(save, 'wt') as f:
                 f.write(state + '\n')
 
+        # --- print ----------------------------------------------------
         if print:
             self.stdio.info(state)
 

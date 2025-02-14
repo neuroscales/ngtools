@@ -157,6 +157,10 @@ class parse_protocols(parsed_protocols):
 
     def with_part(self, **kwargs) -> "parse_protocols":
         """Replace parts."""
+        if "stream" not in kwargs:
+            url = kwargs.get("url", self.url)
+            if "://" in url:
+                kwargs["stream"] = url.split("://")[0]
         return parse_protocols(
             kwargs.get("layer", self.layer),
             kwargs.get("format", self.format),
