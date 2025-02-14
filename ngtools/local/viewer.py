@@ -11,7 +11,6 @@ import os.path
 import stat
 import textwrap
 from functools import partial, wraps
-from threading import Thread
 from typing import Generator
 
 # externals
@@ -254,10 +253,6 @@ class LincHandler(ng.server.BaseRequestHandler):
         self._linc_cookies = self.application._linc_cookies
 
     async def _request(self, action: str, path: str) -> None:
-        LOG.debug(f"{action} | {path}")
-        # self.send_error(404)
-        # return
-
         session = self._linc_session
         cookies = self._linc_cookies
 
@@ -286,25 +281,8 @@ class LincHandler(ng.server.BaseRequestHandler):
                 self.server.executor.submit(_action)
             )
 
-            # response = await asyncio.wrap_future(
-            #     self.server.executor.submit(
-            #         action_fn,
-            #         "https://neuroglancer.lincbrain.org/" + path,
-            #         headers=headers,
-            #         **cookies,
-            #     )
-            # )
-
-            # response = action_fn(
-            #     "https://neuroglancer.lincbrain.org/" + path,
-            #     headers=headers,
-            #     **cookies,
-            # )
-
-            LOG.debug(f"OUT: {status_code} | {headers}")
-
         except Exception as e:
-            LOG.debug(e)
+            LOG.debug(f"LincHandler: {path} | {e}")
             self.send_error(400, message=e.args[0])
             return
 
@@ -322,14 +300,6 @@ class LincHandler(ng.server.BaseRequestHandler):
         else:
             self.finish()
         LOG.debug(f"{action} | {path} | done")
-
-    # async def get(self, path: str) -> None:  # noqa: D102
-    #     await self._request("GET", path)
-    #     return
-
-    # async def head(self, path: str) -> None:  # noqa: D102
-    #     await self._request("HEAD", path)
-    #     return
 
     def get(self, path: str) -> None:  # noqa: D102
         return self._request("GET", path)
