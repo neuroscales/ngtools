@@ -9,6 +9,7 @@ import logging
 import time
 from itertools import product
 from os import PathLike
+from types import EllipsisType
 from typing import Callable, Iterator
 
 # externals
@@ -111,18 +112,6 @@ class LayerDataSources(Wraps(ng.LayerDataSources)):
         dict |
         None
     )
-
-    # def __init__(self, arg: _DataSourcesLike = None, **kwargs) -> None:
-    #     """
-    #     Parameters
-    #     ----------
-    #     arg : [list of] dict | [list of] (LayerDataSource | str) | None
-    #     """
-    #     if arg:
-    #         list_like = (list, tuple, ng.LayerDataSources)
-    #         if not isinstance(arg, list_like):
-    #             arg = [arg]
-    #     super().__init__(arg, **kwargs)
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -281,7 +270,6 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
                     _DATASOURCE_INFO_CACHE[key] = self._compute_info()
                 except Exception:
                     LOG.warning(f"Could not compute info for: {key}")
-                    raise
             else:
                 LOG.debug("Use cached info")
             self._info = _DATASOURCE_INFO_CACHE.get(key, None)
@@ -411,7 +399,7 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
         # Implementation classes should implement this method.
         self._raise_not_implemented_error("get_dataobj")
 
-    _IndexType = int | bool | slice | ArrayLike | type(Ellipsis)
+    _IndexType = int | bool | slice | ArrayLike | EllipsisType
     _SlicerType = _IndexType | tuple[_IndexType]
 
     def __getitem__(self, slicer: _SlicerType) -> ArrayLike:

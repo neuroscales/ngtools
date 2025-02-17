@@ -217,6 +217,15 @@ class LayerFactory(type):
 
 class _SourceMixin:
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        # Re-build data sources so that parameters for which
+        # ngtools and neuroglancer use different defaults values
+        # get set up according to ngtools conventions.
+        LOG.debug("Layer - recompute data sources")
+        self.source = LayerDataSources(self.source)
+
     def __get_source__(self) -> LayerDataSources:
         return LayerDataSources(self._wrapped.source)
 
@@ -354,12 +363,6 @@ class ImageLayer(_SourceMixin, Wraps(ng.ImageLayer), Layer):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
-        # Re-build data sources so that parameters for which
-        # ngtools and neuroglancer use different defaults values
-        # get set up according to ngtools conventions.
-        LOG.debug("Layer - recompute data sources")
-        self.source = LayerDataSources(self.source)
-
         if self.source and not self.shaderControls:
             source = self.source[0]
             try:
@@ -422,15 +425,6 @@ class SegmentationLayer(_SourceMixin, Wraps(ng.SegmentationLayer), Layer):
     linked_segmentation_group : str, optional
     linked_segmentation_color_group : str | False
     """  # noqa: E501
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-        # Re-build data sources so that parameters for which
-        # ngtools and neuroglancer use different defaults values
-        # get set up according to ngtools conventions.
-        LOG.debug("Layer - recompute data sources")
-        self.source = LayerDataSources(self.source)
 
     ...
 

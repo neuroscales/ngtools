@@ -31,7 +31,7 @@ from ngtools.layers import Layer, Layers
 from ngtools.local.iostream import StandardIO
 from ngtools.opener import exists, filesystem, open, parse_protocols
 from ngtools.shaders import colormaps, load_fs_lut, shaders
-from ngtools.units import convert_unit, split_unit
+from ngtools.units import convert_unit
 from ngtools.utils import NG_URLS, Wraps
 
 # monkey-patch Layer state to expose channelDimensions
@@ -200,8 +200,8 @@ class ViewerState(Wraps(ng.ViewerState)):
                 continue
             odims = transform.output_dimensions.to_json()
             dims.update({
-                name: [1, split_unit(unit)[1]]
-                for name, (_, unit) in odims.items()
+                name: scale
+                for name, scale in odims.items()
                 if not name.endswith(("^", "'"))
             })
         dim_order = ["x", "y", "z", "t", "right", "anterior", "superior"]
@@ -215,9 +215,7 @@ class ViewerState(Wraps(ng.ViewerState)):
         # NOTE: we must define it explicitly because ng's default is not None
         value = self._wrapped.dimensions
         if value is None or len(value.names) == 0:
-            self.dimensions \
-                = self.__set_dimensions__(self.__default_dimensions__)
-            # self.dimensions = self.__default_dimensions__
+            self.dimensions = self.__default_dimensions__
         return self._wrapped.dimensions
 
     def __set_dimensions__(
