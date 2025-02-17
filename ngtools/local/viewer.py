@@ -342,7 +342,7 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             '--transform', '-t', nargs='+', help='Apply a transform')
         _.add_argument(
-            '--shader', '-s', nargs='+', help='Apply a shader')
+            '--shader', '-s', help='Apply a shader')
 
         # --------------------------------------------------------------
         #   UNLOAD
