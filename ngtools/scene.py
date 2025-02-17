@@ -883,7 +883,7 @@ class Scene(ViewerState):
         radio = np.asarray([0., -1., 1., 0.])
         radio /= np.linalg.norm(radio)
         current = np.asarray(self.cross_section_orientation)  # or [0, 0, 0, 1]
-        current_mode = ["neuro", "radio"][int(
+        current_mode = ["radio", "neuro"][int(
             np.linalg.norm(current - neuro)
             <
             np.linalg.norm(current - radio)
@@ -899,10 +899,33 @@ class Scene(ViewerState):
             return current_mode
         mode = mode or current_mode
 
+        # Display spatial dimensions (reorder if needed)
+        #
+        # TODO
+        # At some point I wanted to show data in the layer voxel space
+        # closest to the current view, but it's a bit more difficult
+        # than I thought (I need to compose the world2voxel rotation
+        # with the world2view transform -- but the latter depends
+        # on the displayed dimension so I'll need to do some filtering/
+        # permutation). I might come back to it at some point. In the
+        # meantime I always reset the displayed dimensions to [x, y, z].
+        display_dimensions_order = [
+            "x", "r", "right", "y", "a", "anterior", "z", "s", "superior"
+        ]
+        display_dimensions = self.spatial_dimensions.names
+        display_dimensions = list(sorted(
+            display_dimensions,
+            key=lambda x: (
+                display_dimensions_order.index(x)
+                if x in display_dimensions_order else float('inf')
+            )
+        ))
+        self.display_dimensions = display_dimensions
+
         if layer:
             if layer not in self.layers:
                 raise ValueError("No layer named:", layer)
-            if len(getattr(self.layers[layer].source, [])) == 0:
+            if len(getattr(self.layers[layer], "source", [])) == 0:
                 raise ValueError(f'Layer "{layer} does not have a source')
 
             #   1. Get voxel2world matrix
@@ -916,44 +939,30 @@ class Scene(ViewerState):
             #   3. preserve permutations and flips
             #      > may not work if exactly 45 deg rotation so add a tiny
             #        bit of noise
-            eps = np.random.randn(*rot.shape) * 1E-8 * rot.abs().max()
-            orient = (rot + eps).round()
-            assert np.allclose(orient @ orient.T, np.eye(len(orient)))
+            eps = np.random.randn(*rot.shape) * 1E-8 * (rot*rot).max()
+            orient = (rot*rot + eps).round()
+            orient = orient * np.sign(rot)
+            assert \
+                np.allclose(np.abs(orient @ orient.T), np.eye(len(orient))), \
+                (orient @ orient.T)
             rot = rot @ orient.T
+            #   4. select displayed axes
+            ind = [
+                transform.output_dimensions.names.index(ax)
+                for ax in display_dimensions
+            ]
+            rot = rot[ind, :][:, ind]
+            #   5. To quaternion
             if np.linalg.det(rot) < 0:
                 # flip left-right
-                rot[0, :] *= -1
-            to_layer = rot.T
-            to_layer = T.matrix_to_quaternion(rot)
+                assert False, "Negative determinant in voxel-to-model matrix"
+            to_layer = T.matrix_to_quaternion(rot.T)
         else:
             to_layer = [0.0, 0.0, 0.0, 1.0]  # identity
 
         # canonical neuro/radio axes
         to_view = neuro if mode[0].lower() == "n" else radio
         to_layer = T.compose_quaternions(to_view, to_layer)
-
-        # TODO
-        # At some point I wanted to show data in the layer voxel space
-        # closest to the current view, but it's a bit more difficult
-        # than I thought (I need to compose the world2voxel rotation
-        # with the world2view transform -- but the latter depends
-        # on the displayed dimension so I'll need to do some filtering/
-        # permutation). I might come back to it at some point. In the
-        # meantime I always reset the displayed dimensions to [x, y, z].
-
-        # Display spatial dimensions (reorder if needed)
-        display_dimensions_order = [
-            "x", "r", "right", "y", "a", "anterior", "z", "s", "superior"
-        ]
-        display_dimensions = self.spatial_dimensions.names
-        display_dimensions = list(sorted(
-            display_dimensions,
-            key=lambda x: (
-                display_dimensions_order.index(x)
-                if x in display_dimensions_order else float('inf')
-            )
-        ))
-        self.display_dimensions = display_dimensions
 
         # Set transform
         self.cross_section_orientation = to_layer.tolist()

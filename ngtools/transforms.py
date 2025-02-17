@@ -131,14 +131,14 @@ def matrix_to_quaternion(mat: np.ndarray) -> np.ndarray:
         mat[0, :] *= -1
     [[Qxx, Qxy, Qxz], [Qyx, Qyy, Qyz], [Qzx, Qzy, Qzz]] = mat
     K = np.asarray([
-        [Qxx - Qyy - Qzz, Qxy + Qyx, Qxz + Qzx, Qzy - Qyz],
+        [Qxx - Qyy - Qzz, Qyx + Qxy, Qzx + Qxz, Qzy - Qyz],
         [Qyx + Qxy, Qyy - Qxx - Qzz, Qzy + Qyz, Qxz - Qzx],
         [Qzx + Qxz, Qzy + Qyz, Qzz - Qxx - Qyy, Qyx - Qxy],
         [Qzy - Qyz, Qxz - Qzx, Qyx - Qxy, Qxx + Qyy + Qzz],
-    ])
+    ]) / 3
     val, vec = np.linalg.eig(K)
     vec = vec[:, val.argmax()]
-    vec = np.concatenate([vec[1:], vec[:1]])  # wiki to neuroglancer
+    # vec = np.concatenate([vec[1:], vec[:1]])  # wiki to neuroglancer
     return vec
 
 
@@ -689,15 +689,16 @@ def convert_transform(
         spec: SpaceConversionSpecification
     ) -> dict[str, float]:
         """Extract the unit part of the specification."""
-        if isinstance(spec, (list, tuple)):
+        if isinstance(spec, (list, tuple)) \
+                and not isinstance(spec, ng.DimensionScale):
             if isinstance(spec[0], Number):
                 spec = ng.DimensionScale.from_json(list(spec))
             else:
                 return [get_spec_unit(spec1) for spec1 in spec]
-        if isinstance(spec, str):
-            return spec
         if isinstance(spec, ng.DimensionScale):
             return spec.unit
+        if isinstance(spec, str):
+            return spec
         if isinstance(spec, dict):
             return {
                 name1: get_spec_unit(spec1)
@@ -713,21 +714,22 @@ def convert_transform(
         """Apply the scaling part of the specification."""
         if names is None:
             names = space.names
-        if isinstance(spec, (list, tuple)):
+        if isinstance(spec, (list, tuple)) \
+                and not isinstance(spec, ng.DimensionScale):
             if isinstance(spec[0], Number):
                 spec = ng.DimensionScale.from_json(list(spec))
             else:
                 for spec1 in spec:
                     space = apply_spec_scale(space, spec1)
                 return space
-        if isinstance(spec, str):
-            return space
         if isinstance(spec, ng.DimensionScale):
             space = space.to_json()
             for name in names:
                 if U.same_unit_kind(space[name][1], spec.unit):
                     space[name] = [spec.scale, spec.unit]
             space = ng.CoordinateSpace(space)
+            return space
+        if isinstance(spec, str):
             return space
         if isinstance(spec, dict):
             for name, spec1 in spec.items():
@@ -847,9 +849,9 @@ def ensure_same_scale(
         scalemap[kind] = [10 ** dist, prefix + kind]
 
     # convert the transform
-    for kind, scale in unitmap.items():
-        scale = ng.DimensionScale(scale)
-        transform = convert_transform(transform, scale)
+    for kind, scale in scalemap.items():
+        spec = ng.DimensionScale(*scale)
+        transform = convert_transform(transform, spec, spec)
     return transform
 
 

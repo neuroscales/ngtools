@@ -309,7 +309,16 @@ class LocalNeuroglancer(OSMixin):
         def add_parser(cmd, *args, **kwargs):  # noqa: ANN001, ANN202
             # We define long descriptions in the _clihelp class at the
             # end of this file.
-            kwargs.setdefault('description', getattr(_clihelp, cmd, None))
+            description = kwargs.get("description", None)
+            if description is None:
+                description = getattr(_clihelp, cmd, None)
+            if description is None:
+                description = kwargs.get("help", None)
+            if description:
+                description = description.rstrip()
+                description += "\n\n"
+                description += _clihelp.header_attributes
+            kwargs.setdefault('description', description)
             return parsers.add_parser(cmd, *args, **kwargs, **F)
 
         # --------------------------------------------------------------
@@ -393,7 +402,7 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             dest='mode', nargs="?", help='New axis names', choices=MODES)
         _.add_argument(
-            '--layer', '-l', nargs="*",
+            '--layer', '-l',
             help='If the name of a layer, align the cross-section with its '
                  'voxel grid. If "world", align the cross section with the '
                  'canonical axes.')
@@ -425,7 +434,7 @@ class LocalNeuroglancer(OSMixin):
             'channel_mode', help='Change the way a dimension is interpreted')
         _.set_defaults(func=self.channel_mode)
         _.add_argument(
-            dest='mode', metavar='MODE',
+            dest='mode',
             choices=('local', 'channel', 'global'),
             help='How to interpret the channel (or another) axis')
         _.add_argument(
@@ -665,9 +674,15 @@ class LocalNeuroglancer(OSMixin):
 _clihelp = type('_clihelp', (object,), {})
 
 b = bformat.bold
+u = bformat.underline
+i = bformat.italic
 R = bformat.fg.red
 G = bformat.fg.green
 B = bformat.fg.blue
+
+_clihelp.header_attributes = textwrap.dedent(
+    f"{b('Arguments')}\n{b('----------')}\n"
+)
 
 _clihelp.load = textwrap.dedent(
 f"""
@@ -677,14 +692,14 @@ Load a file, which can be local or remote.
 {b("--------------")}
 Each path or url may be prepended by:
 
-1)  A layer type protocol, which indicates the kind of object that the file
+1)  A layer type protocol that indicates the kind of object that the file
     contains.
     Examples: {b("volume://")}, {b("labels://")}, {b("tracts://")}.
 
-2)  A format protocol, which indicates the exact file format.
+2)  A format protocol that indicates the exact file format.
     Examples: {b("nifti://")}, {b("zarr://")}, {b("mgh://")}.
 
-3)  An access protocol, which indices the protocol used to  access the files.
+3)  An access protocol that indicates the protocol used to access the files.
     Examples: {b("https://")}, {b("s3://")}, {b("dandi://")}.
 
 All of these protocols are optional. If absent, a guess is made using the
@@ -693,12 +708,12 @@ file extension.
 {b("Examples")}
 {b("--------")}
 
-- Absolute path to local file:  {b("/absolute/path/to/mri.nii.gz")}
-- Relative path to local file:  {b("relative/path/to/mri.nii.gz")}
-- Local file with format hint:  {b("mgh://relative/path/to/linkwithoutextension")}
-- Remote file:                  {b("https://url.to/mri.nii.gz")}
-- Remote file with format hint: {b("zarr://https://url.to/filewithoutextension")}
-- File on dandiarchive:         {b("dandi://dandi/<dandiset>/sub-<id>/path/to/file.ome.zarr")}
+. Absolute path to local file:  {b("/absolute/path/to/mri.nii.gz")}
+. Relative path to local file:  {b("relative/path/to/mri.nii.gz")}
+. Local file with format hint:  {b("mgh://relative/path/to/linkwithoutextension")}
+. Remote file:                  {b("https://url.to/mri.nii.gz")}
+. Remote file with format hint: {b("zarr://https://url.to/filewithoutextension")}
+. File on dandiarchive:         {b("dandi://dandi/<dandiset>/sub-<id>/path/to/file.ome.zarr")}
 
 {b("Layer names")}
 {b("-----------")}
@@ -706,18 +721,23 @@ Neuroglancer layers are named. The name of the layer can be specified with
 the {b("--name")} option. Otherwise, the base name of the file is used (that
 is, without the folder hierarchy).
 
-If multiple files are loaded _and_ the --name option is used, then there
+If multiple files are loaded {i("and")} the {b("--name")} option is used, then there
 should be as many names as files.
 
-{b("Transforms")}
-{b("----------")}
+{b("Transform")}
+{b("---------")}
 A spatial transform (common to all files) can be applied to the loaded
 volume. The transform is specified with the {b("--transform")} option, which
 can be a flattened affine matrix (row major) or the path to a transform file.
 Type {b("help transform")} for more information.
 
-{b("Arguments")}
-{b("----------")}"""  # noqa: E122, E501
+{b("Shader")}
+{b("------")}
+A shader (= colormap, common to all files) can be applied to the loaded
+volume. The shader is specified with the {b("--shader")} option, which
+can be the name of a colormap, the path to a LUT file, or a snippet of
+GLSL code. Type {b("help shader")} for more information.
+"""  # noqa: E122, E501
 )
 
 _clihelp.unload = "Unload layers"
@@ -728,6 +748,8 @@ _clihelp.shader = textwrap.dedent(
 f"""
 Applies a colormap, or a more advanced shading function to all or some of
 the layers.
+
+The input can also be the path to a (local or remote) freesurfer LUT file.
 
 {b("List of builtin colormaps")}
 {b("-------------------------")}
@@ -756,42 +778,94 @@ There are two ways of using this command:
     repeats of the option.
     Examples: {b("-vvvv")} moves downward 4 times
               {b("-^^^^")} moves upwards 4 times
-"""  # noqa: E122
+"""  # noqa: E122, E501
 )
 
 _clihelp.display = textwrap.dedent(
 f"""
-Display the data in a different space (world or canonical), or in a
-different orientation (RAS, LPI, and permutations thereof)
+Neuroglancer is quite flexible in the sense that it does not have a
+predefined "hard" coordinate frame in which the data is shown. Instead,
+the {R("red")}, {G("green")} and {B("blue")} "visual" axes can be
+arbitrarily mapped to any of the existing "model" axes.
 
-By default, neuroglancer displays data in their "native" space, where
-native means a "XYZ" coordinate frame, whose mapping from and to voxels
-is format-spacific. In {b("nifti://")} volumes, XYZ always corresponds to
-the RAS+ world space, whereas in {b("zarr://")}, XYZ correspond to canonical
-axes ordered according to the OME metadata.
+By default, most formats use ({b("x")}, {b("y")}, {b("z")}) as their
+model axes, although they may not have predefined anatomical meaning.
+NIfTI files do have an anatomical convention, under which axes
+{R("x")}, {G("y")}, {B("z")} map to the {R("right")}, {G("anterior")}, {B("superior")} sides of the brain.
 
-Because of our neuroimaging bias, we choose to interpret XYZ as RAS+ (which
-is consistant with the nifti behavior).
+In order to show data in a frame that is standard in the neuroimaging
+field, we therefore map the visual axes {R("red")}, {G("green")}, {B("blue")}
+to the model axes {R("x")}, {G("y")}, {B("z")} when loading data in an
+empty scene. This mapping is also enforced every time the command
+{b("space")} is used.
 
-The simplest usage of this command is therefore to switch between
-different representations of the world coordinate system:
-    . {b("display RAS")}  (alias: {b(" display right anterior superior")})
-      maps the {R("red")}, {G("green")} and {B("blue")} axes to {R("right")}, {G("anterior")}, {B("superior")}.
-    . {b("display LPI")}  (alias: {b(" display left posterior inferior")})
-      maps the {R("red")}, {G("green")} and {B("blue")} axes to {R("left")}, {G("posterior")}, {B("inferior")}.
+The {b("display")} command can be used to assign a different set of
+model axes to the visual axes.
 
-A second usage allows switching between displaying the data in the world
-frame and displaying the data in the canonical frame of one of the layers
-(that is, the frame axes are aligned with the voxel dimensions).
-    . {b("display --layer <name>")} maps the {R("red")}/{G("green")}/{B("blue")}
-      axes to the canonical axes of the layer <name>
-    . {b("display --world")} maps (back) the {R("red")}/{G("green")}/{B("blue")}
-      axes to the axes of world frame.
+{u("See also")}:  {b("space")}, {b("world_axes")}
+"""  # noqa: E122, E501
+)
 
-Of course, both usages can be combined:
-    . {b("display RAS --layer <name>")}
-    . {b("display LPI --world")}
+_clihelp.world_axes = textwrap.dedent(
+f"""
+Neuroglancer is quite flexible in the sense that it does not have a
+predefined "hard" coordinate frame in which the data lives. Instead,
+arbitrary "model" axes can be defines, in terms of an affine transformation
+of "native" axes.
 
+By default, most formats use ({b("x")}, {b("y")}, {b("z")}) as their
+model axes, although they may not have predefined anatomical meaning.
+NIfTI files do have an anatomical convention, under which axes
+{R("x")}, {G("y")}, {B("z")} map to the {R("right")}, {G("anterior")}, {B("superior")} sides of the brain.
+
+This function allows native axes to replaces by more anatomically
+meaningful names, by leveraging neuroglancer's transforms. In order
+to allow these transforms to be undone, and new data to be loaded without
+introducing conflicting coordinate frames, we store the mapping inside
+local annotation layers named "__world_axes_native__" and
+"__world_axes_current__".
+
+{u("See also")}:  {b("space")}, {b("display")}
+
+{b("Examples")}
+{b("--------")}
+
+. `world_axes right anterior superior` : x -> right, y -> anterior, z -> superior
+. `world_axes ras`                     : x -> right, y -> anterior, z -> superior
+. `world_axes u v w --src z y x`       : z -> u, y -> v, z -> w
+"""  # noqa: E122, E501
+)
+
+_clihelp.space = textwrap.dedent(
+f"""
+This function rotates and orients the cross-section plane such that
+
+. Visual axes are pointed according to some defined convention
+  (radio or neuro)
+. The cross section is aligned with either the model coordinate frame,
+  or one of the layer's voxel space.
+
+{u("Note:")} when this function is used, the displayed axes are always reset
+to {R("x")}, {G("y")}, {B("z")} (or their world names if {b("world_axes")}) has been used.
+
+{b("Examples")}
+{b("--------")}
+
+. `space radio`                 : Orients the cross section such that the {R("x")}
+                                  axis points to the {b("left")} of the first quadrant
+                                  (radiological convention).
+. `space neuro`                 : Orients the cross section such that the {R("x")}
+                                  axis points to the {b("right")} of the first quadrant
+                                  (neurological convention).
+. `space --layer <LAYER>`       : Aligns the cross-section with the voxels of
+                                  the designated layer, while keeping the
+                                  existing radio or neuro convention.
+. `space --layer world`         : Aligns the cross-section with the canonical
+                                  model space, while keeping the existing radio
+                                  or neuro convention.
+. `space radio --layer <LAYER>` : Aligns the cross-section with the voxels of
+                                  the designated layer, and uses the radiological
+                                  convention.
 """  # noqa: E122, E501
 )
 
@@ -814,6 +888,30 @@ windows into a row or a column -- or even nested rows and columns --
 using the {b("--stack")} option. The {b("--layer")} option allows assigning
 specific layers to a specific window. We also define {b("--append")} and
 {b("--insert")} to add a new window into an existing stack of windows.
+"""  # noqa: E122, E501
+)
 
+_clihelp.channel_mode = textwrap.dedent(
+f"""
+In neuroglancer, axes can be interpreted in three different ways:
+
+. global  : The axis is common to all layers and can be navigated
+            (default for axes that have spatial or temporal units)
+
+. local   : The axis is specific to a layers and navigation is local
+            (dimension names end with ')
+
+. channel : The axis is specific to a layer; enables multi-channel shading
+            (dimension names end with ^)
+
+{b("Notes")}
+{b("-----")}
+
+. When an axis is local ('), only one channel can be shown at once.
+
+. When an axis is a channel (^), all channels can be mixed into a single
+  view using a multi-channel shader.
+
+. When an axis is global, navigation is linked across layers.
 """  # noqa: E122, E501
 )
