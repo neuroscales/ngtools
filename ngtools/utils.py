@@ -2,6 +2,8 @@
 # stdlib
 import json
 import logging
+import socket
+import sys
 from urllib.parse import quote
 
 # externals
@@ -161,3 +163,23 @@ def Wraps(kls: type) -> type:
         _NG_TYPE_WRAPPERS[kls] = _Wraps
 
     return _NG_TYPE_WRAPPERS[kls]
+
+
+def find_available_port(port: int = 0, ip: str = "") -> tuple[int, str]:
+    """Return an available port and the local IP."""
+    try:
+        s = socket.socket()
+        s.bind((ip, port))
+        ip = s.getsockname()[0]
+        port = s.getsockname()[1]
+        s.close()
+    except OSError:
+        port0 = port
+        s = socket.socket()
+        s.bind((ip, 0))
+        ip = s.getsockname()[0]
+        port = s.getsockname()[1]
+        s.close()
+        print(f'Port {port0} already in use. Use port {port} instead.',
+              file=sys.stderr)
+    return port, ip

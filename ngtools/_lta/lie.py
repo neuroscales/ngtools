@@ -1,8 +1,13 @@
+# stdlib
+from warnings import warn
+
+# externals
 import numpy as np
+
+# internals
 from .basis import build_affine_basis
 from .expm import expm
 from .utils import ensure_list
-from warnings import warn
 
 
 def multi_dot(x):

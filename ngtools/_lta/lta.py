@@ -1,4 +1,5 @@
-"""MGH file format for affine transformations
+"""
+MGH file format for affine transformations.
 
 https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/LtaFormat
 
@@ -27,12 +28,24 @@ A bit must be said on the FreeSurfer space conventions:
   spaces (voxel-to-voxel, physical-to-physical, ras-to-ras or even
   rsa-to-rsa).
 """
-from enum import IntEnum
+# stdlib
 import os
 from dataclasses import dataclass
+from enum import IntEnum
+
+# externals
 import numpy as np
-from .fsutils import (read_key, read_values, write_key, write_values,
-                      fs_to_affine, affine_to_fs, affine_matmul)
+
+# internals
+from .fsutils import (
+    affine_matmul,
+    affine_to_fs,
+    fs_to_affine,
+    read_key,
+    read_values,
+    write_key,
+    write_values,
+)
 
 
 class Constants(IntEnum):

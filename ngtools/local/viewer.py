@@ -1,11 +1,9 @@
 """Local neuroglancer instance with a shell-like interface."""
 # stdlib
 import argparse
-import asyncio
 import atexit
 import contextlib
 import datetime
-import json
 import logging
 import os.path
 import stat
@@ -16,19 +14,17 @@ from typing import Generator
 # externals
 import neuroglancer as ng
 import numpy as np
-import requests
 from neuroglancer.server import set_server_bind_address as ng_bind_address
 from neuroglancer.server import stop as ng_stop_server
-from tornado.web import RequestHandler, StaticFileHandler
 
 # internals
 from ngtools.local.console import ActionHelpFormatter, Console
-from ngtools.local.fileserver import find_available_port
+from ngtools.local.fileserver import LocalFileServer, StaticFileHandler
+from ngtools.local.handlers import LincHandler, LutHandler
 from ngtools.local.termcolors import bformat
-from ngtools.opener import linc_auth_opt
 from ngtools.scene import Scene
-from ngtools.shaders import load_fs_lut, pretty_colormap_list
-from ngtools.utils import NG_URLS
+from ngtools.shaders import pretty_colormap_list
+from ngtools.utils import NG_URLS, find_available_port
 
 # unix-specific imports
 try:
@@ -93,9 +89,8 @@ def state_action(name: str) -> callable:
         scene = Scene(state.to_json(), stdio=self.console.stdio)
         # if loader, pass fileserver
         if name in ("load", "shader"):
-            kwargs["fileserver"] = self.get_server_url() + "/ngtools/"
-            # kwargs["fileserver"] = self.fileserver.get_url()
-        # apply function
+            kwargs["fileserver"] = self.get_fileserver_url()
+        # run action
         scene_fn = getattr(scene, name)
         out = scene_fn(*args, **kwargs)
         # save state
@@ -194,120 +189,6 @@ class OSMixin:
         return os.getcwd()
 
 
-class LutHandler(RequestHandler):
-    """Handler that returns a segment_properties from a FS LUT."""
-
-    def get(self, path: str) -> None:  # noqa: D102
-
-        if not path.endswith("info"):
-            self.send_error(404)
-        path = path[:-5]
-
-        if not os.path.exists(os.path.join("/", path)):
-            self.send_error(404)
-
-        try:
-            lut = load_fs_lut(path)
-        except Exception as e:
-            self.send_error(400, message=e.args[0])
-
-        segment_properties = {
-            "@type": "neuroglancer_segment_properties",
-            "inline": {
-                "ids": list(map(str, lut.keys())),
-                "properties": [
-                    {
-                        "id": "name",
-                        "type": "label",
-                        "description": "Name",
-                        "values": [name for name, _ in lut.values()]
-                    }
-                ]
-            }
-        }
-        self.finish(json.dumps(segment_properties).encode())
-
-
-class LincHandler(ng.server.BaseRequestHandler):
-    """Handler that redirects to linc data."""
-
-    VALID_KEYS = (
-        "accept",
-        "accept-encoding",
-        "content-type",
-        "content-length",
-        "connection",
-        "last-modified",
-        "accept-ranges",
-        "date",
-        "etag",
-        "vary",
-    )
-
-    def prepare(self) -> None:  # noqa: D102
-        if getattr(self.application, "_linc_cookies", None) is None:
-            self.application._linc_cookies = linc_auth_opt()
-        if getattr(self.application, "_linc_sessions", None) is None:
-            self.application._linc_session = requests.Session()
-        self._linc_session = self.application._linc_session
-        self._linc_cookies = self.application._linc_cookies
-
-    async def _request(self, action: str, path: str) -> None:
-        session = self._linc_session
-        cookies = self._linc_cookies
-
-        headers = {
-            key: value
-            for key, value in self.request.headers.items()
-            if key.lower() in self.VALID_KEYS
-        }
-
-        action_fn = getattr(session, action.lower())
-
-        def _action() -> tuple[int, dict, bytes]:
-            response = action_fn(
-                "https://neuroglancer.lincbrain.org/" + path,
-                headers=headers,
-                **cookies,
-            )
-            status_code = getattr(response, "status_code", 400)
-            out_headers = dict(getattr(response, "headers", {}))
-            content = getattr(response, "content", None)
-            return status_code, out_headers, content
-
-        try:
-
-            status_code, headers, content = await asyncio.wrap_future(
-                self.server.executor.submit(_action)
-            )
-
-        except Exception as e:
-            LOG.debug(f"LincHandler: {path} | {e}")
-            self.send_error(400, message=e.args[0])
-            return
-
-        self.set_status(status_code)
-
-        for key, val in headers.items():
-            if key.lower() == "etag":
-                # lincbrain returns "ETag" but tornado checks for "Etag"
-                key = "Etag"
-            if key.lower() in self.VALID_KEYS:
-                self.set_header(key, val)
-
-        if action == "GET":
-            self.finish(content)
-        else:
-            self.finish()
-        LOG.debug(f"{action} | {path} | done")
-
-    def get(self, path: str) -> None:  # noqa: D102
-        return self._request("GET", path)
-
-    def head(self, path: str) -> None:  # noqa: D102
-        return self._request("HEAD", path)
-
-
 class LocalNeuroglancer(OSMixin):
     """
     A local instance of neuroglancer that can launch its own local fileserver.
@@ -321,6 +202,7 @@ class LocalNeuroglancer(OSMixin):
         port: int = 0,
         ip: str = '',
         token: int = 1,
+        fileserver: bool | int | LocalFileServer = True,
         **console_kwargs,
     ) -> None:
         """
@@ -332,6 +214,9 @@ class LocalNeuroglancer(OSMixin):
             IP to use.
         token : str
             Unique id for the instance.
+        fileserver : bool | int | LocalFileServer
+            Whether to run a local fileserver.
+            If an int, should be the port to use.
         debug : bool
             Print full trace when an error is encountered.
         """
@@ -342,12 +227,18 @@ class LocalNeuroglancer(OSMixin):
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
         # Add specific handlers
-        ng_server = ng.server.global_server
-        ng_server.app.wildcard_router.add_rules([
-            (r"^/ngtools/local/(.*)", StaticFileHandler, {"path": "/"}),
-            (r"^/ngtools/lut/(.*)", LutHandler),
-            (r"^/ngtools/linc/(.*)", LincHandler, {"server": ng_server}),
-        ])
+        if fileserver is not False:
+            if not isinstance(fileserver, LocalFileServer):
+                if fileserver is not None:
+                    fileserver_port = int(fileserver)
+                fileserver = LocalFileServer(fileserver_port, ip)
+
+            fileserver.app.handlers.extend([
+                (r"^/local/(.*)", StaticFileHandler),
+                (r"^/lut/(.*)", LutHandler),
+                (r"^/linc/(.*)", LincHandler),
+            ])
+        self.fileserver = fileserver
 
         # Setup console
         self.console = self._make_console(**console_kwargs)
@@ -387,11 +278,15 @@ class LocalNeuroglancer(OSMixin):
 
     def get_server_url(self) -> str:
         """URL of the neuroglancer server."""
-        return ng.server.get_server_url().rstrip("/")
+        return ng.server.get_server_url().rstrip("/") + "/"
 
     def get_viewer_url(self) -> str:
         """URL of the viewer."""
-        return self.viewer.get_viewer_url()
+        return self.viewer.get_viewer_url().rstrip("/") + "/"
+
+    def get_fileserver_url(self) -> str:
+        """URL of the neuroglancer server."""
+        return self.fileserver.get_url().rstrip("/") + "/"
 
     # ==================================================================
     #

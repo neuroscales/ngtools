@@ -37,6 +37,7 @@ Issues = "https://github.com/balbasty/ngtools/issues"
 
 [project.scripts]
 nglocal = "ngtools.local.cli:main"
+ngtools = "ngtools.local.cli:main"
 neuroglancer = "ngtools.local.cli:main"
 
 [build-system]

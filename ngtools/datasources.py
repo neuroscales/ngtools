@@ -124,6 +124,14 @@ class LayerDataSources(Wraps(ng.LayerDataSources)):
     #             arg = [arg]
     #     super().__init__(arg, **kwargs)
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        # Trigger data source computation so that defaults that differ
+        # between ngtools and neuroglancer are set according to ngtools.
+        for i, val in enumerate(self):
+            self[i] = val
+
     @functools.wraps(ng.LayerDataSources.__iter__)
     def __iter__(self) -> Iterator[ng.LayerDataSource]:
         for source in super().__iter__():
@@ -273,6 +281,7 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
                     _DATASOURCE_INFO_CACHE[key] = self._compute_info()
                 except Exception:
                     LOG.warning(f"Could not compute info for: {key}")
+                    raise
             else:
                 LOG.debug("Use cached info")
             self._info = _DATASOURCE_INFO_CACHE.get(key, None)
@@ -754,7 +763,7 @@ class NiftiVolumeInfo(VolumeInfo):
     def _load(self) -> nib.nifti1.Nifti1Header | nib.nifti2.Nifti2Header:
         NiftiHeaders = (nib.nifti1.Nifti1Header, nib.nifti2.Nifti2Header)
         tic = time.time()
-        url = parse_protocols(self.url)[-1]
+        url = parse_protocols(self.url).url
         for compression in ('infer', 'gzip', None):
             fileobj = open(url, compression=compression)
             for hdr_klass in NiftiHeaders:
@@ -934,17 +943,23 @@ class NiftiDataSource(VolumeDataSource):
 
     def _load_image(self, mode: str = "r") -> nib.nifti1.Nifti1Image:
         tic = time.time()
-        url = self.url[8:]
-        self._stream = open(url, compression='infer', mode=mode)
-        for image_klass in (nib.nifti1.Nifti1Image, nib.nifti2.Nifti2Image):
-            try:
-                img = image_klass.from_stream(self._stream)
-                toc = time.time()
-                LOG.info(f"Map nifti image: {toc-tic} s")
-                return img
-            except Exception:
-                pass
-        raise RuntimeError("Failed to load file.")
+        NiftiImages = (nib.nifti1.Nifti1Image, nib.nifti2.Nifti2Image)
+
+        url = parse_protocols(self.url).url
+        for compression in ('infer', 'gzip', None):
+            self._stream = open(url, compression=compression)
+            for img_klass in NiftiImages:
+                try:
+                    hdr = img_klass.from_stream(self._stream)
+                    toc = time.time()
+                    LOG.info(f"Loaded nifti file: {toc-tic} s")
+                    return hdr
+                except Exception:
+                    pass
+            self._stream = None
+        toc = time.time()
+        LOG.error(f"Failed to load nifti file {url}: {toc-tic} s")
+        raise RuntimeError(f"Failed to load nifti file {url}.")
 
     def __del__(self) -> None:
         try:
@@ -1189,7 +1204,7 @@ class Zarr2VolumeInfo(ZarrVolumeInfo):
 
     def __init__(self, url: str, nifti: bool | None = None) -> None:
         super().__init__(url)
-        url = UPath(parse_protocols(self.url)[-1])
+        url = UPath(parse_protocols(self.url).url)
 
         if exists(url / ".zgroup"):
             is_group = True
@@ -1244,7 +1259,7 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
 
     def __init__(self, url: str, nifti: bool | None = None) -> None:
         super().__init__(self)
-        url = UPath(parse_protocols(self.url)[-1])
+        url = UPath(parse_protocols(self.url).url)
 
         if not exists(url / "zarr.json"):
             raise ValueError("Not a zarr")
@@ -1370,7 +1385,7 @@ class ZarrDataSource(VolumeDataSource, metaclass=_ZarrDataSourceFactory):
     @classmethod
     def guess_version(cls, url: str) -> int:
         """Guess zarr version."""
-        url = UPath(parse_protocols(url)[-1])
+        url = UPath(parse_protocols(url).url)
         if exists(url / ".zgroup"):
             return 2
         if exists(url / ".zarray"):
@@ -1393,7 +1408,7 @@ class ZarrDataSource(VolumeDataSource, metaclass=_ZarrDataSourceFactory):
     def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
         """Return an array-like object pointing to a pyramid level."""
         tic = time.time()
-        url = parse_protocols(self.url)[-1]
+        url = parse_protocols(self.url).url
         fs = filesystem(url)
         store = zarr.storage.FSStore(url, fs=fs, mode=mode)
         if not self.info.hasOME():
@@ -1601,5 +1616,5 @@ class PrecomputedVolumeDataSource(VolumeDataSource, PrecomputedDataSource):
         return PrecomputedVolumeInfo(self.url)
 
     def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
-        url = parse_protocols(self.url)[-1]
+        url = parse_protocols(self.url).url
         return CloudVolume(url, mip=level)

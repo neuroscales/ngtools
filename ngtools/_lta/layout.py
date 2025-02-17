@@ -1,5 +1,10 @@
-import numpy as np
+# stdlib
 import itertools
+
+# externals
+import numpy as np
+
+# internals
 from .utils import ensure_list
 
 

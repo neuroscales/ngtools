@@ -1,6 +1,11 @@
-import numpy as np
-from ast import literal_eval
+# stdlib
 import math as pymath
+from ast import literal_eval
+
+# externals
+import numpy as np
+
+# internals
 from .utils import ensure_list
 
 affine_subbasis_choices = ('T', 'R', 'Z', 'Z0', 'I', 'S', 'SC')

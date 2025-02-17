@@ -191,7 +191,10 @@ class LayerFactory(type):
             return GuessedLayer(arg, *args, **kwargs)
 
         # Switch based on data source type
+        LOG.debug("LayerFactory - build sources")
         sources = LayerDataSources(kwargs.get("source", None))
+        kwargs["source"] = sources
+
         for source in sources:
             LOG.debug(f"LayerFactory - source: {str(type(source))}")
             if isinstance(source, VolumeDataSource):
@@ -204,7 +207,7 @@ class LayerFactory(type):
                 LOG.debug("LayerFactory - guess MeshLayer")
                 GuessedLayer = MeshLayer
             if GuessedLayer:
-                kwargs["source"] = sources
+                # kwargs["source"] = sources
                 return GuessedLayer(*args, **kwargs)
 
         # Fallback
@@ -250,6 +253,16 @@ class Layer(Wraps(ng.Layer), metaclass=LayerFactory):
     tool : Tool | str
         Active tool (or tool name).
     """  # noqa: E501
+
+    def __init__(self, *args, **kwargs) -> None:
+        LOG.debug("Layer.__init__")
+        super().__init__(*args, **kwargs)
+        if hasattr(self, "source"):
+            # Re-build data sources so that parameters for which
+            # ngtools and neuroglancer use different defaults values
+            # get set up according to ngtools conventions.
+            LOG.debug("Layer - recompute data sources")
+            self.source = LayerDataSources(self.source)
 
     def apply_transform(self, *args: ng.CoordinateSpaceTransform) -> "Layer":
         """Apply an additional transform in model space."""
@@ -340,6 +353,13 @@ class ImageLayer(_SourceMixin, Wraps(ng.ImageLayer), Layer):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+
+        # Re-build data sources so that parameters for which
+        # ngtools and neuroglancer use different defaults values
+        # get set up according to ngtools conventions.
+        LOG.debug("Layer - recompute data sources")
+        self.source = LayerDataSources(self.source)
+
         if self.source and not self.shaderControls:
             source = self.source[0]
             try:
@@ -350,8 +370,11 @@ class ImageLayer(_SourceMixin, Wraps(ng.ImageLayer), Layer):
                         "window": np.stack([mn, mx]).tolist(),
                     }
                 }
-            except Exception:
+            except Exception as e:
                 # The source may not be accessible, fail gracefully
+                url = getattr(source, "url", None)
+                url = getattr(source, "local_url", url)
+                LOG.error(f"Could not compute quantiles for {url}: {e}")
                 pass
 
 
@@ -399,6 +422,15 @@ class SegmentationLayer(_SourceMixin, Wraps(ng.SegmentationLayer), Layer):
     linked_segmentation_group : str, optional
     linked_segmentation_color_group : str | False
     """  # noqa: E501
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        # Re-build data sources so that parameters for which
+        # ngtools and neuroglancer use different defaults values
+        # get set up according to ngtools conventions.
+        LOG.debug("Layer - recompute data sources")
+        self.source = LayerDataSources(self.source)
 
     ...
 

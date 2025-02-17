@@ -1,3 +1,4 @@
+# stdlib
 from types import GeneratorType as generator
 
 

@@ -518,7 +518,7 @@ class Scene(ViewerState):
             Alternative way of providing layer names.
             If used, `uri` cannot be a `dict`.
         """
-        fileserver = kwargs.pop("fileserver", None)
+        fileserver = (kwargs.pop("fileserver", "") or "").rstrip("/")
 
         if kwargs.get("filename", []):
             if uri:
@@ -570,22 +570,21 @@ class Scene(ViewerState):
                     raise ValueError(
                         "Cannot load local files without a fileserver"
                     )
-                short_uri = fileserver + "local" + op.abspath(short_uri)
+                short_uri = fileserver + "/local/" + op.abspath(short_uri)
                 parsed = parsed.with_part(stream="http", url=short_uri)
 
             if fileserver:
                 # if local viewer and data is on linc
                 # -> redirect to our handler that deals with credentials
-                linc_prefix = "https://neuroglancer.lincbrain.org"
+                linc_prefix = "https://neuroglancer.lincbrain.org/"
                 if parsed.url.startswith(linc_prefix):
                     path = parsed.url[len(linc_prefix):]
-                    local_url = fileserver + "linc" + path
+                    local_url = fileserver + "/linc/" + path
                     parsed = parsed.with_part(stream="http", url=local_url)
 
             uri = str(parsed).rstrip("/")
             layer = Layer(str(parsed), **kwargs)
             self.layers.append(name=name, layer=layer)
-            self.stdio.print()
             self.stdio.info(f"Loaded: {self.layers[name].to_json()}")
             onames.append(name)
 
@@ -1489,7 +1488,7 @@ class Scene(ViewerState):
         layer_type : str or list[str], optional
             Apply the shader to these layer types. Default: all layers.
         """
-        fileserver = kwargs.pop("fileserver", None)
+        fileserver = (kwargs.pop("fileserver", "") or "").rstrip("/")
         segment_properties = None
 
         layer_names = _ensure_list(layer or [])
@@ -1524,8 +1523,11 @@ class Scene(ViewerState):
                 for key, (_, (r, g, b, _)) in lut.items()
             }
             if fileserver:
+                path = parse_protocols(path).url
+                if "://" not in path:
+                    path = op.abspath(path)
                 segment_properties = (
-                    "precomputed://" + fileserver + "lut/" + op.abspath(path)
+                    "precomputed://" + fileserver + "/lut/" + path
                 )
 
         for layer in self.layers:
@@ -1807,7 +1809,7 @@ class Scene(ViewerState):
                     url = getattr(source, "url", "")
                     if isinstance(url, str) and (
                         ("lincbrain.org" in url) or
-                        ("/ngtools/linc/" in url)
+                        ("/linc/" in url)
                     ):
                         instance = "linc"
                         break
@@ -1816,9 +1818,9 @@ class Scene(ViewerState):
         if instance.lower() == "linc":
 
             def fix_url(url: str) -> str:
-                if "/ngtools/linc" in url:
-                    url = url.split("/ngtools/linc")[-1]
-                    url = "https://neuroglancer.lincbrain.org" + url
+                if "/linc/" in url:
+                    url = url.split("/linc/")[-1]
+                    url = "https://neuroglancer.lincbrain.org/" + url
                 return url
 
             for layer in state.get("layers", []):

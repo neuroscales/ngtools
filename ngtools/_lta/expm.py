@@ -7,6 +7,7 @@ approximations (as in scipy) could be used instead. This may be the
 object of future work.
 
 """
+# externals
 import numpy as np
 
 
@@ -151,4 +152,3 @@ def expm(X, basis=None, grad_X=False, grad_basis=False, hess_X=False,
     if hess_X:
         out.append(hE)
     return out[0] if len(out) == 1 else tuple(out)
-

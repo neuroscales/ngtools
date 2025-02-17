@@ -1,8 +1,11 @@
 """Tools to convert between affine representations."""
 
+# externals
 import numpy as np
-from .lie import matrix_to_lie, lie_to_matrix
+
+# internals
 from .layout import layout_matrix
+from .lie import lie_to_matrix, matrix_to_lie
 
 
 class Affine:

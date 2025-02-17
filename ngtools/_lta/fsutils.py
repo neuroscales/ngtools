@@ -1,9 +1,14 @@
+# stdlib
 import re
 from warnings import warn
-from .layout import layout_matrix
-from .conversions import Orientation, XYZC, HomogeneousAffineMatrix
-from .utils import ensure_list
+
+# externals
 import numpy as np
+
+# internals
+from .conversions import XYZC, HomogeneousAffineMatrix, Orientation
+from .layout import layout_matrix
+from .utils import ensure_list
 
 
 def ensure_homogeneous(mat):

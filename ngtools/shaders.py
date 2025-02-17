@@ -15,6 +15,7 @@ from typing import IO
 # internals
 from ngtools import cmdata
 from ngtools.local.termcolors import bformat
+from ngtools.opener import open
 
 
 def _flatten(x: list[list]) -> tuple:

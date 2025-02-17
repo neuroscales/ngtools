@@ -190,6 +190,7 @@ class Console(argparse.ArgumentParser):
             try:
                 # Query input
                 args = self.input("\nDo you really want to exit ([y]/n)?")
+                args.strip()
                 if args[:1].lower() == "n":
                     return False
                 else:
@@ -204,7 +205,11 @@ class Console(argparse.ArgumentParser):
                 try:
                     # Query input
                     args = self.input(iformat.fg.green(f'[{count}] '))
-                    if not args.strip():
+                    args = args.strip()
+                    if not args:
+                        continue
+                    if args[:1] == "#":
+                        # Allow for "comments"
                         continue
                     count += 1
                 except EOFError:

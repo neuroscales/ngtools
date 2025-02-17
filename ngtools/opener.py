@@ -34,6 +34,7 @@ import logging
 import time
 from bz2 import BZ2File
 from collections import namedtuple
+from inspect import isawaitable
 from io import BufferedReader, BytesIO
 from os import PathLike, environ
 from pathlib import Path
@@ -42,6 +43,7 @@ from typing import IO
 
 # externals
 import fsspec
+import fsspec.asyn
 import numpy as np
 import requests
 from indexed_gzip import IndexedGzipFile
@@ -314,6 +316,21 @@ def exists(uri: URILike, **opt) -> bool:
     return exists
 
 
+async def async_exists(uri: URILike, **opt) -> bool:
+    """Check that the file or directory pointed by a URI exists."""
+    tic = time.time()
+    uri0 = uri
+    uri = parse_protocols(uri).url
+    fs = filesystem(uri, **opt)
+    if isinstance(fs, fsspec.asyn.AsyncFileSystem):
+        exists = await fs._exists(uri)
+    else:
+        exists = fs.exists(uri)
+    toc = time.time()
+    LOG.debug(f"exists({uri0}): {exists} | {toc-tic} s")
+    return exists
+
+
 def read_json(fileobj: FileLike, *args, **kwargs) -> dict:
     """Read local or remote JSON file."""
     tic = time.time()
@@ -347,6 +364,19 @@ def fsopen(
     """Open a file with fsspec (authentify if needed)."""
     fs = filesystem(uri)
     return fs.open(uri, mode, compression=compression)
+
+
+async def fsopen_async(
+    uri: URILike,
+    mode: str = "rb",
+    compression: str | None = None
+) -> fsspec.spec.AbstractBufferedFile:
+    """Open a file with fsspec (authentify if needed)."""
+    fs = filesystem(uri)
+    if hasattr(fs, "open_async"):
+        return await fs.open_async(uri, mode, compression=compression)
+    else:
+        return fs.open(uri, mode, compression=compression)
 
 
 class chain:
@@ -615,7 +645,7 @@ class open:
         return self._effective_fileobj.writeline(*a, **k)
 
     def peek(self, *a, **k) -> bytes | str:
-        """Read tge first bytes without moving the cursor."""
+        """Read the first bytes without moving the cursor."""
         return self._effective_fileobj.peek(*a, **k)
 
     def seek(self, *a, **k) -> int:
@@ -625,3 +655,161 @@ class open:
     def tell(self, *a, **k) -> int:
         """Return the cursor position."""
         return self._effective_fileobj.tell(*a, **k)
+
+    def readable(self) -> bool:
+        """Is stream readable."""
+        return all(getattr(x, "readable", False) for x in self.fileobjs)
+
+    def writable(self) -> bool:
+        """Is stream readable."""
+        return all(getattr(x, "writable", False) for x in self.fileobjs)
+
+    def seekable(self) -> bool:
+        """Is stream readable."""
+        return all(getattr(x, "seekable", False) for x in self.fileobjs)
+
+
+async def _maybe_await(obj: object) -> object:
+    if isawaitable(obj):
+        return await obj
+    else:
+        return obj
+
+
+class async_open(open):
+    """Async version of open."""
+
+    async def _close_async(self) -> None:
+        # close all the file-like objects that we've created
+        for fileobj in reversed(self.fileobjs):
+            if isinstance(fileobj, fsspec.asyn.AbstractAsyncStreamedFile):
+                await fileobj.close()
+            else:
+                fileobj.close()
+        self.fileobjs = []
+        self._is_open = False
+
+    async def _open_async(self) -> None:
+        if self._is_open:
+            return
+        if isinstance(self.fileobj, str):
+            await self._fsspec_open_async()
+        if self.compression == 'infer' and 'r' in self.mode:
+            await self._infer_async()
+        self._is_open = True
+
+    async def _fsspec_open_async(self) -> None:
+        # Take the last file object (most likely the input fileobj), which
+        # must be a path, and open it with `fsspec.open()`.
+        uri = stringify_path(self._effective_fileobj)
+        # Ensure that input is a string
+        if not isinstance(uri, str):
+            raise TypeError("Expected a URI, but got:", uri)
+        # Set compression option
+        opt = dict()
+        if not (self.compression == 'infer' and 'r' in self.mode):
+            opt['compression'] = self.compression
+        # Open with fsspec
+        fileobj = await fsopen_async(uri, mode=self.mode, **opt)
+        self.fileobjs.append(fileobj)
+        # -> returns a fsspec object that's not always fully opened
+        #    so open again to be sure.
+        if hasattr(fileobj, 'open_async'):
+            fileobj = await fileobj.open_async()
+            self.fileobjs.append(fileobj)
+        elif hasattr(fileobj, 'open'):
+            fileobj = fileobj.open()
+            self.fileobjs.append(fileobj)
+
+    async def _infer_async(self) -> None:
+        # Take the last file object (which at this point must be a byte
+        # stream) and infer its compression from its magic bytes.
+        fileobj = self._effective_fileobj
+        if not hasattr(fileobj, "peek"):
+            fileobj = BufferedReader(fileobj)
+            self.fileobjs.append(fileobj)
+        try:
+            if hasattr(fileobj, "peek_async"):
+                magic = await fileobj.peek(2)
+            else:
+                magic = fileobj.peek(2)
+        except Exception:
+            return
+        if magic == b'\x1f\x8b':
+            fileobj = IndexedGzipFile(fileobj)
+            self.fileobjs.append(fileobj)
+        if magic == b'BZh':
+            fileobj = BZ2File(fileobj)
+            self.fileobjs.append(fileobj)
+
+    # ------------------------------------------------------------------
+    # open() / IO API
+    # ------------------------------------------------------------------
+
+    async def __aenter__(self) -> IO:
+        await self._open_async()
+        return self._effective_fileobj
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self._close_async()
+
+    async def __del__(self) -> None:
+        await self._close_async()
+
+    async def open(self) -> IO:
+        """Open the file."""
+        await self._open_async()
+        return self
+
+    async def close(self) -> None:
+        """Close the file object."""
+        await self._close_async()
+
+    async def read(self, *a, **k) -> bytes | str:
+        """Read characters ("t") or byes ("b")."""
+        return await _maybe_await(self._effective_fileobj.read(*a, **k))
+
+    async def readline(self, *a, **k) -> bytes | str:
+        """Read lines ("t")."""
+        return await _maybe_await(self._effective_fileobj.readline(*a, **k))
+
+    async def readinto(self, *a, **k) -> None:
+        """Read bytes into an existing buffer."""
+        return await _maybe_await(self._effective_fileobj.readinto(*a, **k))
+
+    async def write(self, *a, **k) -> int:
+        """Write characters ("t") or bytes ("b")."""
+        return await _maybe_await(self._effective_fileobj.write(*a, **k))
+
+    async def writeline(self, *a, **k) -> int:
+        """Write lines."""
+        return await _maybe_await(self._effective_fileobj.writeline(*a, **k))
+
+    async def peek(self, *a, **k) -> bytes | str:
+        """Read the first bytes without moving the cursor."""
+        return await _maybe_await(self._effective_fileobj.peek(*a, **k))
+
+    async def seek(self, *a, **k) -> int:
+        """Move the cursor."""
+        return await _maybe_await(self._effective_fileobj.seek(*a, **k))
+
+    async def tell(self, *a, **k) -> int:
+        """Return the cursor position."""
+        return await _maybe_await(self._effective_fileobj.tell(*a, **k))
+
+    def readable(self) -> bool:
+        """Is stream readable."""
+        return all(getattr(x, "readable", False) for x in self.fileobjs)
+
+    def writable(self) -> bool:
+        """Is stream readable."""
+        return all(getattr(x, "writable", False) for x in self.fileobjs)
+
+    def seekable(self) -> bool:
+        """Is stream readable."""
+        return all(getattr(x, "seekable", False) for x in self.fileobjs)
