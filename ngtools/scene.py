@@ -875,9 +875,9 @@ class Scene(ViewerState):
         layer
             Name of a layer or `"world"`.
         """
-        neuro = np.asarray([0., -1., 1., 0.])
+        neuro = np.asarray([1., 0., 0., -1.])
         neuro /= np.linalg.norm(neuro)
-        radio = np.asarray([1., 0., 0., -1.])
+        radio = np.asarray([0., -1., 1., 0.])
         radio /= np.linalg.norm(radio)
         current = np.asarray(self.cross_section_orientation)  # or [0, 0, 0, 1]
         current_mode = ["neuro", "radio"][int(
