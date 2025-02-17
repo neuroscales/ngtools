@@ -192,7 +192,6 @@ class Application:
         handler.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
         handler.headers["Access-Control-Allow-Headers"] = "Content-Type"
         start_response(str(handler.status), list(handler.headers.items()))
-        LOG.debug(f"RESPONSE | {handler.status} | {list(handler.headers.items())}")
         return [handler.body] if handler.body is not None else []
 
 

@@ -235,7 +235,7 @@ class LocalNeuroglancer(OSMixin):
 
             fileserver.app.handlers.extend([
                 (r"^/local/(.*)", StaticFileHandler),
-                (r"^/lut/(.*)", LutHandler),
+                (r"^/lut/([^/]+)/(.*)", LutHandler),
                 (r"^/linc/(.*)", LincHandler),
             ])
         self.fileserver = fileserver

@@ -1525,7 +1525,11 @@ class Scene(ViewerState):
             if fileserver:
                 path = parse_protocols(path).url
                 if "://" not in path:
-                    path = op.abspath(path)
+                    path = "file/" + op.abspath(path)
+                else:
+                    protocol, path = path.split("://")
+                    path = protocol + "/" + path
+
                 segment_properties = (
                     "precomputed://" + fileserver + "/lut/" + path
                 )

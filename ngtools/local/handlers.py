@@ -2,7 +2,6 @@
 # stdlib
 import json
 import logging
-import os.path as op
 
 # externals
 import requests
@@ -18,12 +17,13 @@ LOG = logging.getLogger(__name__)
 class LutHandler(Handler):
     """Handler that returns a segment_properties from a FS LUT."""
 
-    def get(self, path: str) -> None:  # noqa: D102
+    def get(self, protocol: str, path: str) -> None:  # noqa: D102
 
         if not path.endswith("info"):
             return self.send_error(404, path)
 
         path = path[:-5]
+        path = protocol + "://" + path
 
         if not exists(path):
             return self.send_error(404, path)
