@@ -367,30 +367,54 @@ class shaders:
         }
         """).lstrip()
 
-    # Shader for streamlines that have an `orientation` attribute
-    orientation = colormaps.orientation + '\n' + dedent(
-        """
-        #uicontrol bool orient_color checkbox(default=true)
-        void main() {
-            if (orient_color)
-                emitRGB(colormapOrient(orientation));
-            else
-                emitDefault();
-        }
-        """).lstrip()
+    class skeleton:
+        """Shaders for skeletons."""
 
-    # TODO: Shader for streamlines that have an `orientation` and an `id`
-    # or `group` aatribute. It should selectively show or hide streamlines.
-    trkorient = colormaps.orientation + '\n' + dedent(
+        # Shader for streamlines that have an `orientation` attribute
+        orientation = colormaps.orientation + '\n' + dedent(
+            """
+            #uicontrol bool orient_color checkbox(default=true)
+            void main() {
+                if (orient_color)
+                    emitRGB(colormapOrient(orientation));
+                else
+                    emitDefault();
+            }
+            """).lstrip()
+
+    # Classic RGB map, with brightness + contrast controls
+    orientation = colormaps.orientation + dedent(
         """
-        #uicontrol bool orient_color checkbox(default=true)
+        #uicontrol invlerp normalized
+        #uicontrol bool alpha_depth checkbox(default=false)
+        #uicontrol bool alpha_depth checkbox(default=false)
         void main() {
-            if (orient_color)
-                emitRGB(colormapOrient(orientation));
-            else
-                emitDefault();
+            vec3 orient = vec3(
+                toNormalized(getDataValue(0)),
+                toNormalized(getDataValue(1)),
+                toNormalized(getDataValue(2))
+            );
+            float alpha = sqrt(
+                orient.r * orient.r +
+                orient.g * orient.g +
+                orient.b * orient.b
+            );
+            vec3 rgb = colormapOrient(orient);
+
+            if (alpha_depth) {
+                vec4 rgba = vec4(
+                    rgb.r,
+                    rgb.g,
+                    rgb.b,
+                    normalized(),
+                );
+                emitRGBA(rgba);
+            } else {
+                emitRGB(rgb);
+            }
         }
-        """).lstrip()
+        """
+    )
 
     # Classic RGB map, with brightness + contrast controls
     rgb = dedent(
@@ -398,12 +422,12 @@ class shaders:
         #uicontrol float brightness slider(min=-1, max=1)
         #uicontrol float contrast slider(min=-3, max=3, step=0.01)
         void main() {
-        vec3 color = vec3(
-            toNormalized(getDataValue(0)),
-            toNormalized(getDataValue(1)),
-            toNormalized(getDataValue(2))
-        );
-        emitRGB((color + brightness) * exp(contrast));
+            vec color = vec3(
+                toNormalized(getDataValue(0)),
+                toNormalized(getDataValue(1)),
+                toNormalized(getDataValue(2))
+            );
+            emitRGB((color + brightness) * exp(contrast));
         }
         """
     )

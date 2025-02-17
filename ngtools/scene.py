@@ -1244,7 +1244,7 @@ class Scene(ViewerState):
             layer: ng.ManagedLayer
             if layers and layer.name not in layers:
                 continue
-            if len(getattr(self.layer, "source", [])) == 0:
+            if len(getattr(self.layers, "source", [])) == 0:
                 continue
             layer: ng.Layer = layer.layer
             for dimension in dimensions:
@@ -1511,7 +1511,7 @@ class Scene(ViewerState):
         layer_names = _ensure_list(layer or [])
         layer_types = _ensure_list(layer_type or [])
 
-        if shader.lower() == 'rgb':
+        if shader.lower() in ('rgb', 'orientation'):
             for layer in self.layers:
                 layer: ng.ManagedLayer
                 layer_name = layer.name
@@ -1521,8 +1521,11 @@ class Scene(ViewerState):
                 if not layer.channelDimensions.to_json():
                     self.channel_mode('channel', layer=layer_name)
 
-        if hasattr(shaders, shader):
-            shader = getattr(shaders, shader)
+        split_shader = shader.split(".")
+        if hasattr(shaders, split_shader[0]):
+            shader = shaders
+            for name in split_shader:
+                shader = getattr(shader, name)
             self.stdio.info(shader)
 
         elif hasattr(colormaps, shader):

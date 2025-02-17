@@ -592,20 +592,11 @@ class TractLayer(SkeletonLayer):
         kwargs["source"] = TractDataSource(source, **ksrc)
         LOG.debug(f"TractLayer - build source: {kwargs['source'].to_json()}")
 
-        # kwargs["skeleton_rendering"] = ng.SkeletonRenderingOptions(
-        #     shader=shaders.trkorient,
-        #     mode2d="lines",
-        #     lineWidth2d=0.01,
-        # )
-        # kwargs["selected_alpha"] = 1
-        # kwargs["not_selected_alpha"] = 0
-        # kwargs["segments"] = [1]
-
         LOG.debug(f"TractLayer - defer to {self.__wrapped_class__}")
         super().__init__(arg, *args, **kwargs)
 
         if self.skeleton_rendering.shader is None:
-            self.skeleton_rendering.shader = shaders.trkorient
+            self.skeleton_rendering.shader = shaders.skeleton.orientation
         if self.skeleton_rendering.mode2d is None:
             self.skeleton_rendering.mode2d = "lines"
         if self.skeleton_rendering.lineWidth2d == 2:
