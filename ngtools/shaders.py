@@ -382,36 +382,46 @@ class shaders:
             }
             """).lstrip()
 
-    # Classic RGB map, with brightness + contrast controls
-    orientation = colormaps.orientation + dedent(
+    # RGB orientation, for vector fields
+    orientation = dedent(
         """
-        #uicontrol invlerp normalized
-        #uicontrol bool alpha_depth checkbox(default=false)
-        #uicontrol bool alpha_depth checkbox(default=false)
+        #uicontrol float brightness_ceil slider(min=0, max=1, default=1)
+        #uicontrol float brightness_floor slider(min=0, max=1, default=0)
+        #uicontrol float alpha_ceil slider(min=0, max=1, default=1)
+        #uicontrol float alpha_floor slider(min=0, max=1, default=1)
         void main() {
-            vec3 orient = vec3(
-                toNormalized(getDataValue(0)),
-                toNormalized(getDataValue(1)),
-                toNormalized(getDataValue(2))
+            vec3 orient;
+            orient.r = abs(toNormalized(getDataValue(0)));
+            orient.g = abs(toNormalized(getDataValue(1)));
+            orient.b = abs(toNormalized(getDataValue(2)));
+            // <BEGIN ROTATION>
+            // Order: 00 10 20 01 11 21 02 12 22
+            mat3 mat = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+            // <END ROTATION>
+            orient = mat * orient;
+            vec4 rgba;
+            rgba.r = abs(orient.r);
+            rgba.g = abs(orient.g);
+            rgba.b = abs(orient.b);
+            rgba.a = sqrt(
+                rgba.r * rgba.r +
+                rgba.g * rgba.g +
+                rgba.b * rgba.b
             );
-            float alpha = sqrt(
-                orient.r * orient.r +
-                orient.g * orient.g +
-                orient.b * orient.b
-            );
-            vec3 rgb = colormapOrient(orient);
+            rgba.r /= rgba.a;
+            rgba.g /= rgba.a;
+            rgba.b /= rgba.a;
 
-            if (alpha_depth) {
-                vec4 rgba = vec4(
-                    rgb.r,
-                    rgb.g,
-                    rgb.b,
-                    normalized(),
-                );
-                emitRGBA(rgba);
-            } else {
-                emitRGB(rgb);
-            }
+            float brightness = brightness_ceil * (
+                (1.0 - brightness_floor) * rgba.a + brightness_floor
+            );
+            rgba.r *= brightness;
+            rgba.g *= brightness;
+            rgba.b *= brightness;
+            rgba.a *= alpha_ceil * (1.0 - alpha_floor);
+            rgba.a += alpha_ceil * alpha_floor;
+
+            emitRGBA(rgba);
         }
         """
     )

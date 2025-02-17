@@ -1184,47 +1184,48 @@ class Scene(ViewerState):
             olddim: str,
             newdim: str,
         ) -> ng.CoordinateSpaceTransform:
-            if newdim.endswith(("'", "^")):
-                sdim = newdim[:-1]
-            else:
-                sdim = newdim
-            cdim = sdim + '^'
+            # if newdim.endswith(("'", "^")):
+            #     sdim = newdim[:-1]
+            # else:
+            #     sdim = newdim
+            # cdim = sdim + '^'
             transform.outputDimensions = rename_key(
                 transform.outputDimensions, olddim, newdim)
-            odims = list(transform.outputDimensions.to_json().keys())
-            if newdim == cdim:
-                # to channel dimension -> half unit shift
-                shift = 0.5
-            elif olddim == cdim:
-                # from channel dimension -> remove half unit shift
-                shift = -0.5
-            else:
-                shift = 0
-            if shift:
-                if transform.matrix is not None:
-                    transform.matrix[odims.index(newdim), -1] += shift
-                else:
-                    matrix = np.eye(len(odims)+1)[:-1]
-                    matrix[odims.index(newdim), -1] = shift
-                    transform.matrix = matrix
+            # odims = list(transform.outputDimensions.names)
+            # if newdim == cdim:
+            #     # to channel dimension -> half unit shift
+            #     shift = 0.5
+            # elif olddim == cdim:
+            #     # from channel dimension -> remove half unit shift
+            #     shift = -0.5
+            # else:
+            #     shift = 0
+            # if shift:
+            #     if transform.matrix is not None:
+            #         transform.matrix[odims.index(newdim), -1] += shift
+            #     else:
+            #         matrix = np.eye(len(odims)+1)[:-1]
+            #         matrix[odims.index(newdim), -1] = shift
+            #         transform.matrix = matrix
             return transform
 
         def create_transform(
             scale: list[float], olddim: str, newdim: str
         ) -> ng.CoordinateSpaceTransform:
-            if newdim.endswith(("'", "^")):
-                sdim = newdim[:-1]
-            else:
-                sdim = newdim
-            cdim = sdim + '^'
-            if newdim == cdim:
-                # to channel dimension -> half unit shift
-                shift = 0.5
-            elif olddim == cdim:
-                # from channel dimension -> remove half unit shift
-                shift = -0.5
-            else:
-                shift = 0
+            # if newdim.endswith(("'", "^")):
+            #     sdim = newdim[:-1]
+            # else:
+            #     sdim = newdim
+            # cdim = sdim + '^'
+            # if newdim == cdim:
+            #     # to channel dimension -> half unit shift
+            #     shift = 0.5
+            # elif olddim == cdim:
+            #     # from channel dimension -> remove half unit shift
+            #     shift = -0.5
+            # else:
+            #     shift = 0
+            shift = 0
             transform = ng.CoordinateSpaceTransform(
                 matrix=np.asarray([[1, shift]]),
                 inputDimensions=ng.CoordinateSpace(
@@ -1244,9 +1245,9 @@ class Scene(ViewerState):
             layer: ng.ManagedLayer
             if layers and layer.name not in layers:
                 continue
-            if len(getattr(self.layers, "source", [])) == 0:
-                continue
             layer: ng.Layer = layer.layer
+            if len(getattr(layer, "source", [])) == 0:
+                continue
             for dimension in dimensions:
                 ldim = dimension + "'"
                 cdim = dimension + "^"
@@ -1517,8 +1518,11 @@ class Scene(ViewerState):
                 layer_name = layer.name
                 if layer_names and layer_name not in layer_names:
                     continue
+                if len(getattr(layer, "source", [])) == 0:
+                    continue
                 layer: ng.Layer = layer.layer
-                if not layer.channelDimensions.to_json():
+                onames = layer.source[0].transform.outputDimensions.names
+                if not any(name[-1:] == "^" for name in onames):
                     self.channel_mode('channel', layer=layer_name)
 
         split_shader = shader.split(".")
