@@ -493,6 +493,7 @@ class Scene(ViewerState):
         self,
         uri: URILike | list[URILike] | dict[str, URILike] = None,
         transform: ArrayLike | list[float] | URILike | None = None,
+        shader: str | None = None,
         inv: bool = False,
         **kwargs
     ) -> None:
@@ -593,6 +594,9 @@ class Scene(ViewerState):
         if transform is not None:
             self.transform(transform, layer=onames, inv=inv)
 
+        if shader is not None:
+            self.shader(shader, layer=onames)
+
         if nb_layers_0 == 0:
             # trigger default values
             self.dimensions
@@ -600,6 +604,7 @@ class Scene(ViewerState):
             self.position
             self.cross_section_scale
             self.projection_scale
+            self.space("radio")
 
     @autolog
     def unload(
@@ -1327,6 +1332,7 @@ class Scene(ViewerState):
         coord: float | list[float] | dict[str, float] = 0,
         dimensions: str | list[str] | None = None,
         unit: str | None = None,
+        absolute: bool = False,
         **kwargs,
     ) -> list[float]:
         """
@@ -1342,6 +1348,8 @@ class Scene(ViewerState):
             Default: Currently displayed axes.
         unit : str
             Units of the coordinates. Default: Unit of current axes.
+        absolute : bool
+            Move to absolute position, rather than relative to current.
 
         Other Parameters
         ----------------
@@ -1369,7 +1377,7 @@ class Scene(ViewerState):
         if not coord:
             string = []
             position = list(map(float, self.position))
-            for x, d, s, u in zip(position, dim.names, dim.scales, dim.units):
+            for x, d, (s, u) in zip(position, dim.keys(), dim.values()):
                 x = float(x) * float(s)
                 string += [f'{d}: {x:g} {u}']
             self.stdio.info(', '.join(string))
@@ -1379,7 +1387,7 @@ class Scene(ViewerState):
         if not isinstance(coord, dict):
             if isinstance(dimensions, str):
                 dimensions = [dimensions]
-            dimensions = dimensions or list(map(str, dim.names))
+            dimensions = dimensions or list(dim.keys())
             if len(dimensions) == 1 and len(dimensions[0]) > 1:
                 dimensions = S.name_compact2full(dimensions[0])
             dimensions = dimensions[:len(coord)]
@@ -1391,17 +1399,19 @@ class Scene(ViewerState):
 
         # Convert unit
         coord = {
-            n: convert_unit(x, unit, dim[n][1])
-            for x, n in coord.items()
+            n: (convert_unit(x, unit, dim[n][1]) / dim[n][0] if unit else x)
+            for n, x in coord.items()
         }
 
         # Sort coordinate in same order as dim
-        for x, n in zip(self.position, dim.names):
-            coord.setdefault(n, x)
-        coord = [coord[n] for n in dim.names]
+        for n in dim:
+            coord.setdefault(n, 0)
+        coord = [coord[n] for n in dim]
 
         # Assign new coord
-        self.position = list(coord.values())
+        if not absolute:
+            coord = [(c + p) for c, p in zip(coord, self.position)]
+        self.position = coord
 
         return list(map(float, self.position))
 
