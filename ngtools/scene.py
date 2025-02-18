@@ -879,16 +879,32 @@ class Scene(ViewerState):
         layer
             Name of a layer or `"world"`.
         """
+        norm = np.linalg.norm
+
+        deflt = np.asarray([0., 0., 0., 1.])
         neuro = np.asarray([1., 0., 0., -1.])
-        neuro /= np.linalg.norm(neuro)
+        neuro /= norm(neuro)
         radio = np.asarray([0., -1., 1., 0.])
-        radio /= np.linalg.norm(radio)
+        radio /= norm(radio)
         current = np.asarray(self.cross_section_orientation)  # or [0, 0, 0, 1]
-        current_mode = ["radio", "neuro"][int(
-            np.linalg.norm(current - neuro)
-            <
-            np.linalg.norm(current - radio)
-        )]
+        # -q === q so use sign that's closest to current view
+        if norm(current + neuro) < norm(current - neuro):
+            neuro = -neuro
+        if norm(current + radio) < norm(current - radio):
+            radio = -radio
+        if norm(current + deflt) < norm(current - deflt):
+            deflt = -deflt
+        # find layout closest to current view (TODO: try all of them)
+        if norm(current - neuro) < norm(current - radio):
+            if norm(current - neuro) < norm(current - deflt):
+                current_mode = "neuro"
+            else:
+                current_mode = "default"
+        else:
+            if norm(current - radio) < norm(current - deflt):
+                current_mode = "radio"
+            else:
+                current_mode = "default"
 
         # If first input is a layer name, switch
         if layer is None and mode in self.layers:
@@ -899,6 +915,14 @@ class Scene(ViewerState):
             self.stdio.info(current_mode)
             return current_mode
         mode = mode or current_mode
+
+        current_canonical = {
+            "radio": radio, "neuro": neuro, "default": deflt
+        }[current_mode]
+
+        target_canonical = {
+            "radio": radio, "neuro": neuro, "default": deflt
+        }[mode]
 
         # Display spatial dimensions (reorder if needed)
         #
@@ -932,8 +956,9 @@ class Scene(ViewerState):
 
             #   1. Get voxel2world matrix
             source = self.layers[layer].source[0]
-            transform = T.subtransform(source.transform, 'm')
-            transform = T.ensure_same_scale(transform)
+            transform = source.transform
+            # transform = T.subtransform(transform, 'm')
+            # transform = T.ensure_same_scale(transform)
             matrix = T.get_matrix(transform, square=True)[:-1, :-1]
             #   2.remove scales and shears
             u, _, vh = np.linalg.svd(matrix)
@@ -958,19 +983,17 @@ class Scene(ViewerState):
             if np.linalg.det(rot) < 0:
                 # flip left-right
                 assert False, "Negative determinant in voxel-to-model matrix"
-            to_layer = T.matrix_to_quaternion(rot.T)
+            to_layer = T.matrix_to_quaternion(rot)
         elif not layer:
             # keep existing layer axes
-            from_view = neuro if current_mode[0].lower() == "n" else radio
-            from_view = T.inverse_quaternions(from_view)
-            to_layer = T.compose_quaternions(from_view, current)
+            from_canonical = T.inverse_quaternions(current_canonical)
+            to_layer = T.compose_quaternions(current, from_canonical)
         else:
             # layer == "world"
             to_layer = [0., 0., 0., 1.]
 
         # canonical neuro/radio axes
-        to_view = neuro if mode[0].lower() == "n" else radio
-        to_layer = T.compose_quaternions(to_view, to_layer)
+        to_layer = T.compose_quaternions(to_layer, target_canonical)
 
         # Set transform
         self.cross_section_orientation = to_layer.tolist()

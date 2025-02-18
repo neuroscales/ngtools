@@ -445,7 +445,7 @@ class LocalNeuroglancer(OSMixin):
         # --------------------------------------------------------------
         #   SPACE
         # --------------------------------------------------------------
-        MODES = ("radio", "neuro")
+        MODES = ("radio", "neuro", "default")
         _ = add_parser('space', help='Cross-section orientation')
         _.set_defaults(func=self.space)
         _.add_argument(

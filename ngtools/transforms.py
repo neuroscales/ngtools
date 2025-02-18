@@ -137,6 +137,7 @@ def matrix_to_quaternion(mat: np.ndarray) -> np.ndarray:
         [Qzy - Qyz, Qxz - Qzx, Qyx - Qxy, Qxx + Qyy + Qzz],
     ]) / 3
     val, vec = np.linalg.eig(K)
+    print(val)
     vec = vec[:, val.argmax()]
     # vec = np.concatenate([vec[1:], vec[:1]])  # wiki to neuroglancer
     return vec
