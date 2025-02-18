@@ -7,6 +7,7 @@ import datetime
 import logging
 import os.path
 import stat
+import sys
 import textwrap
 from functools import partial, wraps
 from typing import Generator
@@ -187,6 +188,48 @@ class OSMixin:
         """Path to working directory."""
         self.console.print(os.getcwd())
         return os.getcwd()
+
+    @action
+    def stdin(self, stdin: str | None = None) -> str:
+        """Input stream."""
+        if stdin:
+            if stdin == "sys":
+                stdin = sys.stdin
+            elif stdin[:4] == "sys.":
+                parts = stdin.split(".")[1:]
+                stdin = sys
+                for part in parts:
+                    stdin = getattr(stdin, part)
+            self.console.stdio.stdin = stdin
+        return self.console.stdio.stdin
+
+    @action
+    def stdout(self, stdout: str | None = None) -> str:
+        """Output stream."""
+        if stdout:
+            if stdout == "sys":
+                stdout = sys.stdout
+            elif stdout[:4] == "sys.":
+                parts = stdout.split(".")[1:]
+                stdout = sys
+                for part in parts:
+                    stdout = getattr(stdout, part)
+            self.console.stdio.stdout = stdout
+        return self.console.stdio.stdout
+
+    @action
+    def stderr(self, stderr: str | None = None) -> str:
+        """Error stream."""
+        if stderr:
+            if stderr == "sys":
+                stderr = sys.stderr
+            elif stderr[:4] == "sys.":
+                parts = stderr.split(".")[1:]
+                stderr = sys
+                for part in parts:
+                    stderr = getattr(stderr, part)
+            self.console.stdio.stderr = stderr
+        return self.console.stdio.stderr
 
 
 class LocalNeuroglancer(OSMixin):
@@ -599,6 +642,16 @@ class LocalNeuroglancer(OSMixin):
 
         _ = add_parser('pwd', help='Path to working directory')
         _.set_defaults(func=self.pwd)
+
+        _ = add_parser('stdin', help='Set input stream')
+        _.set_defaults(func=self.stdin)
+        _.add_argument(dest='stdin', metavar='FILE')
+        _ = add_parser('stdout', help='Set output stream')
+        _.set_defaults(func=self.stdout)
+        _.add_argument(dest='stdout', metavar='FILE')
+        _ = add_parser('stderr', help='Set error stream')
+        _.set_defaults(func=self.stderr)
+        _.add_argument(dest='stderr', metavar='FILE')
 
         # --------------------------------------------------------------
         #   EXIT

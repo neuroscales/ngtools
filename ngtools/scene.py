@@ -602,7 +602,7 @@ class Scene(ViewerState):
             self.position
             self.cross_section_scale
             self.projection_scale
-            self.space("radio")
+            self.space("radio", "world")
 
         if shader is not None:
             self.shader(shader, layer=onames)

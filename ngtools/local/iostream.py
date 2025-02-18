@@ -35,6 +35,19 @@ class StandardIO:
         self.level = level
         atexit.register(self.__del__)
 
+    @property
+    def stdin(self) -> TextIO | PathLike | str:
+        """Get input stream."""
+        return self._stdin
+
+    @stdin.setter
+    def stdin(self, value: TextIO | PathLike | str) -> None:
+        stdin_file = getattr(self, "_stdin_file", None)
+        if stdin_file and not stdin_file.closed:
+            stdin_file.close()
+        self._stdin = value
+        self._stdin_file = None
+
     def format(self, *args, **kwargs) -> str:
         """Format a message like `print` would."""
         with StringIO() as f:
