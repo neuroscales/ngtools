@@ -547,13 +547,14 @@ class Scene(ViewerState):
             uri = str(uri).rstrip("/")
             parsed = parse_protocols(uri)
             short_uri = parsed.url
-            name = names[n] if names else op.basename(short_uri)
+            basename = op.basename(short_uri)
+            name = names[n] if names else basename
 
             # extension-based hint
             if not parsed.format:
-                if name.endswith(".zarr"):
+                if basename.endswith(".zarr"):
                     parsed = parsed.with_format("zarr")
-                elif name.endswith((".nii", ".nii.gz")):
+                elif basename.endswith((".nii", ".nii.gz")):
                     parsed = parsed.with_format("nifti")
 
             if parsed.stream == "dandi":
@@ -922,7 +923,8 @@ class Scene(ViewerState):
         ))
         self.display_dimensions = display_dimensions
 
-        if layer:
+        # layer-specific rotation
+        if layer and (layer.lower() != "world"):
             if layer not in self.layers:
                 raise ValueError("No layer named:", layer)
             if len(getattr(self.layers[layer], "source", [])) == 0:
@@ -957,8 +959,14 @@ class Scene(ViewerState):
                 # flip left-right
                 assert False, "Negative determinant in voxel-to-model matrix"
             to_layer = T.matrix_to_quaternion(rot.T)
+        elif not layer:
+            # keep existing layer axes
+            from_view = neuro if current_mode[0].lower() == "n" else radio
+            from_view = T.inverse_quaternions(from_view)
+            to_layer = T.compose_quaternions(from_view, current)
         else:
-            to_layer = [0.0, 0.0, 0.0, 1.0]  # identity
+            # layer == "world"
+            to_layer = [0., 0., 0., 1.]
 
         # canonical neuro/radio axes
         to_view = neuro if mode[0].lower() == "n" else radio

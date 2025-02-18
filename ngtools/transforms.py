@@ -185,6 +185,17 @@ def compose_quaternions(a: np.ndarray, b: np.ndarray, *others) -> np.ndarray:
     return c
 
 
+def inverse_quaternions(a: np.ndarray) -> np.ndarray:
+    """Inverse quaternion."""
+    a = np.asarray(a).flatten()
+    av, ar = a[:-1], a[-1:]
+    nrm = ar*ar + (av*av).sum()
+    ar = +ar / nrm
+    av = -av / nrm
+    a = np.concatenate([av, ar])
+    return a
+
+
 def load_affine(
     fileobj: IO | PathLike | str,
     format: str | None = None,
