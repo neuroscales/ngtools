@@ -1,6 +1,12 @@
 """
 Wrappers around neuroglancer classes that can compute metadata and
 optional attributes that neuroglancer typically delegates to the frontend.
+
+Dependencies
+------------
+* nifti://          -> nibabel
+* zarr://           -> zarr
+* precomputed://    -> cloudvolume
 """
 # stdlib
 import functools
@@ -181,11 +187,20 @@ class _LayerDataSourceFactory(type):
 
         parsed_url = parse_protocols(url)
 
-        # If python:// url -> local object, but retrieved from the viewer
-        # we have no way of retrieving the original url/object sadly.
+        # If python:// url -> local object, but retrieved from the viewer.
         if parsed_url.stream == "python":
-            # FIXME? Can we find the object reference from the uid?
-            return LocalDataSource(arg, *args, **kwargs)
+
+            # Get local object
+            path = parsed_url.url
+            source_type = path.split("://")[-1].strip("/").split("/")[0]
+            kls = {
+                "volume": LocalVolumeDataSource,
+                "skeleton": LocalSkeletonDataSource
+            }[source_type]
+
+            # Defer to LocalDataSource factory
+            # TODO: build a `LocalDataSourceFactory` to defer even more?
+            return kls(arg, *args, **kwargs)
 
         # If local:// url -> local annotations
         if parsed_url.url == "local://annotations":
@@ -674,7 +689,96 @@ class LocalAnnotationDataSource(AnnotationDataSource, LocalDataSource):
     ...
 
 
-class LocalSkeletonDataSource(SkeletonDataSource, LocalDataSource):
+class _LocalSkeletonDataSourceFactory(_LayerDataSourceFactory):
+
+    def __call__(
+        cls,
+        arg: _LayerDataSourceFactory._DataSourceLike = None,
+        *args,
+        **kwargs
+    ) -> "LocalSkeletonDataSource":
+        # Only use the factory if it is not called from a subclass
+        if cls is not LocalSkeletonDataSource:
+            obj = super().__call__(arg, *args, **kwargs)
+            return obj
+
+        # Get url
+        if kwargs.get("url", ""):
+            url = kwargs["url"]
+            if isinstance(url, (str, PathLike)):
+                url = kwargs["url"] = str(url)
+        elif isinstance(arg, (str, PathLike)):
+            url = arg = str(arg)
+        elif hasattr(arg, "url"):
+            url = arg.url
+        elif isinstance(arg, dict) and "url" in arg:
+            url = arg["url"]
+        elif not isinstance(arg, cls._LocalSource):
+            raise ValueError("Missing data source url")
+
+        # If local object -> delegate
+        if isinstance(url, ng.LocalVolume):
+            raise ValueError(
+                "Non skeleton local object passed to a skeleton source"
+            )
+        if isinstance(url, ng.skeleton.SkeletonSource):
+            return super().__call__(arg, *args, **kwargs)
+
+        parsed_url = parse_protocols(url)
+
+        # If python:// url -> local object, but retrieved from the viewer.
+        if parsed_url.stream == "python":
+
+            # Get local object
+            path = parsed_url.url
+            source_type, token = path.split("://")[-1].strip("/").split("/")
+            if source_type != "skeleton":
+                raise ValueError(
+                    "Non skeleton local object passed to a skeleton source"
+                )
+            vol = ng.server.global_server.get_volume(token)
+
+            # Replace url with object
+            if kwargs.get("url", ""):
+                kwargs["url", vol]
+            elif isinstance(arg, (str, PathLike)):
+                arg = vol
+            elif hasattr(arg, "url"):
+                arg.url = vol
+            elif isinstance(arg, dict) and "url" in arg:
+                arg["url"] = vol
+
+            # Return object
+            kls = getattr(vol, "DataSourceType", LocalSkeletonDataSource)
+            if kls is LocalSkeletonDataSource:
+                return super().__call__(arg, *args, **kwargs)
+            else:
+                return kls(arg, *args, **kwargs)
+
+        # If format protocol provided, use it
+        if parsed_url.format in _DATASOURCE_REGISTRY:
+            format = parsed_url.format
+            LOG.debug(f"LocalSkeletonDataSource - use format hint: {format}")
+            return _DATASOURCE_REGISTRY[format](arg, *args, **kwargs)
+
+        # Otherwise, check for extensions
+        for format, kls in _DATASOURCE_REGISTRY.items():
+            if parsed_url.url.endswith((format, format+".gz", format+".bz2")):
+                LOG.debug(f"LocalSkeletonDataSource - extension: {format}")
+                try:
+                    obj = kls(arg, *args, **kwargs)
+                    LOG.debug(f"LocalSkeletonDataSource - {format} (success)")
+                    return obj
+                except Exception:
+                    continue
+
+        # Otherwise. build a simple source
+        LOG.debug("LocalSkeletonDataSource - Fallback")
+        return super().__call__(arg, *args, **kwargs)
+
+
+class LocalSkeletonDataSource(SkeletonDataSource, LocalDataSource,
+                              metaclass=_LocalSkeletonDataSourceFactory):
     """Wrapper for data source that wraps a `SkeletonSource`."""
 
     @property
@@ -688,7 +792,96 @@ class LocalSkeletonDataSource(SkeletonDataSource, LocalDataSource):
     ...
 
 
-class LocalVolumeDataSource(VolumeDataSource, LocalDataSource):
+class _LocalVolumeDataSourceFactory(_LayerDataSourceFactory):
+
+    def __call__(
+        cls,
+        arg: _LayerDataSourceFactory._DataSourceLike = None,
+        *args,
+        **kwargs
+    ) -> "LocalVolumeDataSource":
+        # Only use the factory if it is not called from a subclass
+        if cls is not LocalVolumeDataSource:
+            obj = super().__call__(arg, *args, **kwargs)
+            return obj
+
+        # Get url
+        if kwargs.get("url", ""):
+            url = kwargs["url"]
+            if isinstance(url, (str, PathLike)):
+                url = kwargs["url"] = str(url)
+        elif isinstance(arg, (str, PathLike)):
+            url = arg = str(arg)
+        elif hasattr(arg, "url"):
+            url = arg.url
+        elif isinstance(arg, dict) and "url" in arg:
+            url = arg["url"]
+        elif not isinstance(arg, cls._LocalSource):
+            raise ValueError("Missing data source url")
+
+        # If local object -> delegate
+        if isinstance(url, ng.LocalVolume):
+            return LocalVolumeDataSource(arg, *args, **kwargs)
+        if isinstance(url, ng.skeleton.SkeletonSource):
+            raise ValueError(
+                "Non volume local object passed to a volume source"
+            )
+
+        parsed_url = parse_protocols(url)
+
+        # If python:// url -> local object, but retrieved from the viewer.
+        if parsed_url.stream == "python":
+
+            # Get local object
+            path = parsed_url.url
+            source_type, token = path.split("://")[-1].strip("/").split("/")
+            if source_type != "volume":
+                raise ValueError(
+                    "Non volume local object passed to a volume source"
+                )
+            vol = ng.server.global_server.get_volume(token)
+
+            # Replace url with object
+            if kwargs.get("url", ""):
+                kwargs["url", vol]
+            elif isinstance(arg, (str, PathLike)):
+                arg = vol
+            elif hasattr(arg, "url"):
+                arg.url = vol
+            elif isinstance(arg, dict) and "url" in arg:
+                arg["url"] = vol
+
+            # Return object
+            kls = getattr(vol, "DataSourceType", LocalVolumeDataSource)
+            if kls is LocalVolumeDataSource:
+                return super().__call__(arg, *args, **kwargs)
+            else:
+                return kls(arg, *args, **kwargs)
+
+        # If format protocol provided, use it
+        if parsed_url.format in _DATASOURCE_REGISTRY:
+            format = parsed_url.format
+            LOG.debug(f"LocalVolumeDataSource - use format hint: {format}")
+            return _DATASOURCE_REGISTRY[format](arg, *args, **kwargs)
+
+        # Otherwise, check for extensions
+        for format, kls in _DATASOURCE_REGISTRY.items():
+            if parsed_url.url.endswith((format, format+".gz", format+".bz2")):
+                LOG.debug(f"LocalVolumeDataSource - extension: {format}")
+                try:
+                    obj = kls(arg, *args, **kwargs)
+                    LOG.debug(f"LocalVolumeDataSource - {format} (success)")
+                    return obj
+                except Exception:
+                    continue
+
+        # Otherwise. build a simple source
+        LOG.debug("LocalVolumeDataSource - Fallback")
+        return super().__call__(arg, *args, **kwargs)
+
+
+class LocalVolumeDataSource(VolumeDataSource, LocalDataSource,
+                            metaclass=_LocalVolumeDataSourceFactory):
     """Wrapper for data source that wraps a `LocalVolume`."""
 
     def __init__(self, *args, **kwargs) -> None:

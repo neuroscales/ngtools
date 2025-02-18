@@ -136,6 +136,11 @@ class BabelDataSource(LocalVolumeDataSource):
 
     IMAGE_CLASSES = all_image_classes
 
+    class LocalVolume(ng.LocalVolume):
+        """LocalVolume that knows it is in a BabelDataSource."""
+
+        ...
+
     def _format_specific_init(self) -> None:
         self._url = self.url
         format, _, _, url = parse_protocols(self.url)
@@ -145,11 +150,14 @@ class BabelDataSource(LocalVolumeDataSource):
         )
         fileobj = _babel_load(url)
         self._info = BabelVolumeInfo(fileobj)
-        self.url = ng.LocalVolume(
+        self.url = self.LocalVolume(
             np.asarray(fileobj.dataobj),
             self.info.getInputDimensions(),
             volume_type=self._layer_type,
         )
+
+
+BabelDataSource.LocalVolume.DataSourceType = BabelDataSource
 
 
 @datasource(["mgh", "mgz"])
@@ -157,6 +165,14 @@ class MGHDataSource(BabelDataSource):
     """Wrapper for MGH/MGZ volume sources."""
 
     IMAGE_CLASSES = [nib.freesurfer.mghformat.MGHImage]
+
+    class LocalVolume(BabelDataSource.LocalVolume):
+        """LocalVolume that knows it is in a MGHDataSource."""
+
+        ...
+
+
+MGHDataSource.LocalVolume.DataSourceType = MGHDataSource
 
 
 class TiffVolumeInfo(VolumeInfo):
@@ -347,6 +363,11 @@ class TiffVolumeInfo(VolumeInfo):
 class TiffDataSource(LocalVolumeDataSource):
     """A local tiff volume, read with tifffile."""
 
+    class LocalVolume(ng.LocalVolume):
+        """LocalVolume that knows it is in a TiffDataSource."""
+
+        ...
+
     def _format_specific_init(self) -> None:
         self._url = self.url
         format, _, _, url = parse_protocols(self.url)
@@ -358,9 +379,12 @@ class TiffDataSource(LocalVolumeDataSource):
         fileobj = open(url)
         mappedfile = tifffile.TiffFile(fileobj)
         self._info = TiffVolumeInfo(url, fileobj=mappedfile)
-        self.url = ng.LocalVolume(
+        self.url = self.LocalVolume(
             mappedfile.asarray(),
             self.info.getInputDimensions(),
             volume_type=self._layer_type,
         )
         fileobj.close()
+
+
+TiffDataSource.LocalVolume.DataSourceType = TiffDataSource

@@ -226,10 +226,14 @@ class LocalNeuroglancer(OSMixin):
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
+        ip = self.get_viewer_url().split("://")[1].split(":")[0]
+
         # Add specific handlers
         if fileserver is not False:
             if not isinstance(fileserver, LocalFileServer):
-                if fileserver is not None:
+                if fileserver is True:
+                    fileserver_port = 0
+                else:
                     fileserver_port = int(fileserver)
                 fileserver = LocalFileServer(fileserver_port, ip)
 
@@ -376,6 +380,8 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             '--source', '--src', '-s', metavar='SOURCE', nargs="*",
             help='Native axis names')
+        _.add_argument(
+            '--print', '-p', action="store_true", help='Print result')
 
         # --------------------------------------------------------------
         #   RENAME AXES

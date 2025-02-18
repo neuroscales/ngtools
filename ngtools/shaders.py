@@ -8,9 +8,13 @@ GLSL = OpenGL Shading Language.
 """
 # stdlib
 import math
+import re
 from os import PathLike
 from textwrap import dedent
 from typing import IO
+
+# externals
+import numpy as np
 
 # internals
 from ngtools import cmdata
@@ -92,6 +96,98 @@ def load_fs_lut(
         label, r, g, b, a = int(label), int(r), int(g), int(b), int(a)
         lut[label] = (name, (r/255, g/255, b/255, (a or 255)/255))
     return lut
+
+
+def rotate_shader(shader: str, mat: list, compose: bool = True) -> str:
+    """Apply a rotation matrix to orientation vector of a shader."""
+    # No matrix -> return as is
+    if mat is None:
+        return shader
+
+    # No rotation section -> return as is
+    if "<!-- BEGIN ROTATION -->" not in shader:
+        return shader
+
+    if hasattr(mat, "tolist"):
+        # numpy to list (row major)
+        mat = mat.tolist()
+    if isinstance(mat[0], (list, tuple)):
+        # nested list to flat list (column major)
+        ndim = len(mat)
+        mat = [mat[i][j] for j in range(ndim) for i in range(ndim)]
+
+    # split sections
+    shader_top, shader = shader.split("<!-- BEGIN ROTATION -->")
+    shader_mid, shader_btm = shader.split("<!-- END ROTATION -->")
+    shader_mid = shader_mid.strip().split("\n")
+    # remove comments
+    shader_mid = [line.split("//")[0].strip() for line in shader_mid]
+    # remove empty lines
+    shader_mid = [line for line in shader_mid if line]
+    # join
+    shader_mid = "\n".join(shader_mid)
+    # regex
+    pattern = (
+        r"\s*mat3\s+(?P<var>[^\s=]+)\s*=\s*mat3\s*\("
+        r"\s*(?P<M00>[^\s,]+)\s*,"
+        r"\s*(?P<M10>[^\s,]+)\s*,"
+        r"\s*(?P<M20>[^\s,]+)\s*,"
+        r"\s*(?P<M01>[^\s,]+)\s*,"
+        r"\s*(?P<M11>[^\s,]+)\s*,"
+        r"\s*(?P<M21>[^\s,]+)\s*,"
+        r"\s*(?P<M02>[^\s,]+)\s*,"
+        r"\s*(?P<M12>[^\s,]+)\s*,"
+        r"\s*(?P<M22>[^\s\)]+)\s*\)"
+        r"\s*;\s*"
+    )
+    match = re.fullmatch(pattern, shader_mid)
+    if not match:
+        raise ValueError("Cannot parse 3x3 matrix")
+    match = {
+        key: float(val) if key != "var" else val
+        for key, val in match.groupdict().items()
+    }
+
+    if compose:
+        mat0 = np.asarray([
+            [match["M00"], match["M01"], match["M02"]],
+            [match["M10"], match["M11"], match["M12"]],
+            [match["M20"], match["M21"], match["M22"]],
+        ])
+        mat1 = np.asarray([
+            [mat[0], mat[3], mat[6]],
+            [mat[1], mat[4], mat[7]],
+            [mat[2], mat[5], mat[8]],
+        ])
+        mat = mat1 @ mat0
+        # to flat column-major
+        mat = mat.tolist()
+        mat = [mat[i][j] for j in range(ndim) for i in range(ndim)]
+
+    shader_mid = dedent(
+        f"""
+        mat3 {match["var"]} = mat3(
+            {mat[0]}, {mat[1]}, {mat[2]},
+            {mat[3]}, {mat[4]}, {mat[5]},
+            {mat[6]}, {mat[7]}, {mat[8]}
+        );
+        """
+    )
+
+    # put it back together
+    shader_top = shader_top.rstrip()
+    if shader_top[-2:] == "//":
+        shader_top = shader_top[:-2].rstrip()
+    shader_btm = shader_btm.lstrip()
+
+    shader = (
+        shader_top +
+        "\n// <!-- BEGIN ROTATION -->\n" +
+        shader_mid.strip() +
+        "\n// <!-- END ROTATION -->\n" +
+        shader_btm
+    )
+    return shader
 
 
 class pycolormaps:
@@ -216,11 +312,11 @@ class colormaps:
     orientation = dedent(
         """
         vec3 colormapOrient(vec3 orient) {
-            vec3 result;
-            result.r = abs(orient[0]);
-            result.g = abs(orient[1]);
-            result.b = abs(orient[2]);
-            return clamp(result, 0.0, 1.0);
+        vec3 result;
+        result.r = abs(orient[0]);
+        result.g = abs(orient[1]);
+        result.b = abs(orient[2]);
+        return clamp(result, 0.0, 1.0);
         }
         """).lstrip()
 
@@ -347,6 +443,36 @@ for name in filter(lambda x: not x[0] == '_', dir(cmdata)):
 class shaders:
     """Namespace for full-fledged shaders."""
 
+    class skeleton:
+        """Shaders for skeletons."""
+
+        # Shader for streamlines that have an `orientation` attribute
+        orientation = colormaps.orientation + '\n' + dedent(
+            """
+            #uicontrol bool orient_color checkbox(default=true)
+            void main() {
+            vec3 orient = orientation;
+            // <!-- BEGIN ROTATION -->
+            // Order: 00 10 20 01 11 21 02 12 22
+            mat3 mat = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+            // <!-- END ROTATION -->
+            orient = mat * orient;
+            if (orient_color)
+                emitRGB(colormapOrient(orient));
+            else
+                emitDefault();
+            }
+            """).lstrip()
+
+    default = dedent(
+        """
+        #uicontrol invlerp normalized
+        void main() {
+        emitGrayscale(normalized());
+        }
+        """
+    )
+
     # Classic greyscale map, with optional intensity-based opacity.
     greyscale = dedent(
         """
@@ -367,21 +493,6 @@ class shaders:
         }
         """).lstrip()
 
-    class skeleton:
-        """Shaders for skeletons."""
-
-        # Shader for streamlines that have an `orientation` attribute
-        orientation = colormaps.orientation + '\n' + dedent(
-            """
-            #uicontrol bool orient_color checkbox(default=true)
-            void main() {
-                if (orient_color)
-                    emitRGB(colormapOrient(orientation));
-                else
-                    emitDefault();
-            }
-            """).lstrip()
-
     # RGB orientation, for vector fields
     orientation = dedent(
         """
@@ -390,38 +501,38 @@ class shaders:
         #uicontrol float alpha_ceil slider(min=0, max=1, default=1)
         #uicontrol float alpha_floor slider(min=0, max=1, default=1)
         void main() {
-            vec3 orient;
-            orient.r = abs(toNormalized(getDataValue(0)));
-            orient.g = abs(toNormalized(getDataValue(1)));
-            orient.b = abs(toNormalized(getDataValue(2)));
-            // <BEGIN ROTATION>
-            // Order: 00 10 20 01 11 21 02 12 22
-            mat3 mat = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
-            // <END ROTATION>
-            orient = mat * orient;
-            vec4 rgba;
-            rgba.r = abs(orient.r);
-            rgba.g = abs(orient.g);
-            rgba.b = abs(orient.b);
-            rgba.a = sqrt(
-                rgba.r * rgba.r +
-                rgba.g * rgba.g +
-                rgba.b * rgba.b
-            );
-            rgba.r /= rgba.a;
-            rgba.g /= rgba.a;
-            rgba.b /= rgba.a;
+        vec3 orient;
+        orient.r = abs(toNormalized(getDataValue(0)));
+        orient.g = abs(toNormalized(getDataValue(1)));
+        orient.b = abs(toNormalized(getDataValue(2)));
+        // <!-- BEGIN ROTATION -->
+        // Order: 00 10 20 01 11 21 02 12 22
+        mat3 mat = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+        // <!-- END ROTATION -->
+        orient = mat * orient;
+        vec4 rgba;
+        rgba.r = abs(orient.r);
+        rgba.g = abs(orient.g);
+        rgba.b = abs(orient.b);
+        rgba.a = sqrt(
+            rgba.r * rgba.r +
+            rgba.g * rgba.g +
+            rgba.b * rgba.b
+        );
+        rgba.r /= rgba.a;
+        rgba.g /= rgba.a;
+        rgba.b /= rgba.a;
 
-            float brightness = brightness_ceil * (
-                (1.0 - brightness_floor) * rgba.a + brightness_floor
-            );
-            rgba.r *= brightness;
-            rgba.g *= brightness;
-            rgba.b *= brightness;
-            rgba.a *= alpha_ceil * (1.0 - alpha_floor);
-            rgba.a += alpha_ceil * alpha_floor;
+        float brightness = brightness_ceil * (
+            (1.0 - brightness_floor) * rgba.a + brightness_floor
+        );
+        rgba.r *= brightness;
+        rgba.g *= brightness;
+        rgba.b *= brightness;
+        rgba.a *= alpha_ceil * (1.0 - alpha_floor);
+        rgba.a += alpha_ceil * alpha_floor;
 
-            emitRGBA(rgba);
+        emitRGBA(rgba);
         }
         """
     )

@@ -85,6 +85,8 @@ class TractSkeleton(ngsk.SkeletonSource):
         src/neuroglancer/datasource/precomputed/skeletons.md
     """
 
+    DataSourceType = TractDataSource
+
     DEFAULT_MAX_TRACTS = 1000
 
     def __init__(

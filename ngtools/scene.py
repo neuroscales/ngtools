@@ -30,7 +30,7 @@ from ngtools.datasources import LayerDataSource
 from ngtools.layers import Layer, Layers
 from ngtools.local.iostream import StandardIO
 from ngtools.opener import exists, filesystem, open, parse_protocols
-from ngtools.shaders import colormaps, load_fs_lut, shaders
+from ngtools.shaders import colormaps, load_fs_lut, rotate_shader, shaders
 from ngtools.units import convert_unit
 from ngtools.utils import NG_URLS, Wraps
 
@@ -594,9 +594,6 @@ class Scene(ViewerState):
         if transform is not None:
             self.transform(transform, layer=onames, inv=inv)
 
-        if shader is not None:
-            self.shader(shader, layer=onames)
-
         if nb_layers_0 == 0:
             # trigger default values
             self.dimensions
@@ -605,6 +602,9 @@ class Scene(ViewerState):
             self.cross_section_scale
             self.projection_scale
             self.space("radio")
+
+        if shader is not None:
+            self.shader(shader, layer=onames)
 
     @autolog
     def unload(
@@ -725,7 +725,7 @@ class Scene(ViewerState):
         })
 
         if not axes:
-            if kwargs.get("print", True):
+            if kwargs.get("print", False):
                 self.stdio.print(old_axes)
             return old_axes
 
@@ -1078,13 +1078,32 @@ class Scene(ViewerState):
                 continue
             if layer_name.startswith('__'):
                 continue
+
+            shader = getattr(layer, "shader", None)
+            skeleton_shader = getattr(layer, "skeleton_shader", None)
+
+            if shader and shader != "None":
+                mat = self._vox2display(transform)
+                shader = rotate_shader(shader, mat)
+                layer.shader = shader
+
+            elif skeleton_shader and skeleton_shader != "None":
+                mat = self._vox2display(transform)
+                skeleton_shader = rotate_shader(skeleton_shader, mat)
+                layer.skeleton_shader = skeleton_shader
+
+            if shader == "None":
+                layer.shader = shaders.default
+
+            if skeleton_shader == "None":
+                layer.skeleton_shader = shaders.skeleton.orientation
+
             layer = layer.layer
-            if hasattr(layer, "source"):
-                for source in layer.source:
-                    source: LayerDataSource
-                    source.transform = T.compose(
-                        transform, source.transform, adapt=adapt
-                    )
+            for source in getattr(layer, "source", []):
+                source: LayerDataSource
+                source.transform = T.compose(
+                    transform, source.transform, adapt=adapt
+                )
 
     @staticmethod
     def _load_transform(
@@ -1485,6 +1504,48 @@ class Scene(ViewerState):
             self.stdio.print(scale)
         return scale
 
+    def _vox2display(
+        self, transform: ng.CoordinateSpaceTransform | None
+    ) -> np.ndarray:
+        """
+        Compute voxel-to-display matrix.
+        Forces voxel order to be (x, y, z) or (i, j, k).
+        """
+        if transform is None:
+            return None
+
+        # get transform components
+        idims = getattr(transform, "inputDimensions", None)
+        odims = getattr(transform, "outputDimensions", None)
+        mat = getattr(transform, "matrix", None)
+        if not odims and not idims:
+            return None
+        if idims and not odims:
+            odims = idims
+        elif odims and not idims:
+            idims = odims
+        rank = len(odims.names)
+        if mat is None:
+            mat = np.eye(rank+1)[:-1]
+
+        # get display and voxel axes
+        wnames = self.world_axes()
+        onames = self.display_dimensions
+        inames = [
+            "i" if "i" in idims.names else "x" if idims.names else wnames.get("x", None),  # noqa: E501
+            "j" if "j" in idims.names else "y" if idims.names else wnames.get("y", None),  # noqa: E501
+            "k" if "k" in idims.names else "z" if idims.names else wnames.get("z", None),  # noqa: E501
+        ]
+        if not all(inames):
+            return None
+
+        # select sub-matrix
+        oind = [odims.names.index(name) for name in onames]
+        iind = [idims.names.index(name) for name in inames]
+        mat = mat[oind, :][:, iind]
+
+        return mat
+
     @autolog
     def shader(
         self,
@@ -1521,8 +1582,10 @@ class Scene(ViewerState):
                 if len(getattr(layer, "source", [])) == 0:
                     continue
                 layer: ng.Layer = layer.layer
-                onames = layer.source[0].transform.outputDimensions.names
-                if not any(name[-1:] == "^" for name in onames):
+                transform = getattr(layer.source[0], "transform", None)
+                odims = getattr(transform, "outputDimensions", None)
+                onames = getattr(odims, "names", [])
+                if onames and not any(name[-1:] == "^" for name in onames):
                     self.channel_mode('channel', layer=layer_name)
 
         split_shader = shader.split(".")
@@ -1559,18 +1622,33 @@ class Scene(ViewerState):
                 )
 
         for layer in self.layers:
+
             if layer_names and layer.name not in layer_names:
                 continue
+
             layer = layer.layer
             if layer_types and layer.type not in layer_types:
                 continue
+
+            # ImageLayer or AnnotationLayer -> Shader
             if hasattr(layer, "shader"):
-                layer.shader = shader
+
+                layer_shader = shader
+                if len(getattr(layer, "source", [])) > 0:
+                    transform = getattr(layer.source[0], "transform", None)
+                    mat = self._vox2display(transform)
+                    layer_shader = rotate_shader(shader, mat)
+
+                layer.shader = layer_shader
+
+            # SegmentationLayer -> LUT
             elif layer.type == "segmentation":
+
                 layer.segment_colors = lut
                 for key in lut:
                     if key not in layer.starred_segments:
                         layer.starred_segments[key] = True
+
                 if segment_properties:
                     layer.source.append(
                         ng.LayerDataSource(segment_properties)
@@ -1801,7 +1879,6 @@ class Scene(ViewerState):
         """
         # --- load -----------------------------------------------------
         if load:
-            print("load")
             if exists(load):
                 # Load from file
                 with open(load, "rb") as f:

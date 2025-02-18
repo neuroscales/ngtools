@@ -363,6 +363,9 @@ class ImageLayer(_SourceMixin, Wraps(ng.ImageLayer), Layer):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
+        if self.shader == "None":
+            self.shader = shaders.default
+
         if self.source and not self.shaderControls:
             source = self.source[0]
             try:
