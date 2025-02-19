@@ -536,11 +536,21 @@ class LocalNeuroglancer(OSMixin):
             '--append', '-a', type=int, nargs='*',
             help="Append to existing (nested) layout")
         _.add_argument(
+            '--assign', '-x', type=int, nargs='*',
+            help="Assign into existing (nested) layout")
+        _.add_argument(
             '--insert', '-i', type=int, nargs='+',
             help="Insert in existing (nested) layout")
         _.add_argument(
             '--remove', '-r', type=int, nargs='+',
             help="Remove from an existing (nested) layout")
+        _.add_argument(
+            '--row', dest="stack", action="store_const", const="row",
+            help="Alias for `--stack row`")
+        _.add_argument(
+            '--column', "--col", dest="stack",
+            action="store_const", const="column",
+            help="Alias for `--stack column`")
 
         # --------------------------------------------------------------
         #   STATE
