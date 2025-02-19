@@ -1,3 +1,8 @@
+"""Miscelaneous tools to build and manipulate Neuroglancer scenes."""
+__all__ = ["__version__"]
 
-from . import _version
-__version__ = _version.get_versions()['version']
+# import to trigger fsspec registration
+from . import dandifs  # noqa: F401
+
+# version
+from ._version import __version__  # type: ignore
