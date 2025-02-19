@@ -1593,6 +1593,10 @@ class Scene(ViewerState):
         iind = [idims.names.index(name) for name in inames]
         mat = mat[oind, :][:, iind]
 
+        # remove scales and shears
+        u, _, vh = np.linalg.svd(mat)
+        mat = u @ vh
+
         return mat
 
     @autolog
