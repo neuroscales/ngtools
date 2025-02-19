@@ -174,7 +174,7 @@ class RemoteDandiFileSystem(AbstractFileSystem):
             if not is_401(e):
                 raise e
             try:
-                client.authenticate(os.environ.get("LINCBRAIN_API_KEY", ""))
+                client.authenticate(os.environ.get("DANDI_API_KEY", ""))
                 return fn()
             except requests.HTTPError as e:
                 if not is_401(e):

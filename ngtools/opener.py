@@ -201,7 +201,7 @@ def linc_auth_opt(token: str | None = None) -> dict:
     Parameters
     ----------
     token : str
-        Your LINCBRAIN_API_KEY
+        Your DANDI_API_KEY
 
     Returns
     -------
@@ -209,7 +209,7 @@ def linc_auth_opt(token: str | None = None) -> dict:
         options to pass to `fsspec`'s `HTTPFileSystem`.
     """
     API = DANDI_API['linc']
-    token = token or environ.get('LINCBRAIN_API_KEY', None)
+    token = token or environ.get('DANDI_API_KEY', None)
     if not token:
         return {}
     if token in _LINC_AUTH_CACHE:
@@ -237,7 +237,7 @@ def dandi_auth_opt(token: str | None = None, instance: str = "dandi") -> dict:
     Parameters
     ----------
     token : str
-        Your DANDI_API_KEY or LINCBRAIN_API_KEY
+        Your DANDI_API_KEY
     instance : {"dandi", "linc"}
 
     Returns
