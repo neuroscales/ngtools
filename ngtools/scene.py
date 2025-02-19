@@ -190,9 +190,8 @@ class ViewerState(Wraps(ng.ViewerState)):
     @property
     def __default_dimensions__(self) -> ng.CoordinateSpace:
         dims = {}
-        for named_layer in self.layers:
-            named_layer: ng.ManagedLayer
-            layer = named_layer.layer
+        for layer in self.layers:
+            layer: ng.ManagedLayer
             if len(getattr(layer, "source", [])) == 0:
                 continue
             transform = layer.source[0].transform
@@ -326,7 +325,6 @@ class ViewerState(Wraps(ng.ViewerState)):
                 continue
 
             try:
-                layer = layer.layer
                 source = layer.source[0]
                 bbox = source.output_bbox_size
                 odims = source.transform.output_dimensions.to_json()
@@ -382,7 +380,6 @@ class ViewerState(Wraps(ng.ViewerState)):
                 continue
 
             try:
-                layer = layer.layer
                 source = layer.source[0]
                 center = source.output_center
                 odims = source.transform.output_dimensions.to_json()
@@ -591,7 +588,6 @@ class Scene(ViewerState):
         # rename axes according to current naming scheme
         self.rename_axes(self.world_axes(print=False), layer=onames)
 
-        # apply transform
         if transform is not None:
             self.transform(transform, layer=onames, inv=inv)
 
@@ -828,6 +824,12 @@ class Scene(ViewerState):
                 for native_axis, new_axis in zip("xyz", axes)
             }
 
+        def rename_axis(name: str) -> str:
+            for axis_type in ("", "'", "^"):
+                if name + axis_type in axes:
+                    return axes[name + axis_type] + axis_type
+            return name
+
         layers = _ensure_list(layer or [])
         for named_layer in self.layers:
             if layers and named_layer.name not in layers:
@@ -836,21 +838,20 @@ class Scene(ViewerState):
                 continue
             if len(getattr(layer, "source", [])) == 0:
                 continue
-            layer = named_layer.layer
             transform = layer.source[0].transform
             transform.output_dimensions = ng.CoordinateSpace({
-                axes.get(name, name): scl
+                rename_axis(name): scl
                 for name, scl in transform.output_dimensions.to_json().items()
             })
             layer.source[0].transform = transform
 
         self.dimensions = ng.CoordinateSpace({
-            axes.get(name, name): scl
+            rename_axis(name): scl
             for name, scl in dimensions.items()
         })
 
         self.display_dimensions = [
-            axes.get(name, name) for name in self.display_dimensions
+            rename_axis(name) for name in self.display_dimensions
         ]
 
         ndim = len(self.dimensions.names)
@@ -1129,7 +1130,6 @@ class Scene(ViewerState):
             if skeleton_shader == "None":
                 layer.skeleton_shader = shaders.skeleton.orientation
 
-            layer = layer.layer
             for source in getattr(layer, "source", []):
                 source: LayerDataSource
                 source.transform = T.compose(
@@ -1234,50 +1234,31 @@ class Scene(ViewerState):
             olddim: str,
             newdim: str,
         ) -> ng.CoordinateSpaceTransform:
-            # if newdim.endswith(("'", "^")):
-            #     sdim = newdim[:-1]
-            # else:
-            #     sdim = newdim
-            # cdim = sdim + '^'
+            if newdim.endswith(("'", "^")):
+                gdim = newdim[:-1]
+            else:
+                gdim = newdim
+            cdim = gdim + '^'
+
             transform.outputDimensions = rename_key(
                 transform.outputDimensions, olddim, newdim)
-            # odims = list(transform.outputDimensions.names)
-            # if newdim == cdim:
-            #     # to channel dimension -> half unit shift
-            #     shift = 0.5
-            # elif olddim == cdim:
-            #     # from channel dimension -> remove half unit shift
-            #     shift = -0.5
-            # else:
-            #     shift = 0
-            # if shift:
-            #     if transform.matrix is not None:
-            #         transform.matrix[odims.index(newdim), -1] += shift
-            #     else:
-            #         matrix = np.eye(len(odims)+1)[:-1]
-            #         matrix[odims.index(newdim), -1] = shift
-            #         transform.matrix = matrix
+
+            odims = list(transform.outputDimensions.names)
+            if newdim == cdim:
+                # ensure zero offset in channel dim
+                if transform.matrix is not None:
+                    transform.matrix[odims.index(newdim), -1] = 0
+                else:
+                    matrix = np.eye(len(odims)+1)[:-1]
+                    matrix[odims.index(newdim), -1] = 0
+                    transform.matrix = matrix
             return transform
 
         def create_transform(
             scale: list[float], olddim: str, newdim: str
         ) -> ng.CoordinateSpaceTransform:
-            # if newdim.endswith(("'", "^")):
-            #     sdim = newdim[:-1]
-            # else:
-            #     sdim = newdim
-            # cdim = sdim + '^'
-            # if newdim == cdim:
-            #     # to channel dimension -> half unit shift
-            #     shift = 0.5
-            # elif olddim == cdim:
-            #     # from channel dimension -> remove half unit shift
-            #     shift = -0.5
-            # else:
-            #     shift = 0
-            shift = 0
             transform = ng.CoordinateSpaceTransform(
-                matrix=np.asarray([[1, shift]]),
+                matrix=np.asarray([[1, 0]]),
                 inputDimensions=ng.CoordinateSpace(
                     names=[olddim],
                     scales=[scale[0]],
@@ -1299,7 +1280,6 @@ class Scene(ViewerState):
                 continue
             if len(getattr(layer, "source", [])) == 0:
                 continue
-            layer: ng.Layer = layer.layer
 
             for dimension in dimensions:
                 ldim = dimension + "'"
@@ -1626,15 +1606,21 @@ class Scene(ViewerState):
         layer_names = _ensure_list(layer or [])
         layer_types = _ensure_list(layer_type or [])
 
+        # Ensure channels have correct channel mode
         if shader.lower() in ('rgb', 'orientation'):
             for layer in self.layers:
                 layer: ng.ManagedLayer
                 layer_name = layer.name
+
                 if layer_names and layer_name not in layer_names:
                     continue
+
+                if layer_name[:2] == "__":
+                    continue
+
                 if len(getattr(layer, "source", [])) == 0:
                     continue
-                layer: ng.Layer = layer.layer
+
                 transform = getattr(layer.source[0], "transform", None)
                 odims = getattr(transform, "outputDimensions", None)
                 onames = getattr(odims, "names", [])
@@ -1679,7 +1665,9 @@ class Scene(ViewerState):
             if layer_names and layer.name not in layer_names:
                 continue
 
-            layer = layer.layer
+            if layer.name[:2] == "__":
+                continue
+
             if layer_types and layer.type not in layer_types:
                 continue
 

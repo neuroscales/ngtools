@@ -1222,7 +1222,10 @@ class ZarrVolumeInfo(VolumeInfo):
             else:
                 assert isinstance(self, Zarr3VolumeInfo)
                 return [f"dim{i}" for i in range(self.getRank())]
-        return [axis["name"] for axis in axes]
+        return [
+            axis["name"] + ("'" if axis["type"] == "channel" else "")
+            for axis in axes
+        ]
 
     getInputNames = getOutputNames = getNames
 
