@@ -25,6 +25,7 @@ import numpy as np
 import zarr
 import zarr.storage
 from cloudvolume import CloudVolume
+from nibabel.spatialimages import HeaderDataError
 from numpy.typing import ArrayLike
 from upath import UPath
 
@@ -949,7 +950,13 @@ class NiftiVolumeInfo(VolumeInfo):
             fileobj = open(url, compression=compression)
             for hdr_klass in NiftiHeaders:
                 try:
-                    hdr = hdr_klass.from_fileobj(fileobj, check=False)
+                    try:
+                        hdr = hdr_klass.from_fileobj(fileobj, check=True)
+                    except HeaderDataError:
+                        # Check if failure is due to "old" nifti-zarr magic
+                        hdr = hdr_klass.from_fileobj(fileobj, check=False)
+                        if hdr["magic"].item().decode() not in ("nz1", "nz2"):
+                            raise
                     toc = time.time()
                     LOG.info(f"Load nii header: {toc-tic} s")
                     return hdr
@@ -1046,15 +1053,20 @@ class NiftiVolumeInfo(VolumeInfo):
         # (0, 0, 0) of the input space is at the corner of the first voxel.
         if getattr(self, "_matrix", None) is None:
             srank = min(3, self.getRank())
-            if self._affine == "base":
-                matrix = self._nib_header.get_base_affine()[:-1]
-            elif self._affine == "best":
-                matrix = self._nib_header.get_best_affine()[:-1]
-            elif self._affine == "sform":
-                matrix = self._nib_header.get_sform()[:-1]
-            else:
-                matrix = self._nib_header.get_qform()[:-1]
-            scales = self._nib_header['pixdim'][1:4]
+            for affine in (self._affine, "best", "sform", "qform", "base"):
+                if affine == "base":
+                    matrix = self._nib_header.get_base_affine()[:-1]
+                elif affine == "best":
+                    matrix = self._nib_header.get_best_affine()[:-1]
+                elif affine == "sform":
+                    matrix = self._nib_header.get_sform()[:-1]
+                else:
+                    matrix = self._nib_header.get_qform()[:-1]
+                scales = (matrix[:3, :3] ** 2).sum() ** 0.5
+                if scales.max() == 0:
+                    continue
+                else:
+                    break
             if not self._align_corner:
                 matrix[:3, -1] -= matrix[:3, :-1] @ ([0.5]*srank)
             matrix[:3, :-1] /= scales

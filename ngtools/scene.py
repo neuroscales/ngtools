@@ -1295,13 +1295,16 @@ class Scene(ViewerState):
             layer: ng.ManagedLayer
             if layers and layer.name not in layers:
                 continue
-            layer: ng.Layer = layer.layer
+            if layer.name[:2] == "__":
+                continue
             if len(getattr(layer, "source", [])) == 0:
                 continue
+            layer: ng.Layer = layer.layer
+
             for dimension in dimensions:
                 ldim = dimension + "'"
                 cdim = dimension + "^"
-                sdim = dimension
+                gdim = dimension
                 localDimensions = layer.localDimensions.to_json()
                 if layer.localPosition:
                     localPosition = layer.localPosition.tolist()
@@ -1316,25 +1319,28 @@ class Scene(ViewerState):
                 else:
                     source = layer.source[0]
 
-                if mode == 'l':     # LOCAL
+                # --- LOCAL --------------------------------------------
+                if mode == 'l':
                     if ldim in localDimensions:
                         continue
                     was_channel = False
                     if cdim in channelDimensions:
                         was_channel = True
                         scale = channelDimensions.pop(cdim)
-                    else:
-                        scale = [1, ""]
+                    else:  # was global
+                        odims = source.transform.outputDimensions.to_json()
+                        scale = odims[gdim]
                     localDimensions[ldim] = scale
                     localPosition = [*(localPosition or []), 0]
                     if transform:
                         update_transform(
-                            transform, cdim if was_channel else sdim, ldim)
+                            transform, cdim if was_channel else gdim, ldim)
                     else:
                         source.transform = create_transform(
-                            scale, cdim if was_channel else sdim, ldim)
+                            scale, cdim if was_channel else gdim, ldim)
 
-                elif mode == 'c':   # CHANNEL
+                # --- CHANNEL ------------------------------------------
+                elif mode == 'c':
                     if cdim in channelDimensions:
                         continue
                     was_local = False
@@ -1346,17 +1352,27 @@ class Scene(ViewerState):
                         scale = localDimensions.pop(ldim)
                         if i < len(localPosition):
                             localPosition.pop(i)
-                    else:
-                        scale = [1, ""]
+                    else:  # was global
+                        try:
+                            # get input voxel size
+                            idims = source.transform.inputDimensions
+                            odims = source.transform.outputDimensions
+                            matrix = source.transform.matrix
+                            index = odims.names.index(gdim)
+                            index = np.abs(matrix[index]).argmax()
+                            scale = idims.to_json()[idims.names[index]]
+                        except Exception:
+                            scale = [1, ""]
                     channelDimensions[cdim] = scale
                     if transform:
                         update_transform(
-                            transform, ldim if was_local else sdim, cdim)
+                            transform, ldim if was_local else gdim, cdim)
                     else:
                         source.transform = create_transform(
-                            scale, ldim if was_local else sdim, cdim)
+                            scale, ldim if was_local else gdim, cdim)
 
-                elif mode == 'g':   # SPATIAL
+                # --- GLOBAL -------------------------------------------
+                elif mode == 'g':
                     if cdim not in channelDimensions and \
                             ldim not in localDimensions:
                         continue
@@ -1374,14 +1390,16 @@ class Scene(ViewerState):
                             localPosition.pop(i)
                     if transform:
                         update_transform(
-                            transform, cdim if was_channel else ldim, sdim)
+                            transform, cdim if was_channel else ldim, gdim)
                     else:
                         source.transform = create_transform(
-                            scale, cdim if was_channel else ldim, sdim)
-                    if sdim not in self.dimensions.to_json():
+                            scale, cdim if was_channel else ldim, gdim)
+                    if gdim not in self.dimensions.to_json():
                         dimensions = self.dimensions.to_json()
-                        dimensions[sdim] = scale
+                        dimensions[gdim] = scale
                         self.dimensions = ng.CoordinateSpace(dimensions)
+
+                # set position/dimensions
                 layer.localDimensions = ng.CoordinateSpace(localDimensions)
                 layer.localPosition = np.asarray(localPosition)
                 layer.channelDimensions = ng.CoordinateSpace(channelDimensions)
