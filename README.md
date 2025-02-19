@@ -5,7 +5,7 @@ Advanced tools for neuroglancer (conversion, tracts visualization, ...)
 ## Installation
 
 ```shell
-pip install git+https://github.com/neuroscales/ngtools
+pip install ngtools
 ```
 
 ## Description
