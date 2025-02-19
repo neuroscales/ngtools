@@ -1718,11 +1718,23 @@ class Scene(ViewerState):
         *,
         flex: float = 1,
         append: bool | int | list[int] | str | None = None,
+        assign: int | list[int] | str | None = None,
         insert: int | list[int] | str | None = None,
         remove: int | list[int] | str | None = None,
     ) -> object:
         """
         Change layout.
+
+        !!! note "Append/Assign/Insert/Remove"
+
+            The requested (stack of) layout(s) can be inserted
+            into existing layouts.
+
+            Arguments must be an integer or list of integer, that are
+            used to navigate through the existing nested stacks of layouts.
+
+            Only one of {append, assign, insert, remove} can be used.
+
 
         Parameters
         ----------
@@ -1730,6 +1742,8 @@ class Scene(ViewerState):
             Layout(s) to set or insert. If list, `stack` must be set.
         stack : {"row", "column"}, optional
             Insert a stack of layouts.
+            If input layout is a list and `append` is not used,
+            default is `"row"`.
         layer : [list of] str
             Set of layers to include in the layout.
             By default, all layers are included (even future ones).
@@ -1740,19 +1754,12 @@ class Scene(ViewerState):
             ???
         append : bool or [list of] int or str
             Append the layout to an existing stack.
-            If an integer or list of integer, they are used to navigate
-            through the nested stacks of layouts.
-            Only one of append or insert can be used.
+        assign : int or [list of] int or str
+            Assign the layout into an existing stack.
         insert : int or [list of] int or str
             Insert the layout into an existing stack.
-            If an integer or list of integer, they are used to navigate
-            through the nested stacks of layouts.
-            Only one of append or insert can be used.
         remove : int or [list of] int or str
-            Remove the layout in an existing stack.
-            If an integer or list of integer, they are used to navigate
-            through the nested stacks of layouts.
-            If `remove` is used, `layout` should be `None`.
+            Remove the layout from an existing stack.
 
         Returns
         -------
@@ -1764,11 +1771,9 @@ class Scene(ViewerState):
             return self.layout
 
         layout = _ensure_list(layout or [])
-
         layer = _ensure_list(layer or [])
-        if (len(layout) > 1 or stack) and not layer:
-            layer = [_.name for _ in self.layers]
 
+        # If layer is set, prepare a list of `LayerGroupViewer`s.
         if layer:
             layout = [ng.LayerGroupViewer(
                 layers=layer,
@@ -1776,10 +1781,11 @@ class Scene(ViewerState):
                 flex=flex,
             ) for L in layout]
 
+        # If multiple layouts and stack not set, use "row" as default.
         if len(layout) > 1 and not stack:
             stack = 'row'
-        if not stack and len(layout) == 1:
-            layout = layout[0]
+
+        # Stack layers
         if stack:
             layout = ng.StackLayout(
                 type=stack,
@@ -1787,52 +1793,57 @@ class Scene(ViewerState):
                 flex=flex,
             )
 
+        # Unless there is a single layout
+        elif layout:
+            layout = layout[0]
+
+        # Prepare append/insert/remove indices
+
         indices = []
-        do_append = append is not None
+
+        do_append = append not in (None, False)
         if do_append:
-            indices = _ensure_list(append or [])
-            append = do_append
+            indices = _ensure_list(append)
 
-        if insert:
-            indices = _ensure_list(insert or [])
+        do_assign = assign not in (None, False)
+        if do_assign:
+            indices = _ensure_list(assign)
+            assign = indices.pop(-1)
+
+        do_insert = insert not in (None, False)
+        if do_insert:
+            indices = _ensure_list(insert)
             insert = indices.pop(-1)
-        else:
-            insert = False
 
-        if remove:
-            indices = _ensure_list(remove or [])
+        do_remove = remove not in (None, False)
+        if do_remove:
+            indices = _ensure_list(remove)
             remove = indices.pop(-1)
-        else:
-            remove = False
 
-        if bool(append) + bool(insert) + bool(remove) > 1:
+        if do_append + do_assign + do_insert + do_remove > 1:
             raise ValueError('Cannot use both append and insert')
-        if layout and remove:
+        if layout and do_remove:
             raise ValueError('Do not set `layout` and `remove`')
-
-        if append or (insert is not False) or (remove is not False):
-            parent = self.layout
-            while indices:
-                parent = layout.children[indices.pop(0)]
-            if layout and not isinstance(layout, ng.LayerGroupViewer):
-                if not layer:
-                    if len(parent.children):
-                        layer = [L for L in parent.children[-1].layers]
-                    else:
-                        layer = [_.name for _ in self.layers]
-                layout = ng.LayerGroupViewer(
-                    layers=layer,
-                    layout=layout,
-                    flex=flex,
-                )
-            if append:
-                parent.children.append(layout)
-            elif insert:
-                parent.children.insert(insert, layout)
-            elif remove:
-                del parent.children[remove]
-        else:
+        if do_append + do_assign + do_insert + do_remove == 0:
+            # nothing to do
             self.layout = layout
+            return self.layout
+
+        # append/insert
+
+        parent = self.layout
+        while indices:
+            parent = layout.children[indices.pop(0)]
+
+        if do_append:
+            parent.children.append(layout)
+        elif do_assign:
+            parent.children[assign] = layout
+        elif do_insert:
+            parent.children.insert(insert, layout)
+        elif do_remove:
+            del parent.children[remove]
+
         return self.layout
 
     @autolog
