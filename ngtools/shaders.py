@@ -500,11 +500,18 @@ class shaders:
         #uicontrol float brightness_floor slider(min=0, max=1, default=0)
         #uicontrol float alpha_ceil slider(min=0, max=1, default=1)
         #uicontrol float alpha_floor slider(min=0, max=1, default=1)
+        #uicontrol bool trilinear checkbox(default=false)
         void main() {
         vec3 orient;
-        orient.r = abs(toNormalized(getDataValue(0)));
-        orient.g = abs(toNormalized(getDataValue(1)));
-        orient.b = abs(toNormalized(getDataValue(2)));
+        if (trilinear) {
+        orient.r = toNormalized(getDataValue(0));
+        orient.g = toNormalized(getDataValue(1));
+        orient.b = toNormalized(getDataValue(2));
+        } else {
+        orient.r = toNormalized(getInterpolated(0));
+        orient.g = toNormalized(getInterpolated(1));
+        orient.b = toNormalized(getInterpolated(2));
+        }
         // <!-- BEGIN ROTATION -->
         // Order: 00 10 20 01 11 21 02 12 22
         mat3 mat = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
@@ -542,12 +549,18 @@ class shaders:
         """
         #uicontrol float brightness slider(min=-1, max=1)
         #uicontrol float contrast slider(min=-3, max=3, step=0.01)
+        #uicontrol bool trilinear checkbox(default=false)
         void main() {
-            vec color = vec3(
-                toNormalized(getDataValue(0)),
-                toNormalized(getDataValue(1)),
-                toNormalized(getDataValue(2))
-            );
+            vec3 color;
+            if (trilinear) {
+                color.r = toNormalized(getDataValue(0));
+                color.g = toNormalized(getDataValue(1));
+                color.b = toNormalized(getDataValue(2));
+            } else {
+                color.r = toNormalized(getInterpolated(0));
+                color.g = toNormalized(getInterpolated(1));
+                color.b = toNormalized(getInterpolated(2));
+            }
             emitRGB((color + brightness) * exp(contrast));
         }
         """
