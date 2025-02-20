@@ -198,11 +198,9 @@ class ViewerState(Wraps(ng.ViewerState)):
             if transform is None or transform.output_dimensions is None:
                 continue
             odims = transform.output_dimensions.to_json()
-            dims.update({
-                name: scale
-                for name, scale in odims.items()
-                if not name.endswith(("^", "'"))
-            })
+            for name, scale in odims.items():
+                if not name.endswith(("^", "'")):
+                    dims.setdefault(name, scale)
         dim_order = ["x", "y", "z", "t", "right", "anterior", "superior"]
         dims = dict(sorted(dims.items(), key=lambda x: (
             dim_order.index(x[0]) if x[0] in dim_order else
@@ -593,11 +591,11 @@ class Scene(ViewerState):
 
         if nb_layers_0 == 0:
             # trigger default values
-            self.dimensions
-            self.display_dimensions
-            self.position
-            self.cross_section_scale
-            self.projection_scale
+            self.dimensions = None
+            self.display_dimensions = None
+            self.position = None
+            self.cross_section_scale = None
+            self.projection_scale = None
             self.space("radio", "world")
 
         if shader is not None:
@@ -1272,6 +1270,7 @@ class Scene(ViewerState):
             )
             return transform
 
+        # Update localDimensions & channelDimensions
         for layer in self.layers:
             layer: ng.ManagedLayer
             if layers and layer.name not in layers:
@@ -1383,6 +1382,29 @@ class Scene(ViewerState):
                 layer.localDimensions = ng.CoordinateSpace(localDimensions)
                 layer.localPosition = np.asarray(localPosition)
                 layer.channelDimensions = ng.CoordinateSpace(channelDimensions)
+
+        # Update global dimensions & position
+        current_dimensions = self.dimensions.to_json()
+        current_position = list(self.position)
+        default_dimensions = self.__default_dimensions__.to_json()
+        default_position = self.__default_position__
+        for gdim in dimensions:
+            if mode == "g":
+                # add dimension to globals
+                if gdim in current_dimensions:
+                    continue
+                elif gdim in default_dimensions:
+                    current_dimensions[gdim] = default_dimensions[gdim]
+                    index = list(current_dimensions).index(gdim)
+                    current_position.insert(index, default_position[index])
+            else:
+                # remove dimension from globals
+                if gdim not in current_dimensions:
+                    continue
+                else:
+                    index = list(current_dimensions).index(gdim)
+                    del current_dimensions[gdim]
+                    del current_position[index]
 
     @autolog
     def move(

@@ -133,6 +133,8 @@ def Wraps(kls: type) -> type:
                 raise AttributeError(name)
 
             def __setattr__(self, name: str, value: object | type) -> None:
+                if value is None:
+                    value = self.__fix_none_value__(name, value)
                 # check if a setter is available
                 if hasattr(self, f"__set_{name}__"):
                     value = getattr(self, f"__set_{name}__")(value)
