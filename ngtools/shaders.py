@@ -502,9 +502,9 @@ class shaders:
         #uicontrol float alpha_floor slider(min=0, max=1, default=1)
         void main() {
         vec3 orient;
-        orient.r = abs(toNormalized(getDataValue(0)));
-        orient.g = abs(toNormalized(getDataValue(1)));
-        orient.b = abs(toNormalized(getDataValue(2)));
+        orient.r = toNormalized(getDataValue(0));
+        orient.g = toNormalized(getDataValue(1));
+        orient.b = toNormalized(getDataValue(2));
         // <!-- BEGIN ROTATION -->
         // Order: 00 10 20 01 11 21 02 12 22
         mat3 mat = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
@@ -543,11 +543,10 @@ class shaders:
         #uicontrol float brightness slider(min=-1, max=1)
         #uicontrol float contrast slider(min=-3, max=3, step=0.01)
         void main() {
-            vec color = vec3(
-                toNormalized(getDataValue(0)),
-                toNormalized(getDataValue(1)),
-                toNormalized(getDataValue(2))
-            );
+            vec3 color;
+            color.r = toNormalized(getDataValue(0));
+            color.g = toNormalized(getDataValue(1));
+            color.b = toNormalized(getDataValue(2));
             emitRGB((color + brightness) * exp(contrast));
         }
         """

@@ -190,20 +190,17 @@ class ViewerState(Wraps(ng.ViewerState)):
     @property
     def __default_dimensions__(self) -> ng.CoordinateSpace:
         dims = {}
-        for named_layer in self.layers:
-            named_layer: ng.ManagedLayer
-            layer = named_layer.layer
+        for layer in self.layers:
+            layer: ng.ManagedLayer
             if len(getattr(layer, "source", [])) == 0:
                 continue
             transform = layer.source[0].transform
             if transform is None or transform.output_dimensions is None:
                 continue
             odims = transform.output_dimensions.to_json()
-            dims.update({
-                name: scale
-                for name, scale in odims.items()
-                if not name.endswith(("^", "'"))
-            })
+            for name, scale in odims.items():
+                if not name.endswith(("^", "'")):
+                    dims.setdefault(name, scale)
         dim_order = ["x", "y", "z", "t", "right", "anterior", "superior"]
         dims = dict(sorted(dims.items(), key=lambda x: (
             dim_order.index(x[0]) if x[0] in dim_order else
@@ -326,7 +323,6 @@ class ViewerState(Wraps(ng.ViewerState)):
                 continue
 
             try:
-                layer = layer.layer
                 source = layer.source[0]
                 bbox = source.output_bbox_size
                 odims = source.transform.output_dimensions.to_json()
@@ -382,7 +378,6 @@ class ViewerState(Wraps(ng.ViewerState)):
                 continue
 
             try:
-                layer = layer.layer
                 source = layer.source[0]
                 center = source.output_center
                 odims = source.transform.output_dimensions.to_json()
@@ -429,7 +424,7 @@ def autolog(func: callable) -> callable:
                 for arg in args
             )
             pkwargs = ", ".join(
-                f"{key}=" + f'"{val}"' if isinstance(val, str) else str(val)
+                f"{key}=" + (f'"{val}"' if isinstance(val, str) else str(val))
                 for key, val in kwargs.items()
             )
             if not pargs:
@@ -591,17 +586,16 @@ class Scene(ViewerState):
         # rename axes according to current naming scheme
         self.rename_axes(self.world_axes(print=False), layer=onames)
 
-        # apply transform
         if transform is not None:
             self.transform(transform, layer=onames, inv=inv)
 
         if nb_layers_0 == 0:
             # trigger default values
-            self.dimensions
-            self.display_dimensions
-            self.position
-            self.cross_section_scale
-            self.projection_scale
+            self.dimensions = None
+            self.display_dimensions = None
+            self.position = None
+            self.cross_section_scale = None
+            self.projection_scale = None
             self.space("radio", "world")
 
         if shader is not None:
@@ -828,6 +822,12 @@ class Scene(ViewerState):
                 for native_axis, new_axis in zip("xyz", axes)
             }
 
+        def rename_axis(name: str) -> str:
+            for axis_type in ("", "'", "^"):
+                if name + axis_type in axes:
+                    return axes[name + axis_type] + axis_type
+            return name
+
         layers = _ensure_list(layer or [])
         for named_layer in self.layers:
             if layers and named_layer.name not in layers:
@@ -836,21 +836,20 @@ class Scene(ViewerState):
                 continue
             if len(getattr(layer, "source", [])) == 0:
                 continue
-            layer = named_layer.layer
             transform = layer.source[0].transform
             transform.output_dimensions = ng.CoordinateSpace({
-                axes.get(name, name): scl
+                rename_axis(name): scl
                 for name, scl in transform.output_dimensions.to_json().items()
             })
             layer.source[0].transform = transform
 
         self.dimensions = ng.CoordinateSpace({
-            axes.get(name, name): scl
+            rename_axis(name): scl
             for name, scl in dimensions.items()
         })
 
         self.display_dimensions = [
-            axes.get(name, name) for name in self.display_dimensions
+            rename_axis(name) for name in self.display_dimensions
         ]
 
         ndim = len(self.dimensions.names)
@@ -1129,7 +1128,6 @@ class Scene(ViewerState):
             if skeleton_shader == "None":
                 layer.skeleton_shader = shaders.skeleton.orientation
 
-            layer = layer.layer
             for source in getattr(layer, "source", []):
                 source: LayerDataSource
                 source.transform = T.compose(
@@ -1234,50 +1232,31 @@ class Scene(ViewerState):
             olddim: str,
             newdim: str,
         ) -> ng.CoordinateSpaceTransform:
-            # if newdim.endswith(("'", "^")):
-            #     sdim = newdim[:-1]
-            # else:
-            #     sdim = newdim
-            # cdim = sdim + '^'
+            if newdim.endswith(("'", "^")):
+                gdim = newdim[:-1]
+            else:
+                gdim = newdim
+            cdim = gdim + '^'
+
             transform.outputDimensions = rename_key(
                 transform.outputDimensions, olddim, newdim)
-            # odims = list(transform.outputDimensions.names)
-            # if newdim == cdim:
-            #     # to channel dimension -> half unit shift
-            #     shift = 0.5
-            # elif olddim == cdim:
-            #     # from channel dimension -> remove half unit shift
-            #     shift = -0.5
-            # else:
-            #     shift = 0
-            # if shift:
-            #     if transform.matrix is not None:
-            #         transform.matrix[odims.index(newdim), -1] += shift
-            #     else:
-            #         matrix = np.eye(len(odims)+1)[:-1]
-            #         matrix[odims.index(newdim), -1] = shift
-            #         transform.matrix = matrix
+
+            odims = list(transform.outputDimensions.names)
+            if newdim == cdim:
+                # ensure zero offset in channel dim
+                if transform.matrix is not None:
+                    transform.matrix[odims.index(newdim), -1] = 0
+                else:
+                    matrix = np.eye(len(odims)+1)[:-1]
+                    matrix[odims.index(newdim), -1] = 0
+                    transform.matrix = matrix
             return transform
 
         def create_transform(
             scale: list[float], olddim: str, newdim: str
         ) -> ng.CoordinateSpaceTransform:
-            # if newdim.endswith(("'", "^")):
-            #     sdim = newdim[:-1]
-            # else:
-            #     sdim = newdim
-            # cdim = sdim + '^'
-            # if newdim == cdim:
-            #     # to channel dimension -> half unit shift
-            #     shift = 0.5
-            # elif olddim == cdim:
-            #     # from channel dimension -> remove half unit shift
-            #     shift = -0.5
-            # else:
-            #     shift = 0
-            shift = 0
             transform = ng.CoordinateSpaceTransform(
-                matrix=np.asarray([[1, shift]]),
+                matrix=np.asarray([[1, 0]]),
                 inputDimensions=ng.CoordinateSpace(
                     names=[olddim],
                     scales=[scale[0]],
@@ -1291,6 +1270,7 @@ class Scene(ViewerState):
             )
             return transform
 
+        # Update localDimensions & channelDimensions
         for layer in self.layers:
             layer: ng.ManagedLayer
             if layers and layer.name not in layers:
@@ -1299,37 +1279,55 @@ class Scene(ViewerState):
                 continue
             if len(getattr(layer, "source", [])) == 0:
                 continue
-            layer: ng.Layer = layer.layer
 
             for dimension in dimensions:
                 ldim = dimension + "'"
                 cdim = dimension + "^"
                 gdim = dimension
+
+                # read dimensions
                 localDimensions = layer.localDimensions.to_json()
                 if layer.localPosition:
                     localPosition = layer.localPosition.tolist()
                 else:
                     localPosition = []
                 channelDimensions = layer.channelDimensions.to_json()
+
+                # read transform
                 transform = None
                 for source in layer.source:
-                    if getattr(source, 'transform', {}):
+                    if getattr(source, 'transform', None):
                         transform = source.transform
                         break
                 else:
                     source = layer.source[0]
 
+                # read output dimensions
+                odims = None
+                if transform:
+                    odims = getattr(transform, "outputDimensions", None)
+
                 # --- LOCAL --------------------------------------------
                 if mode == 'l':
                     if ldim in localDimensions:
                         continue
+                    elif odims and ldim in odims.names:
+                        continue
+
                     was_channel = False
                     if cdim in channelDimensions:
                         was_channel = True
                         scale = channelDimensions.pop(cdim)
-                    else:  # was global
-                        odims = source.transform.outputDimensions.to_json()
-                        scale = odims[gdim]
+                    elif odims and cdim in odims.names:
+                        was_channel = True
+                        scale = odims.to_json()[cdim]
+                    elif odims and gdim in odims.names:
+                        scale = odims.to_json()[gdim]
+                    elif gdim in self.dimensions:
+                        scale = self.dimensions.to_json()[gdim]
+                    else:
+                        scale = [1, ""]
+
                     localDimensions[ldim] = scale
                     localPosition = [*(localPosition or []), 0]
                     if transform:
@@ -1343,26 +1341,30 @@ class Scene(ViewerState):
                 elif mode == 'c':
                     if cdim in channelDimensions:
                         continue
+                    elif odims and cdim in odims.names:
+                        continue
+
                     was_local = False
                     if ldim in localDimensions:
                         was_local = True
-                        for i, key in enumerate(localDimensions.keys()):
-                            if key == ldim:
-                                break
+                        i = list(localDimensions.keys()).index(ldim)
                         scale = localDimensions.pop(ldim)
                         if i < len(localPosition):
                             localPosition.pop(i)
+                    elif odims and ldim in odims.names:
+                        was_local = True
+                        scale = odims.to_json()[ldim]
                     else:  # was global
                         try:
                             # get input voxel size
-                            idims = source.transform.inputDimensions
-                            odims = source.transform.outputDimensions
-                            matrix = source.transform.matrix
+                            idims = transform.inputDimensions
+                            matrix = transform.matrix
                             index = odims.names.index(gdim)
                             index = np.abs(matrix[index]).argmax()
                             scale = idims.to_json()[idims.names[index]]
                         except Exception:
                             scale = [1, ""]
+
                     channelDimensions[cdim] = scale
                     if transform:
                         update_transform(
@@ -1373,28 +1375,42 @@ class Scene(ViewerState):
 
                 # --- GLOBAL -------------------------------------------
                 elif mode == 'g':
-                    if cdim not in channelDimensions and \
-                            ldim not in localDimensions:
+                    if (
+                        cdim not in channelDimensions and
+                        ldim not in localDimensions
+                    ):
                         continue
-                    scale = [1, ""]
+                    if odims and (
+                        cdim not in odims.names and
+                        ldim not in odims.names
+                    ):
+                        continue
+
                     was_channel = False
                     if cdim in channelDimensions:
-                        scale = channelDimensions.pop(cdim)
                         was_channel = True
-                    if ldim in localDimensions:
-                        for i, key in enumerate(localDimensions.keys()):
-                            if key == ldim:
-                                break
+                        scale = channelDimensions.pop(cdim)
+                    elif odims and cdim in odims.names:
+                        was_channel = True
+                        scale = odims.to_json()[cdim]
+                    elif ldim in localDimensions:
+                        i = list(localDimensions.keys()).index(ldim)
                         scale = localDimensions.pop(ldim)
                         if i < len(localPosition):
                             localPosition.pop(i)
+                    elif odims and ldim in odims.names:
+                        scale = odims.to_json()[ldim]
+                    else:
+                        scale = [1, ""]
+
                     if transform:
                         update_transform(
                             transform, cdim if was_channel else ldim, gdim)
                     else:
                         source.transform = create_transform(
                             scale, cdim if was_channel else ldim, gdim)
-                    if gdim not in self.dimensions.to_json():
+
+                    if gdim not in self.dimensions.names:
                         dimensions = self.dimensions.to_json()
                         dimensions[gdim] = scale
                         self.dimensions = ng.CoordinateSpace(dimensions)
@@ -1403,6 +1419,29 @@ class Scene(ViewerState):
                 layer.localDimensions = ng.CoordinateSpace(localDimensions)
                 layer.localPosition = np.asarray(localPosition)
                 layer.channelDimensions = ng.CoordinateSpace(channelDimensions)
+
+        # Update global dimensions & position
+        current_dimensions = self.dimensions.to_json()
+        current_position = list(self.position)
+        default_dimensions = self.__default_dimensions__.to_json()
+        default_position = self.__default_position__
+        for gdim in dimensions:
+            if mode == "g":
+                # add dimension to globals
+                if gdim in current_dimensions:
+                    continue
+                elif gdim in default_dimensions:
+                    current_dimensions[gdim] = default_dimensions[gdim]
+                    index = list(current_dimensions).index(gdim)
+                    current_position.insert(index, default_position[index])
+            else:
+                # remove dimension from globals
+                if gdim not in current_dimensions:
+                    continue
+                else:
+                    index = list(current_dimensions).index(gdim)
+                    del current_dimensions[gdim]
+                    del current_position[index]
 
     @autolog
     def move(
@@ -1626,15 +1665,21 @@ class Scene(ViewerState):
         layer_names = _ensure_list(layer or [])
         layer_types = _ensure_list(layer_type or [])
 
+        # Ensure channels have correct channel mode
         if shader.lower() in ('rgb', 'orientation'):
             for layer in self.layers:
                 layer: ng.ManagedLayer
                 layer_name = layer.name
+
                 if layer_names and layer_name not in layer_names:
                     continue
+
+                if layer_name[:2] == "__":
+                    continue
+
                 if len(getattr(layer, "source", [])) == 0:
                     continue
-                layer: ng.Layer = layer.layer
+
                 transform = getattr(layer.source[0], "transform", None)
                 odims = getattr(transform, "outputDimensions", None)
                 onames = getattr(odims, "names", [])
@@ -1679,7 +1724,9 @@ class Scene(ViewerState):
             if layer_names and layer.name not in layer_names:
                 continue
 
-            layer = layer.layer
+            if layer.name[:2] == "__":
+                continue
+
             if layer_types and layer.type not in layer_types:
                 continue
 
@@ -1975,10 +2022,10 @@ class Scene(ViewerState):
             instance = "ng"
             for layer in self.layers:
                 for source in getattr(layer, "source", []):
-                    url = getattr(source, "url", "")
-                    if isinstance(url, str) and (
-                        ("lincbrain.org" in url) or
-                        ("/linc/" in url)
+                    url_ = getattr(source, "url", "")
+                    if isinstance(url_, str) and (
+                        ("lincbrain.org" in url_) or
+                        ("/linc/" in url_)
                     ):
                         instance = "linc"
                         break
