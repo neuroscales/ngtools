@@ -1284,31 +1284,50 @@ class Scene(ViewerState):
                 ldim = dimension + "'"
                 cdim = dimension + "^"
                 gdim = dimension
+
+                # read dimensions
                 localDimensions = layer.localDimensions.to_json()
                 if layer.localPosition:
                     localPosition = layer.localPosition.tolist()
                 else:
                     localPosition = []
                 channelDimensions = layer.channelDimensions.to_json()
+
+                # read transform
                 transform = None
                 for source in layer.source:
-                    if getattr(source, 'transform', {}):
+                    if getattr(source, 'transform', None):
                         transform = source.transform
                         break
                 else:
                     source = layer.source[0]
 
+                # read output dimensions
+                odims = None
+                if transform:
+                    odims = getattr(transform, "outputDimensions", None)
+
                 # --- LOCAL --------------------------------------------
                 if mode == 'l':
                     if ldim in localDimensions:
                         continue
+                    elif odims and ldim in odims.names:
+                        continue
+
                     was_channel = False
                     if cdim in channelDimensions:
                         was_channel = True
                         scale = channelDimensions.pop(cdim)
-                    else:  # was global
-                        odims = source.transform.outputDimensions.to_json()
-                        scale = odims[gdim]
+                    elif odims and cdim in odims.names:
+                        was_channel = True
+                        scale = odims.to_json()[cdim]
+                    elif odims and gdim in odims.names:
+                        scale = odims.to_json()[gdim]
+                    elif gdim in self.dimensions:
+                        scale = self.dimensions.to_json()[gdim]
+                    else:
+                        scale = [1, ""]
+
                     localDimensions[ldim] = scale
                     localPosition = [*(localPosition or []), 0]
                     if transform:
@@ -1322,26 +1341,30 @@ class Scene(ViewerState):
                 elif mode == 'c':
                     if cdim in channelDimensions:
                         continue
+                    elif odims and cdim in odims.names:
+                        continue
+
                     was_local = False
                     if ldim in localDimensions:
                         was_local = True
-                        for i, key in enumerate(localDimensions.keys()):
-                            if key == ldim:
-                                break
+                        i = list(localDimensions.keys()).index(ldim)
                         scale = localDimensions.pop(ldim)
                         if i < len(localPosition):
                             localPosition.pop(i)
+                    elif odims and ldim in odims.names:
+                        was_local = True
+                        scale = odims.to_json()[ldim]
                     else:  # was global
                         try:
                             # get input voxel size
-                            idims = source.transform.inputDimensions
-                            odims = source.transform.outputDimensions
-                            matrix = source.transform.matrix
+                            idims = transform.inputDimensions
+                            matrix = transform.matrix
                             index = odims.names.index(gdim)
                             index = np.abs(matrix[index]).argmax()
                             scale = idims.to_json()[idims.names[index]]
                         except Exception:
                             scale = [1, ""]
+
                     channelDimensions[cdim] = scale
                     if transform:
                         update_transform(
@@ -1352,28 +1375,42 @@ class Scene(ViewerState):
 
                 # --- GLOBAL -------------------------------------------
                 elif mode == 'g':
-                    if cdim not in channelDimensions and \
-                            ldim not in localDimensions:
+                    if (
+                        cdim not in channelDimensions and
+                        ldim not in localDimensions
+                    ):
                         continue
-                    scale = [1, ""]
+                    if odims and (
+                        cdim not in odims.names and
+                        ldim not in odims.names
+                    ):
+                        continue
+
                     was_channel = False
                     if cdim in channelDimensions:
-                        scale = channelDimensions.pop(cdim)
                         was_channel = True
-                    if ldim in localDimensions:
-                        for i, key in enumerate(localDimensions.keys()):
-                            if key == ldim:
-                                break
+                        scale = channelDimensions.pop(cdim)
+                    elif odims and cdim in odims.names:
+                        was_channel = True
+                        scale = odims.to_json()[cdim]
+                    elif ldim in localDimensions:
+                        i = list(localDimensions.keys()).index(ldim)
                         scale = localDimensions.pop(ldim)
                         if i < len(localPosition):
                             localPosition.pop(i)
+                    elif odims and ldim in odims.names:
+                        scale = odims.to_json()[ldim]
+                    else:
+                        scale = [1, ""]
+
                     if transform:
                         update_transform(
                             transform, cdim if was_channel else ldim, gdim)
                     else:
                         source.transform = create_transform(
                             scale, cdim if was_channel else ldim, gdim)
-                    if gdim not in self.dimensions.to_json():
+
+                    if gdim not in self.dimensions.names:
                         dimensions = self.dimensions.to_json()
                         dimensions[gdim] = scale
                         self.dimensions = ng.CoordinateSpace(dimensions)
