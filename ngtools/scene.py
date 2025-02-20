@@ -2011,10 +2011,10 @@ class Scene(ViewerState):
             instance = "ng"
             for layer in self.layers:
                 for source in getattr(layer, "source", []):
-                    url = getattr(source, "url", "")
-                    if isinstance(url, str) and (
-                        ("lincbrain.org" in url) or
-                        ("/linc/" in url)
+                    url_ = getattr(source, "url", "")
+                    if isinstance(url_, str) and (
+                        ("lincbrain.org" in url_) or
+                        ("/linc/" in url_)
                     ):
                         instance = "linc"
                         break
