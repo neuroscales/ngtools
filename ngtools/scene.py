@@ -424,7 +424,7 @@ def autolog(func: callable) -> callable:
                 for arg in args
             )
             pkwargs = ", ".join(
-                f"{key}=" + f'"{val}"' if isinstance(val, str) else str(val)
+                f"{key}=" + (f'"{val}"' if isinstance(val, str) else str(val))
                 for key, val in kwargs.items()
             )
             if not pargs:
