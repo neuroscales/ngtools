@@ -1062,7 +1062,7 @@ class NiftiVolumeInfo(VolumeInfo):
                     matrix = self._nib_header.get_sform()[:-1]
                 else:
                     matrix = self._nib_header.get_qform()[:-1]
-                scales = (matrix[:3, :3] ** 2).sum() ** 0.5
+                scales = (matrix[:3, :3] ** 2).sum(0) ** 0.5
                 if scales.max() == 0:
                     continue
                 else:
