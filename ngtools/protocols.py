@@ -1,4 +1,4 @@
-"""Lists of kown protocols."""
+"""Lists of known protocols."""
 
 LAYERS = [
     'volume',           # Raster data (image or volume)
@@ -55,7 +55,7 @@ PROTOCOLS = [
     "file",          # Local file
     "http",          # HTTP
     "https",         # HTTPs
-    "gcs",           # Google Cloud
+    "gs",            # Google Cloud
     "s3",            # Amazon S3
     "ftp",           # FTP
     "dandi",         # DANDI/LINC
