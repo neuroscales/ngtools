@@ -165,30 +165,39 @@ class LTAStruct:
                 continue
             elif section == 'header':
                 if '=' in line:
-                    key, value = read_key(line, lta_keys)
-                    setattr(lta, key, value)
-                    continue
+                    try:
+                        key, value = read_key(line, lta_keys)
+                        setattr(lta, key, value)
+                    finally:
+                        continue
                 # else we should be in the affine section
-                affine_shape = read_values(line, [int] * 3)
-                if not affine_shape:
-                    affine_shape = (1, 4, 4)
-                section = 'affine'
-                continue
+                try:
+                    affine_shape = read_values(line, [int] * 3)
+                    if not affine_shape:
+                        affine_shape = (1, 4, 4)
+                    section = 'affine'
+                finally:
+                    continue
             elif section == 'affine':
-                row = read_values(line, [float] * affine_shape[-1])
-                if not affine:
-                    affine.append([])
-                if len(affine[-1]) == affine_shape[-2]:
-                    affine.append([])
-                affine[-1].append(list(row))
-                continue
+                try:
+                    row = read_values(line, [float] * affine_shape[-1])
+                    if not affine:
+                        affine.append([])
+                    if len(affine[-1]) == affine_shape[-2]:
+                        affine.append([])
+                    affine[-1].append(list(row))
+                finally:
+                    continue
             else:
                 if section.endswith('0'):
                     section = section[:-1]
                     setattr(lta, section, cls.VolumeInfo())
                 vol = section
-                key, value = read_key(line, lta_keys)
-                setattr(getattr(lta, vol), key, value)
+                try:
+                    key, value = read_key(line, lta_keys)
+                    setattr(getattr(lta, vol), key, value)
+                finally:
+                    continue
         if affine is not None:
             lta.affine = np.asarray(affine).reshape(affine_shape)
         return lta
