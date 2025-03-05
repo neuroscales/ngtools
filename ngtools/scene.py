@@ -35,10 +35,14 @@ from ngtools.units import convert_unit
 from ngtools.utils import NG_URLS, Wraps
 
 # monkey-patch Layer state to expose channelDimensions
-ng.Layer.channel_dimensions = ng.Layer.channelDimensions = wrapped_property(
-    "channelDimensions", ng.CoordinateSpace
-)
-ng.Layer.local_dimensions = ng.Layer.localDimensions = ng.Layer.layerDimensions
+if not hasattr(ng.Layer, "channelDimensions"):
+    ng.Layer.channel_dimensions \
+        = ng.Layer.channelDimensions \
+        = wrapped_property("channelDimensions", ng.CoordinateSpace)
+if not hasattr(ng.Layer, "localDimensions"):
+    ng.Layer.local_dimensions \
+        = ng.Layer.localDimensions \
+        = ng.Layer.layerDimensions
 
 
 LOG = logging.getLogger(__name__)
