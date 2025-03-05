@@ -323,6 +323,10 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             return None
         return url
 
+    @property
+    def __default_transform__(self) -> ng.CoordinateSpaceTransform:
+        return getattr(self, '_transform', None)
+
     def __get_transform__(self) -> ng.CoordinateSpaceTransform:
         """
         If a transform has been explicitely set, return it,

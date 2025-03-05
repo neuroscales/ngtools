@@ -318,6 +318,69 @@ def load_affine(
     raise RuntimeError(f"Failed to load {fileobj}.")
 
 
+def save_transform(
+    trf: ng.CoordinateSpaceTransform | dict,
+    out: str,
+    format: str | None = None,
+) -> None:
+    """
+    Save a neuroglancer transform in a neuroimaging format.
+
+    Parameters
+    ----------
+    trf : ng.CoordinateSpaceTransform | dict
+        Transformation
+    out : str | PathLike
+        Output path. Currently, only local paths are supported.
+    format : str | None
+        Output format (default: guessed from extension -- or LTA)
+    """
+    trf = ng.CoordinateSpaceTransform(trf)
+    trf = normalize_transform(trf, unit_scale=True)
+    idims = trf.input_dimensions
+    odims = trf.output_dimensions or idims
+    matrix = get_matrix(trf, square=True)
+
+    iperm = [idims.names.index(x) for x in 'xyz']
+    operm = [odims.names.index(x) for x in 'xyz']
+    matrix = matrix[operm + [-1], :][:, iperm + [-1]]
+
+    # convert translation to mm
+    matrix[:-1, -1] *= 1e-3
+
+    out = str(out)
+    if format is None:
+        for maybe_format in AFFINE_FORMATMAP:
+            if out.endswith("." + maybe_format):
+                format = maybe_format
+
+    if format:
+        try:
+            kls = AFFINE_FORMATMAP[format]
+            kls.from_ras(matrix).to_filename(out)
+            LOG.info(f'Succesfully saved to format "{format}".')
+            return
+        except Exception as e:
+            LOG.info(f'Tried format "{format}" with no success.')
+            LOG.debug(e)
+
+    hint_format = format
+    for format, kls in AFFINE_FORMATMAP.items():
+        if format == hint_format:
+            continue
+        try:
+            kls = AFFINE_FORMATMAP[format]
+            kls.from_ras(matrix).to_filename(out)
+            LOG.info(f'Succesfully saved to format "{format}".')
+            return out
+        except Exception as e:
+            LOG.info(f'Tried format "{format}" with no success.')
+            LOG.debug(e)
+
+    LOG.error(f"Failed to save {out}.")
+    raise RuntimeError(f"Failed to save {out}.")
+
+
 def to_square(affine: np.ndarray) -> np.ndarray:
     """Ensure an affine matrix is in square (homogeneous) form."""
     if affine.shape[0] == affine.shape[1]:

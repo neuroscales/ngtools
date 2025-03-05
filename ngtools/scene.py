@@ -1184,6 +1184,61 @@ class Scene(ViewerState):
         return transform
 
     @autolog
+    def save_transform(
+        self,
+        output: str | list[str] | None = None,
+        layer: str | list[str] | None = None,
+    ) -> ng.CoordinateSpaceTransform:
+        """
+        Save transform from default space to current space.
+
+        Parameters
+        ----------
+        output : [list of] str | None
+            Output filename(s).
+        layer : [list of] str | none
+            Layer(s) for which to save the transform(s).
+
+        Returns
+        -------
+        transform : [list of] ng.CoordinateSpaceTransform
+            Estimated transform(s).
+        """
+        # save current axes
+        display_dimensions = self.display_dimensions
+
+        # rename axes to xyz
+        world_axes = self.world_axes(print=False)
+        self.world_axes({"x": "x", "y": "y", "z": "z"})
+
+        layer_names = layer
+        if isinstance(layer_names, str):
+            layer_names = [layer_names]
+
+        # save tranform for each layer
+        for layer in self.layers:
+            layer: ng.ManagedLayer
+            layer_name = layer.name
+            if layer_names and layer_name not in layer_names:
+                continue
+            if layer_name.startswith('__'):
+                continue
+
+            for source in getattr(layer, "source", []):
+                source: LayerDataSource
+                try:
+                    current_transform = source.transform
+                    default_transform = source.__default_transform__
+                except Exception:
+                    LOG.error(
+                        f"Could not save transform for layer {layer_name}"
+                    )
+
+        # go back to original axis names
+        self.world_axes(world_axes)
+        self.display(display_dimensions)
+
+    @autolog
     def channel_mode(
         self,
         mode: Literal["local", "channel", "global"],
