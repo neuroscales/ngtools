@@ -553,6 +553,8 @@ class Scene(ViewerState):
             if not parsed.format:
                 if basename.endswith(".zarr"):
                     parsed = parsed.with_format("zarr")
+                elif basename.endswith(".n5"):
+                    parsed = parsed.with_format("n5")
                 elif basename.endswith((".nii", ".nii.gz")):
                     parsed = parsed.with_format("nifti")
 
