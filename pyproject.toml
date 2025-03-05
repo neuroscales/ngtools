@@ -16,16 +16,16 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "neuroglancer",
+    "numpy >= 1.20",               # // np.typing
+    "dask",                        # Remote arrays
     "fsspec[full] >= 2021.0.0",    # // first stable releae
     "universal_pathlib",           # UPath
-    "numpy >= 1.20",               # // np.typing
     "nibabel",                     # io nifti
     "nitransforms >= 22.0",        # io lta // scipy compat
     "tifffile",                    # io tiff
     "zarr",                        # io zarr
     "indexed_gzip",                # io gzip
     "cloud-volume",                # io precomputed | zarr | n5 | boss | graphene
-    "dask",
     "dandi >= 0.44",               # get_assets_by_glob
     "requests",
 ]

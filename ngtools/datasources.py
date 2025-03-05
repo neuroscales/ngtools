@@ -1633,6 +1633,147 @@ class Zarr3DataSource(ZarrDataSource):
         return Zarr3VolumeInfo(self.url)
 
 
+class N5VolumeInfo(VolumeInfo):
+    """Base class + common methods for N5 metadata."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(url)
+        url = UPath(parse_protocols(self.url).url)
+        if exists(url / "attributes.json"):
+            self._attributes = read_json(url / "attributes.json")
+        else:
+            self._attributes = {}
+
+        if "dimensions" in self._attributes:
+            self._is_multiscale = False
+            self._arrays = [self._attributes]
+            self._attributes = {}
+        else:
+            self._is_multiscale = True
+
+        if self._is_multiscale:
+            self._arrays = []
+            for i in range(self.getNbLevels()):
+                url_i = url / f"s{i}" / "attributes.json"
+                if exists(url_i):
+                    self._arrays.append(read_json(url_i))
+                else:
+                    self._arrays.append({})
+
+    def getDataType(self) -> np.dtype:
+        """Array data type."""
+        try:
+            return np.dtype(self._attributes["dataType"])
+        except Exception:
+            return np.dtype(self._arrays[0]["dataType"])
+
+    def getShape(self, level: int = 0) -> list[int]:
+        """Array shape at a given level."""
+        return list(self._arrays[level]["dimensions"])
+
+    def getNbLevels(self) -> int:
+        """Return the number of levels in the pyramid."""
+        try:
+            return len(self._attributes["downsamplingFactors"])
+        except Exception:
+            return 1
+
+    def getNames(self) -> list[str]:
+        """Return axis names."""
+        rank = self.getRank()
+        try:
+            names = list(self._attributes["axes"])
+        except Exception:
+            names = list(self._arrays[0]["axes"])
+        if len(names) != rank:
+            raise ValueError(f"Rank mismatch: {len(names)} != {rank}")
+        return names
+
+    getInputNames = getOutputNames = getNames
+
+    def getUnits(self) -> list[str]:
+        """Return units."""
+        rank = self.getRank()
+        units = ["nm"] * self.getRank()
+        attrs = [self._attributes] + self._arrays[:1]
+        for attr in attrs:
+            if "units" in attr:
+                units = list(attr["units"])
+                break
+            elif "pixelResolution" in attr:
+                unit = attr["pixelResolution"].get("unit", "")
+                unit = unit or "nm"
+                units = [unit] * rank
+                break
+        if len(units) != rank:
+            raise ValueError(f"Rank mismatch: {len(units)} != {rank}")
+        return units
+
+    getInputUnits = getOutputUnits = getUnits
+
+    def getScales(self) -> list[float]:
+        """Return scales."""
+        rank = self.getRank()
+        scales = [1.0] * rank
+        attrs = [self._attributes] + self._arrays[:1]
+        for attr in attrs:
+            if "resolution" in attr:
+                scales = list(attr["resolution"])
+                break
+            elif "pixelResolution" in attr:
+                scales = list(attr["pixelResolution"]["dimensions"])
+                break
+        if len(scales) != rank:
+            raise ValueError(f"Rank mismatch: {len(scales)} != {rank}")
+        return scales
+
+    getInputScales = getOutputScales = getScales
+
+    def getTranslations(self) -> list[float]:
+        """Return translations (in spatial units)."""
+        return [0.0] * self.getRank()
+
+
+@datasource(["n5"])
+class N5DataSource(VolumeDataSource):
+    """Wrapper for N5 data sources."""
+
+    info: N5VolumeInfo
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+    def _compute_info(self) -> Zarr2VolumeInfo:
+        return N5VolumeInfo(self.url)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
+        """Return an array-like object pointing to a pyramid level."""
+        tic = time.time()
+        url = parse_protocols(self.url).url
+        fs = filesystem(url)
+
+        try:
+            from zarr.n5 import N5FSStore
+        except (ImportError, ModuleNotFoundError):
+            if int(zarr.__version__.split(".")[0]) > 2:
+                raise ImportError(
+                    f"N5 is only available in zarr v2, but you have "
+                    f"v{zarr.__version__} installed.")
+
+        store = N5FSStore(url, fs=fs, mode=mode)
+        path = str(level)
+        if path[:1] != "s":
+            path = "s" + path
+        dataobj = dataobj = zarr.open(store, mode, path=path)
+        toc = time.time()
+        LOG.info(f"Map n5: {toc - tic} s")
+        return dataobj
+
+
 class _PrecomputedInfoFactory(type):
     def __call__(cls, url: str | dict) -> "PrecomputedInfo":
         info = cls._load_dict(url)
