@@ -68,7 +68,9 @@ def _quantiles(q: float | list[float], data: ArrayLike) -> np.ndarray[float]:
     tic = time.time()
     steps = [max(1, x//64) for x in data.shape]
     slicer = (Ellipsis,) + tuple(slice(None, None, step) for step in steps)
-    quantiles = np.quantile(np.asarray(data[slicer]), q)
+    data = np.asarray(data[slicer])
+    data = data[np.isfinite(data) & (data != 0)]
+    quantiles = np.quantile(data, q)
     toc = time.time()
     LOG.info(f"Compute quantiles: {toc-tic} s")
     return quantiles
