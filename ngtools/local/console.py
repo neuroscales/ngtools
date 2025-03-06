@@ -30,8 +30,10 @@ class Console(argparse.ArgumentParser):
     It handles history and autocomplete.
     """
 
-    DEFAULT_HISTFILE = '~/.neuroglancer_history'
-    DEFAULT_HISTSIZE = 1000
+    DEFAULT_HISTFILE = os.path.expanduser(
+        os.environ.get("NGTOOLS_HISTFILE", '~/.neuroglancer_history')
+    )
+    DEFAULT_HISTSIZE = int(os.environ.get("NGTOOLS_HISTSIZE", 1000))
 
     def __init__(self, *args: tuple, **kwargs: dict) -> None:
         """
