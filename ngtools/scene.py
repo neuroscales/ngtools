@@ -769,7 +769,7 @@ class Scene(ViewerState):
     @autolog
     def rename_axes(
         self,
-        axes: str | list[str] | dict[str],
+        axes: str | list[str] | dict[str] | None = None,
         layer: str | list[str] | None = None,
         **kwargs
     ) -> dict[str]:
@@ -802,13 +802,13 @@ class Scene(ViewerState):
         # check if keywords were used
         if kwargs.get("dst", None):
             if axes is not None:
-                msg = "Cannot use `axes` if `src` is used."
+                msg = "Cannot use `axes` if `dst` is used."
                 self.stdio.error(msg)
                 raise ValueError(msg)
             axes = _ensure_list(kwargs["dst"])
         if kwargs.get("src", None):
             if isinstance(axes, dict):
-                msg = "Cannot use `axes` if `dst` is used."
+                msg = "Cannot use `axes` if `src` is used."
                 self.stdio.error(msg)
                 raise ValueError(msg)
             if axes is None:
@@ -823,9 +823,10 @@ class Scene(ViewerState):
             axes = S.name_compact2full(axes)
         if isinstance(axes, (list, tuple)):
             model_axes = self.world_axes(print=False)
+            native = self.dimensions.names[:3]
             axes = {
                 model_axes[native_axis]: new_axis
-                for native_axis, new_axis in zip("xyz", axes)
+                for native_axis, new_axis in zip(native, axes)
             }
 
         def rename_axis(name: str) -> str:
@@ -835,10 +836,10 @@ class Scene(ViewerState):
             return name
 
         layers = _ensure_list(layer or [])
-        for named_layer in self.layers:
-            if layers and named_layer.name not in layers:
+        for layer in self.layers:
+            if layers and layer.name not in layers:
                 continue
-            if named_layer.name.startswith("__"):
+            if layer.name.startswith("__"):
                 continue
             if len(getattr(layer, "source", [])) == 0:
                 continue

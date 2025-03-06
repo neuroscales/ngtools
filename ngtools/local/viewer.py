@@ -432,13 +432,13 @@ class LocalNeuroglancer(OSMixin):
         _ = add_parser('rename_axes', help='Rename axes')
         _.set_defaults(func=self.rename_axes)
         _.add_argument(
-            dest='axes', metavar='DEST', nargs="+", help='New axis names')
+            dest='dst', metavar='DEST', nargs="+", help='New axis names')
         _.add_argument(
             '--destination', '--dst', '-d', metavar='DEST', nargs="+",
-            help='New axis names')
+            dest="dst", help='New axis names')
         _.add_argument(
             '--source', '--src', '-s', metavar='SOURCE', nargs="*",
-            help='Old axis names')
+            dest="src", help='Old axis names')
         _.add_argument(
             '--layer', '-l', nargs="*", help='Layer(s) to rename')
 
