@@ -196,6 +196,19 @@ def inverse_quaternions(a: np.ndarray) -> np.ndarray:
     return a
 
 
+def ras2transform(
+    ras2ras: np.ndarray,
+    names: list[str] = ("x", "y", "z"),
+) -> ng.CoordinateSpaceTransform:
+    """Convert a RAS2RAS matrix (in mm space) to a neuroglancer transform."""
+    dims = ng.CoordinateSpace(names=names, scales=[1]*3, units=["mm"]*3)
+    return ng.CoordinateSpaceTransform(
+        matrix=ras2ras[:3],
+        input_dimensions=dims,
+        output_dimensions=dims,
+    )
+
+
 def load_affine(
     fileobj: IO | PathLike | str,
     format: str | None = None,
