@@ -272,6 +272,11 @@ def load_affine(
         ras2ras = klass.from_filename(fileobj).to_ras(moving, fixed)
         if isinstance(ras2ras, list):
             ras2ras = ras2ras[0]
+        # NOTE:
+        #   * nitransforms seems to think it should invert the matrix stored
+        #     in the LTA, but I don't follow their motivation, so I uninvert
+        #     it.
+        ras2ras = np.linalg.inv(ras2ras)
         return _make_transform(ras2ras)
 
     def _make_transform(ras2ras: np.ndarray) -> ng.CoordinateSpaceTransform:
@@ -348,8 +353,21 @@ def save_transform(
     format : str | None
         Output format (default: guessed from extension -- or LTA)
     """
+    # ensure CoordinateSpaceTransform
+    if isinstance(trf, np.ndarray):
+        # assume millimetric RAS2RAS
+        if trf.shape[0] == trf.shape[1]:
+            trf = trf[:-1]
+        names = ["x", "y", "z"]
+        dims = ng.CoordinateSpace(names=names, scales=[1]*3, units=["mm"]*3)
+        trf = ng.CoordinateSpaceTransform(
+            matrix=trf,
+            input_dimensions=dims,
+            output_dimensions=dims,
+        )
+
     trf = ng.CoordinateSpaceTransform(trf)
-    trf = normalize_transform(trf, unit_scale=True)
+    trf = convert_transform(trf, [1, "mm"], [1, "mm"])
     idims = trf.input_dimensions
     odims = trf.output_dimensions or idims
     matrix = get_matrix(trf, square=True)
@@ -358,8 +376,11 @@ def save_transform(
     operm = [odims.names.index(x) for x in 'xyz']
     matrix = matrix[operm + [-1], :][:, iperm + [-1]]
 
-    # convert translation to mm
-    matrix[:-1, -1] *= 1e-3
+    # NOTE:
+    #   * nitransforms seems to think it should invert the matrix stored
+    #     in the LTA, but I don't follow their motivation, so I uninvert
+    #     it.
+    matrix = np.linalg.inv(matrix)
 
     out = str(out)
     if format is None:
