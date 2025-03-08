@@ -78,11 +78,7 @@ def Wraps(kls: type) -> type:
                 if name.startswith("__"):
                     return value
                 if value is None:
-                    has_default = hasattr(self, f"__default_{name}__")
-                    if has_default:
-                        value = getattr(self, f"__default_{name}__")
-                        setattr(self, name, value)
-                        value = getattr(self._wrapped, name)
+                    value = getattr(self, f"__default_{name}__", value)
                 return value
 
             def __getattribute__(self, name: str) -> object:
