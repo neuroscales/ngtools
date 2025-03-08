@@ -32,6 +32,7 @@ A bit must be said on the FreeSurfer space conventions:
 import os
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Iterator, Literal, TextIO, Union
 
 # externals
 import numpy as np
@@ -49,7 +50,8 @@ from .fsutils import (
 
 
 class Constants(IntEnum):
-    """Defines used in FreeSurfer's C code"""
+    """Defines used in FreeSurfer's C code."""
+
     # Affine transformation types
     LINEAR_VOX_TO_VOX = 0
     LINEAR_VOXEL_TO_VOXEL = LINEAR_VOX_TO_VOX
@@ -62,6 +64,7 @@ class Constants(IntEnum):
     MORPH_3D_TYPE = 11
     MNI_TRANSFORM_TYPE = 12
     MATLAB_ASCII_TYPE = 13
+
 
 # Value format (= sequence of types) associated to each key
 lta_keys = {
@@ -80,9 +83,11 @@ lta_keys = {
 }
 
 
-def nested_update(old_dict, new_dict):
-    """Update a dictionary in place. Nested dictionaries are updated
-    too instead of being replaced.
+def nested_update(old_dict: dict, new_dict: dict) -> None:
+    """
+    Update a dictionary in place.
+
+    Nested dictionaries are updated too instead of being replaced.
 
     Parameters
     ----------
@@ -128,7 +133,7 @@ class LTAStruct:
     src: VolumeInfo = None                      # Source volume
     dst: VolumeInfo = None                      # Destination volume
 
-    def __str__(self):
+    def __str__(self) -> str:
         s = '\n'.join(list(self.to_lines()))
         s = 'LTAStruct\n' + '---------\n' + s
         return s
@@ -136,14 +141,14 @@ class LTAStruct:
     __repr__ = __str__
 
     @classmethod
-    def from_filename(cls, fname):
-        """Build from path to LTA file"""
+    def from_filename(cls, fname: str) -> "LTAStruct":
+        """Build from path to LTA file."""
         with open(fname, 'r') as f:
             return cls.from_lines(f)
 
     @classmethod
-    def from_lines(cls, f):
-        """Build from an iterator over lines"""
+    def from_lines(cls, f: list[str]) -> "LTAStruct":
+        """Build from an iterator over lines."""
         lta = LTAStruct()
         section = 'header'
         affine = []
@@ -202,8 +207,8 @@ class LTAStruct:
             lta.affine = np.asarray(affine).reshape(affine_shape)
         return lta
 
-    def to_lines(self):
-        """Iterator over lines"""
+    def to_lines(self) -> Iterator[str]:
+        """Return an iterator over lines."""
         # header
         attributes = ('type', 'nxforms', 'mean', 'sigma')
         for attr in attributes:
@@ -234,19 +239,19 @@ class LTAStruct:
                     yield write_key(attr, val)
         return
 
-    def to_file_like(self, f):
-        """Write to file-like object"""
+    def to_file_like(self, f: TextIO) -> None:
+        """Write to file-like object."""
         for line in self.to_lines():
             f.write(line + os.linesep)
         return
 
-    def to_filename(self, fname):
-        """Write to file"""
+    def to_filename(self, fname: str) -> None:
+        """Write to file."""
         with open(fname, 'wt') as f:
             return self.to_file_like(f)
 
-    def to(self, thing):
-        """Write to something"""
+    def to(self, thing: str | TextIO) -> None:
+        """Write to something."""
         if isinstance(thing, str):
             return self.to_filename(thing)
         else:
@@ -257,10 +262,14 @@ class LinearTransformArray:
     """MGH format for affine transformations."""
 
     @classmethod
-    def possible_extensions(cls):
+    def possible_extensions(cls) -> tuple[str]:
         return ('.lta',)
 
-    def __init__(self, file_like=None, mode='r'):
+    def __init__(
+        self,
+        file_like: str | TextIO | None = None,
+        mode: str = 'r'
+    ) -> None:
         """
 
         Parameters
@@ -288,14 +297,19 @@ class LinearTransformArray:
                 self._struct = LTAStruct()
 
     @property
-    def shape(self):
+    def shape(self) -> list[int]:
         if self._struct.affine is not None:
             return tuple(self._struct.affine.shape)
         else:
             return tuple()
 
-    def matrix(self, source='ras', dest='ras', dtype=None):
-        """Return <source>2<dest> matrix
+    def matrix(
+        self,
+        source: Literal['voxel', 'physical', 'ras'] = 'ras',
+        dest: Literal['voxel', 'physical', 'ras'] = 'ras',
+        dtype: np.dtype | None = None
+    ) -> np.ndarray:
+        """Return <source>2<dest> matrix.
 
         Parameters
         ----------
@@ -321,14 +335,19 @@ class LinearTransformArray:
                 affine = affine_matmul(dst, affine_matmul(affine, src))
         return affine
 
-    def raw_matrix(self, dtype=None):
-        """Return raw matrix"""
+    def raw_matrix(self, dtype: np.dtype | None = None) -> np.ndarray:
+        """Return raw matrix."""
         if self._struct.affine is None:
             return None
         return self._struct.affine.astype(dtype)
 
-    def source_space(self, source='voxel', dest='ras', dtype=None):
-        """Return the space (affine + shape) of the source image
+    def source_space(
+        self,
+        source: Literal['voxel', 'physical', 'ras'] = 'voxel',
+        dest: Literal['voxel', 'physical', 'ras'] = 'ras',
+        dtype: np.dtype | None = None
+    ) -> tuple[np.ndarray, list[int]]:
+        """Return the space (affine + shape) of the source image.
 
         Parameters
         ----------
@@ -340,7 +359,7 @@ class LinearTransformArray:
 
         Returns
         -------
-        affine : (4, 4) tensor
+        affine : (4, 4) array
             A voxel to world affine matrix
         shape : (3,) tuple[int]
             The spatial shape of the image
@@ -360,8 +379,13 @@ class LinearTransformArray:
             return affine, shape
         return None, None
 
-    def destination_space(self, source='voxel', dest='ras', dtype=None):
-        """Return the space (affine + shape) of the destination image
+    def destination_space(
+        self,
+        source: Literal['voxel', 'physical', 'ras'] = 'voxel',
+        dest: Literal['voxel', 'physical', 'ras'] = 'ras',
+        dtype: np.dtype | None = None
+    ) -> tuple[np.ndarray, list[int]]:
+        """Return the space (affine + shape) of the destination image.
 
         Parameters
         ----------
@@ -373,7 +397,7 @@ class LinearTransformArray:
 
         Returns
         -------
-        affine : (4, 4) tensor
+        affine : (4, 4) array
             A voxel to world affine matrix
         shape : (3,) tuple[int]
             The spatial shape of the image
@@ -393,12 +417,18 @@ class LinearTransformArray:
             return affine, shape
         return None, None
 
-    def set_source_space(self, affine, shape, source='voxel', dest='ras'):
-        """Set the source space of the transform
+    def set_source_space(
+        self,
+        affine: np.ndarray,
+        shape: list[int],
+        source: Literal['voxel', 'physical', 'ras'] = 'voxel',
+        dest: Literal['voxel', 'physical', 'ras'] = 'ras',
+    ) -> "LinearTransformArray":
+        """Set the source space of the transform.
 
         Parameters
         ----------
-        affine : (4, 4) tensor
+        affine : (4, 4) array
             Affine matrix
         shape : sequence of int
             Volume shape
@@ -425,12 +455,18 @@ class LinearTransformArray:
         self._struct.src.cras = c
         return self
 
-    def set_destination_space(self, affine, shape, source='voxel', dest='ras'):
-        """Set the destination space of the transform
+    def set_destination_space(
+        self,
+        affine: np.ndarray,
+        shape: list[int],
+        source: Literal['voxel', 'physical', 'ras'] = 'voxel',
+        dest: Literal['voxel', 'physical', 'ras'] = 'ras',
+    ) -> "LinearTransformArray":
+        """Set the destination space of the transform.
 
         Parameters
         ----------
-        affine : (4, 4) tensor
+        affine : (4, 4) array
             Affine matrix
         shape : sequence of int
             Volume shape
@@ -453,7 +489,7 @@ class LinearTransformArray:
         self._struct.dst.cras = c
         return self
 
-    def type(self):
+    def type(self) -> Constants:
         if self._struct.type == Constants.LINEAR_VOX_TO_VOX:
             return 'voxel', 'voxel'
         elif self._struct.type == Constants.LINEAR_RAS_TO_RAS:
@@ -465,17 +501,20 @@ class LinearTransformArray:
         else:
             raise TypeError(f'Don\'t know what to do with {self._struct.type}')
 
-    def metadata(self, keys=None):
-        """Read additional metadata
+    def metadata(self, keys: list[str] | None = None) -> dict:
+        """Read additional metadata.
 
         Parameters
         ----------
         keys : sequence of str, optional
             Keys should be in {'type', 'mean', 'sigma', 'src',
-                'src', 'src.valid', 'src.filename', 'src.volume',
-                'src.voxelsize', 'src.xras', 'src.yras', 'src.zras', 'src.cras',
-                'dst', 'dst.valid', 'dst.filename', 'dst.volume',
-                'dst.voxelsize', 'dst.xras', 'dst.yras', 'dst.zras', 'dst.cras'}
+                'src',
+                'src.valid', 'src.filename', 'src.volume', 'src.voxelsize',
+                'src.xras', 'src.yras', 'src.zras', 'src.cras',
+                'dst',
+                'dst.valid', 'dst.filename', 'dst.volume', 'dst.voxelsize',
+                'dst.xras', 'dst.yras', 'dst.zras', 'dst.cras'
+            }
 
         Returns
         -------
@@ -525,7 +564,7 @@ class LinearTransformArray:
                     meta[key] = None
         return meta
 
-    def set_fdata(self, affine):
+    def set_fdata(self, affine: np.ndarray) -> "LinearTransformArray":
         affine = np.asarray(affine)
         backend = dict(dtype=affine.dtype)
         if affine.shape[-2:] != (4, 4):
@@ -544,7 +583,7 @@ class LinearTransformArray:
         self._struct.nxform = affine.shape[0]
         return self
 
-    def set_data(self, affine):
+    def set_data(self, affine: np.ndarray) -> "LinearTransformArray":
         affine = np.asarray(affine)
         if affine.shape != (4, 4):
             raise ValueError('Expected a 4x4 matrix')
@@ -554,8 +593,8 @@ class LinearTransformArray:
         return self
 
     @classmethod
-    def _set_metadata(cls, struct, **meta):
-        """Sets LTA fields (in-place) from a dictionary
+    def _set_metadata(cls, struct: LTAStruct, **meta) -> None:
+        """Set LTA fields (in-place) from a dictionary.
 
         Parameters
         ----------
@@ -581,7 +620,9 @@ class LinearTransformArray:
                 raise ValueError('Unsupported LTA type:', ltatype)
             meta['type'] = ltatype
 
-        tupleof = lambda typ: (lambda x: tuple(typ(y) for y in x))
+        def tupleof(typ: type) -> callable:
+            return (lambda x: tuple(typ(y) for y in x))
+
         known_keys = dict(type=int, mean=tupleof(float), sigma=float)
         known_superkeys = ('src', 'dst')
         known_subkeys = dict(valid=int, filename=str, volume=tupleof(int),
@@ -599,8 +640,12 @@ class LinearTransformArray:
                         conv = known_subkeys[subkey]
                         setattr(sup, subkey, conv(subval))
 
-    def set_metadata(self, dict_like=None, **meta):
-        """Set additional metadata
+    def set_metadata(
+        self,
+        dict_like: dict | None = None,
+        **meta
+    ) -> "LinearTransformArray":
+        """Set additional metadata.
 
         Parameters
         ----------
@@ -635,7 +680,9 @@ class LinearTransformArray:
         self._set_metadata(self._struct, **dict_like)
         return self
 
-    def save(self, file_like=None, *args, **meta):
+    def save(
+        self, file_like: str | TextIO | None = None, *args, **meta
+    ) -> "LinearTransformArray":
         if '+' not in self.mode and 'w' not in self.mode:
             raise RuntimeError('Cannot write into read-only volume. '
                                'Re-map in mode "r+" to allow in-place '
@@ -646,7 +693,14 @@ class LinearTransformArray:
         return self
 
     @classmethod
-    def save_new(cls, affine, file_like, like=None, *args, **meta):
+    def save_new(
+        cls,
+        affine: Union[np.ndarray, "LinearTransformArray"],
+        file_like: str | TextIO | None = None,
+        like: Union["LinearTransformArray", str, TextIO] | None = None,
+        *args,
+        **meta
+    ) -> "LinearTransformArray":
         if isinstance(affine, LinearTransformArray):
             if like is None:
                 like = affine
