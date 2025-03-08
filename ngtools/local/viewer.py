@@ -462,7 +462,7 @@ class LocalNeuroglancer(OSMixin):
         _ = add_parser('transform', help='Apply a transform')
         _.set_defaults(func=self.transform)
         _.add_argument(
-            dest='transform', nargs='+', metavar='TRANSFORM',
+            dest='transform', nargs='*', metavar='TRANSFORM',
             help='Path to transform file or flattened transformation '
                  'matrix (row major)')
         _.add_argument(
@@ -472,9 +472,22 @@ class LocalNeuroglancer(OSMixin):
             '--inv', '-i', action='store_true', default=False,
             help='Invert the transform before applying it')
         _.add_argument(
+            '--reset', '-r', action='store_true', default=False,
+            help="Reset the layer's transform before applying the new one")
+        _.add_argument(
             '--mov', '-m', help='Moving image (required by some formats)')
         _.add_argument(
             '--fix', '-f', help='Fixed image (required by some formats)')
+
+        # Save current transform
+        _ = add_parser('save_transform', help='Save the current transform')
+        _.set_defaults(func=self.save_transform)
+        _.add_argument(
+            dest='output', nargs='*', help='Path to output transform.')
+        _.add_argument(
+            '--layer', '-l', nargs='+', help='Name(s) of layer(s) to save')
+        _.add_argument(
+            '--format', '-f', help='Format to save into')
 
         # --------------------------------------------------------------
         #   AXIS MODE
@@ -684,6 +697,7 @@ class LocalNeuroglancer(OSMixin):
     space = state_action("space")
     display = state_action("display")
     transform = state_action("transform")
+    save_transform = state_action("save_transform")
     channel_mode = state_action("channel_mode")
     move = state_action("move")
     zoom = state_action("zoom")

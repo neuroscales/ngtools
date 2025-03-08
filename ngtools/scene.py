@@ -48,6 +48,9 @@ if not hasattr(ng.Layer, "localDimensions"):
 LOG = logging.getLogger(__name__)
 
 
+sys.setrecursionlimit(100)
+
+
 def _ensure_list(x: object) -> list:
     """Ensure that an object is a list. Make one if needed."""
     if isinstance(x, np.ndarray):
@@ -708,16 +711,17 @@ class Scene(ViewerState):
         world_axes_native = self.layers["__world_axes_native__"]
         world_axes_current = self.layers["__world_axes_current__"]
 
-        native_transform = world_axes_native.source[0].transform
-        current_transform = world_axes_current.source[0].transform
-        if native_transform:
-            native_names = native_transform.output_dimensions.names
-        else:
-            native_names = []
-        if current_transform:
-            current_names = current_transform.output_dimensions.names
-        else:
-            current_names = []
+        # Get current mapping from hidden layers
+        native_names = []
+        if world_axes_native.source:
+            native_transform = world_axes_native.source[0].transform
+            if native_transform:
+                native_names = native_transform.output_dimensions.names
+        current_names = []
+        if world_axes_current.source:
+            current_transform = world_axes_current.source[0].transform
+            if current_transform:
+                current_names = current_transform.output_dimensions.names
 
         old_axes = {"x": "x", "y": "y", "z": "z", "t": "t"}
         old_axes.update({
@@ -1046,9 +1050,10 @@ class Scene(ViewerState):
     @autolog
     def transform(
         self,
-        transform: _TransformLike,
+        transform: _TransformLike | None = None,
         layer: str | list[str] | None = None,
         inv: bool = False,
+        reset: bool = False,
         *,
         mov: str = None,
         fix: str = None,
@@ -1064,6 +1069,8 @@ class Scene(ViewerState):
             Layer(s) to transform
         inv : bool
             Invert the transform
+        reset : bool
+            Reset the default transform prior to applying the new transform.
 
         Other Parameters
         ----------------
@@ -1083,7 +1090,7 @@ class Scene(ViewerState):
         transform = self._load_transform(transform, inv, mov=mov, fix=fix)
 
         # apply transform
-        self._apply_transform(transform, layer)
+        self._apply_transform(transform, layer, reset=reset)
 
         # go back to original axis names
         self.world_axes(world_axes)
@@ -1094,6 +1101,7 @@ class Scene(ViewerState):
         transform: ng.CoordinateSpaceTransform,
         layer: str | list[str] | None = None,
         adapt: bool = False,
+        reset: bool = False,
     ) -> None:
         """
         Apply a transform to one or more layers.
@@ -1102,7 +1110,8 @@ class Scene(ViewerState):
         match the input dimensions of the transform. I.e., they must
         already be in the correct neurospace and layerspace.
         """
-        transform = self._load_transform(transform)
+        if transform:
+            transform = self._load_transform(transform)
 
         layer_names = layer
         if isinstance(layer_names, str):
@@ -1116,16 +1125,27 @@ class Scene(ViewerState):
             if layer_name.startswith('__'):
                 continue
 
+            if reset:
+                reset_trf = self.save_transform(layer=layer)
+                reset_trf = T.ras2transform(reset_trf)
+                reset_trf = T.inverse(reset_trf)
+                if transform:
+                    full_trf = T.compose(transform, reset_trf)
+                else:
+                    full_trf = reset_trf
+            else:
+                full_trf = transform
+
             shader = getattr(layer, "shader", None)
             skeleton_shader = getattr(layer, "skeleton_shader", None)
 
             if shader and shader != "None":
-                mat = self._vox2display(transform)
+                mat = self._vox2display(full_trf)
                 shader = rotate_shader(shader, mat)
                 layer.shader = shader
 
             elif skeleton_shader and skeleton_shader != "None":
-                mat = self._vox2display(transform)
+                mat = self._vox2display(full_trf)
                 skeleton_shader = rotate_shader(skeleton_shader, mat)
                 layer.skeleton_shader = skeleton_shader
 
@@ -1138,7 +1158,7 @@ class Scene(ViewerState):
             for source in getattr(layer, "source", []):
                 source: LayerDataSource
                 source.transform = T.compose(
-                    transform, source.transform, adapt=adapt
+                    full_trf, source.transform, adapt=adapt
                 )
 
     @staticmethod
@@ -1175,7 +1195,7 @@ class Scene(ViewerState):
             if inv:
                 transform = np.linalg.inv(transform)
             transform = transform[:-1]
-            return ng.CoordinateSpaceTransform(
+            transform = ng.CoordinateSpaceTransform(
                 matrix=transform,
                 input_dimensions=S.neurospaces["xyz"],
                 output_dimensions=S.neurospaces["xyz"],
@@ -1183,6 +1203,123 @@ class Scene(ViewerState):
         elif inv:
             transform = T.inverse(transform)
         return transform
+
+    @autolog
+    def save_transform(
+        self,
+        output: str | list[str] | None = None,
+        layer: str | list[str] | None = None,
+        format: str | None = None,
+    ) -> ng.CoordinateSpaceTransform:
+        """
+        Save transform from default space to current space.
+
+        Parameters
+        ----------
+        output : [list of] str | None
+            Output filename(s).
+        layer : [list of] str | none
+            Layer(s) for which to save the transform(s).
+        format : str | None
+            Format hint.
+
+        Returns
+        -------
+        transform : [list of] ng.CoordinateSpaceTransform
+            Estimated transform(s).
+        """
+        # save current axes
+        display_dimensions = self.display_dimensions
+
+        # rename axes to xyz
+        world_axes = self.world_axes(print=False)
+        self.world_axes({"x": "x", "y": "y", "z": "z"})
+
+        layer_names = layer
+        return_list = True
+        if isinstance(layer_names, str):
+            layer_names = [layer_names]
+            return_list = False
+        layer_names = _ensure_list(layer_names or [])
+
+        outputs = output
+        if isinstance(outputs, str):
+            outputs = [outputs]
+        outputs = _ensure_list(outputs)
+
+        def _compute_trf(source: LayerDataSource) -> np.ndarray:
+            mm = [1, "mm"]
+            current_transform = source.transform
+            current_transform = T.subtransform(current_transform, "m")
+            current_transform = T.convert_transform(current_transform, mm, mm)
+            default_transform = source.__default_transform__
+            default_transform = T.subtransform(default_transform, "m")
+            default_transform = T.convert_transform(default_transform, mm, mm)
+            current_inames = current_transform.input_dimensions.names
+            current_onames = current_transform.output_dimensions.names
+            default_inames = default_transform.input_dimensions.names
+            default_onames = default_transform.output_dimensions.names
+            current_operm = [current_onames.index(x) for x in 'xyz']
+            default_operm = [default_onames.index(x) for x in 'xyz']
+            current_iperm = [current_inames.index(x) for x in default_inames]
+            current_matrix = T.get_matrix(current_transform, True)
+            default_matrix = T.get_matrix(default_transform, True)
+            default_matrix = default_matrix[default_operm + [-1], :]
+            current_matrix = current_matrix[current_operm + [-1], :]
+            current_matrix = current_matrix[:, current_iperm + [-1]]
+            matrix = np.linalg.solve(default_matrix.T, current_matrix.T).T
+            return matrix
+
+        # save transform for each layer
+        matrices = {}
+        i = -1
+        for layer in self.layers:
+            layer: ng.ManagedLayer
+            layer_name = layer.name
+            if layer_names and layer_name not in layer_names:
+                continue
+            if layer_name.startswith('__'):
+                continue
+            i += 1
+
+            for source in getattr(layer, "source", []):
+                source: LayerDataSource
+                try:
+                    ras2ras = _compute_trf(source)
+
+                    # save
+                    if outputs:
+                        if layer_names:
+                            try:
+                                index = layer_names.index(layer_name)
+                            except ValueError:
+                                index = -1
+                        else:
+                            index = i
+                        output = outputs[min(index, len(outputs)-1)]
+                        output = output.format(name=layer_name)
+                        T.save_transform(ras2ras, output, format)
+
+                except Exception as e:
+                    LOG.error(
+                        f"Could not save transform for layer {layer_name}: {e}"
+                    )
+                    ras2ras = None
+
+                finally:
+                    matrices[layer.name] = ras2ras
+
+        # go back to original axis names
+        self.world_axes(world_axes)
+        self.display(display_dimensions)
+
+        if not outputs:
+            for layer, matrix in matrices.items():
+                self.stdio.print(f"{layer}:")
+                self.stdio.print(matrix)
+
+        matrices = list(matrices.values())
+        return matrices[0] if return_list else matrices
 
     @autolog
     def channel_mode(
