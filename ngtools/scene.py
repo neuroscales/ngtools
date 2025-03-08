@@ -711,16 +711,17 @@ class Scene(ViewerState):
         world_axes_native = self.layers["__world_axes_native__"]
         world_axes_current = self.layers["__world_axes_current__"]
 
-        native_transform = world_axes_native.source[0].transform
-        current_transform = world_axes_current.source[0].transform
-        if native_transform:
-            native_names = native_transform.output_dimensions.names
-        else:
-            native_names = []
-        if current_transform:
-            current_names = current_transform.output_dimensions.names
-        else:
-            current_names = []
+        # Get current mapping from hidden layers
+        native_names = []
+        if world_axes_native.source:
+            native_transform = world_axes_native.source[0].transform
+            if native_transform:
+                native_names = native_transform.output_dimensions.names
+        current_names = []
+        if world_axes_current.source:
+            current_transform = world_axes_current.source[0].transform
+            if current_transform:
+                current_names = current_transform.output_dimensions.names
 
         old_axes = {"x": "x", "y": "y", "z": "z", "t": "t"}
         old_axes.update({
@@ -1193,7 +1194,7 @@ class Scene(ViewerState):
             if inv:
                 transform = np.linalg.inv(transform)
             transform = transform[:-1]
-            return ng.CoordinateSpaceTransform(
+            transform = ng.CoordinateSpaceTransform(
                 matrix=transform,
                 input_dimensions=S.neurospaces["xyz"],
                 output_dimensions=S.neurospaces["xyz"],
@@ -1238,39 +1239,39 @@ class Scene(ViewerState):
         if isinstance(layer_names, str):
             layer_names = [layer_names]
             return_list = False
-        layer_names = _ensure_list(layer_names)
+        layer_names = _ensure_list(layer_names or [])
 
         outputs = output
         if isinstance(outputs, str):
             outputs = [outputs]
         outputs = _ensure_list(outputs)
 
-        if outputs and len(outputs) != len(layer_names):
-            raise ValueError("Number of layers and outputs must be the same")
-
         def _compute_trf(source: LayerDataSource) -> np.ndarray:
+            mm = [1, "mm"]
             current_transform = source.transform
-            default_transform = source.__default_transform__
             current_transform = T.subtransform(current_transform, "m")
-            current_transform = T.normalize_transform(current_transform, True)
+            current_transform = T.convert_transform(current_transform, mm, mm)
+            default_transform = source.__default_transform__
             default_transform = T.subtransform(default_transform, "m")
-            default_transform = T.normalize_transform(current_transform, True)
+            default_transform = T.convert_transform(default_transform, mm, mm)
             current_inames = current_transform.input_dimensions.names
             current_onames = current_transform.output_dimensions.names
-            current_matrix = current_transform.matrix
             default_inames = default_transform.input_dimensions.names
             default_onames = default_transform.output_dimensions.names
             current_operm = [current_onames.index(x) for x in 'xyz']
             default_operm = [default_onames.index(x) for x in 'xyz']
             current_iperm = [current_inames.index(x) for x in default_inames]
-            default_matrix = T.get_matrix(default_transform.matrix, True)
+            current_matrix = T.get_matrix(current_transform, True)
+            default_matrix = T.get_matrix(default_transform, True)
             default_matrix = default_matrix[default_operm + [-1], :]
             current_matrix = current_matrix[current_operm + [-1], :]
             current_matrix = current_matrix[:, current_iperm + [-1]]
-            return np.linalg.solve(default_matrix.T, current_matrix.T).T
+            matrix = np.linalg.solve(default_matrix.T, current_matrix.T).T
+            return matrix
 
         # save transform for each layer
-        matrices = []
+        matrices = {}
+        i = -1
         for layer in self.layers:
             layer: ng.ManagedLayer
             layer_name = layer.name
@@ -1278,27 +1279,45 @@ class Scene(ViewerState):
                 continue
             if layer_name.startswith('__'):
                 continue
+            i += 1
 
             for source in getattr(layer, "source", []):
                 source: LayerDataSource
                 try:
                     ras2ras = _compute_trf(source)
-                    matrices.append(ras2ras)
+
+                    # save
                     if outputs:
-                        output = outputs[layer_names.index(layer_name)]
+                        if layer_names:
+                            try:
+                                index = layer_names.index(layer_name)
+                            except ValueError:
+                                index = -1
+                        else:
+                            index = i
+                        output = outputs[min(index, len(outputs)-1)]
+                        output = output.format(name=layer_name)
                         T.save_transform(ras2ras, output, format)
-                except Exception:
+
+                except Exception as e:
                     LOG.error(
-                        f"Could not save transform for layer {layer_name}"
+                        f"Could not save transform for layer {layer_name}: {e}"
                     )
                     ras2ras = None
+
                 finally:
-                    matrices.append(ras2ras)
+                    matrices[layer.name] = ras2ras
 
         # go back to original axis names
         self.world_axes(world_axes)
         self.display(display_dimensions)
 
+        if not outputs:
+            for layer, matrix in matrices.items():
+                self.stdio.print(f"{layer}:")
+                self.stdio.print(matrix)
+
+        matrices = list(matrices.values())
         return matrices[0] if return_list else matrices
 
     @autolog
