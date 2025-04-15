@@ -243,7 +243,7 @@ class LocalNeuroglancer(OSMixin):
     def __init__(
         self,
         port: int = 0,
-        ip: str = '',
+        ip: str = "localhost",
         token: int = 1,
         fileserver: bool | int | LocalFileServer = True,
         **console_kwargs,

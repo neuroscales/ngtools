@@ -289,16 +289,18 @@ def filesystem(protocol: URILike | FileSystem, **opt) -> FileSystem:
         return _FILESYSTEMS_CACHE[(protocol, linc_auth, dandi_auth)]
 
     # --- LINC/DANDI authentification ---
-    opt.setdefault("client_kwargs", {})
     if linc_auth:
         LOG.debug(f"linc_auth - {url}")
+        opt.setdefault("client_kwargs", {})
         opt["client_kwargs"].update(linc_auth_opt())
     if dandi_auth:
         LOG.debug(f"dandi_auth - {url}")
         instance = "linc" if linc_auth else "dandi"
+        opt.setdefault("client_kwargs", {})
         opt["client_kwargs"].update(dandi_auth_opt(instance=instance))
     # -----------------------------------
 
+    print(protocol, opt)
     fs = fsspec.filesystem(protocol, **opt)
     _FILESYSTEMS_CACHE[(protocol, linc_auth, dandi_auth)] = fs
     return fs

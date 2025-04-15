@@ -39,7 +39,7 @@ class LocalFileServer:
     def __init__(
         self,
         port: int = 0,
-        ip: str = "",
+        ip: str = "localhost",
         app: Callable | None = None,
         start: bool = True,
     ) -> None:
