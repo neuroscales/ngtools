@@ -8,6 +8,7 @@ import sys
 from copy import deepcopy
 from io import BytesIO
 from os import PathLike
+from textwrap import dedent
 from typing import Literal, Sequence
 from urllib.parse import quote as urlquote
 from urllib.parse import unquote as urlunquote
@@ -1054,6 +1055,7 @@ class Scene(ViewerState):
         layer: str | list[str] | None = None,
         inv: bool = False,
         reset: bool = False,
+        interactive: bool = False,
         *,
         mov: str = None,
         fix: str = None,
@@ -1071,6 +1073,8 @@ class Scene(ViewerState):
             Invert the transform
         reset : bool
             Reset the default transform prior to applying the new transform.
+        interactive : bool
+            Enable interactive transformation.
 
         Other Parameters
         ----------------
@@ -1095,6 +1099,9 @@ class Scene(ViewerState):
         # go back to original axis names
         self.world_axes(world_axes)
         self.display(display_dimensions)
+
+        if interactive:
+            self._interactive_transform(layer)
 
     def _apply_transform(
         self,
@@ -1204,12 +1211,81 @@ class Scene(ViewerState):
             transform = T.inverse(transform)
         return transform
 
+    def _interactive_transform(self, layer: str) -> None:
+        def make_local_annot() -> ng.AnnotationLayer:
+            coord = self.spatial_dimensions
+            return ng.AnnotationLayer(ng.LocalAnnotationLayer(coord).to_json())
+
+        layer_name, layer = layer, self.layers[layer]
+        ilayer_name = "__interactive_transform__:" + layer_name
+
+        if ilayer_name not in self.layers:
+            self.layers[ilayer_name] = make_local_annot()
+        ilayer = self.layers[ilayer_name]
+
+        # save original transform
+        if layer.source and ilayer.source[0].transform is not None:
+            ilayer.source[0].transform = ng.CoordinateSpaceTransform(
+                matrix=layer.source[0].transform.matrix,
+                output_dimensions=layer.source[0].transform.output_dimensions,
+            )
+
+        if False:
+            # compute current ras2ras transform
+            matrix = self.save_transform(layer=layer_name, print=False)
+
+            if matrix is None:
+                matrix = np.eye(4)
+
+            elif layer.source:
+                # shift to center of FOV
+                center = layer.source[0].output_center
+                if center:
+                    matrix[:3, -1] -= matrix[:3, :3] @ center
+                    matrix[:3, -1] += center
+
+            # convert to parameters
+            t, r, z, s = T.get_affine_parameters(matrix)
+            z = np.log2(z)
+
+        ilayer.shader = dedent(
+            """
+            #uicontrol float shear_xy(min=-1, max=1, default=0, step=0.1)
+            #uicontrol float shear_xz(min=-1, max=1, default=0, step=0.1)
+            #uicontrol float shear_yz(min=-1, max=1, default=0, step=0.1)
+            #uicontrol float zoom_x(min=-2, max=2, default=0, step=0.1)
+            #uicontrol float zoom_y(min=-2, max=2, default=0, step=0.1)
+            #uicontrol float zoom_z(min=-2, max=2, default=0, step=0.1)
+            #uicontrol float pitch_x(min=-180, max=180, default=0, step=1)
+            #uicontrol float roll_y(min=-180, max=180, default=0, step=1)
+            #uicontrol float yaw_z(min=-180, max=180, default=0, step=1)
+            #uicontrol float translate_x(min=-1, max=1, default=0, step=0.1)
+            #uicontrol float translate_y(min=-1, max=1, default=0, step=0.1)
+            #uicontrol float translate_z(min=-1, max=1, default=0, step=0.1)
+            """
+        )
+        ilayer.shader_controls = {
+            "shear_xy": 0,
+            "shear_xz": 0,
+            "shear_yz": 0,
+            "zoom_x": 0,
+            "zoom_y": 0,
+            "zoom_z": 0,
+            "pitch_x": 0,
+            "roll_y": 0,
+            "yaw_z": 0,
+            "translate_x": 0,
+            "translate_y": 0,
+            "translate_z": 0,
+        }
+
     @autolog
     def save_transform(
         self,
         output: str | list[str] | None = None,
         layer: str | list[str] | None = None,
         format: str | None = None,
+        print: bool | None = None,
     ) -> ng.CoordinateSpaceTransform:
         """
         Save transform from default space to current space.
@@ -1235,17 +1311,53 @@ class Scene(ViewerState):
         world_axes = self.world_axes(print=False)
         self.world_axes({"x": "x", "y": "y", "z": "z"})
 
-        layer_names = layer
+        # format layers and output paths
+        layer = layer
         return_list = True
-        if isinstance(layer_names, str):
-            layer_names = [layer_names]
+        if isinstance(layer, str):
+            layer = [layer]
             return_list = False
-        layer_names = _ensure_list(layer_names or [])
+        layer = _ensure_list(layer or [])
 
+        if isinstance(output, str):
+            output = [output]
+        output = _ensure_list(output)
+
+        # compute matrices
+        matrices = self._save_transform(output, layer, format)
+
+        # go back to original axis names
+        self.world_axes(world_axes)
+        self.display(display_dimensions)
+
+        if print is None:
+            print = bool(output)
+        if print:
+            for layer, matrix in matrices.items():
+                self.stdio.print(f"{layer}:")
+                self.stdio.print(matrix)
+
+        matrices = list(matrices.values())
+        return matrices[0] if return_list else matrices
+
+    def _save_transform(
+        self,
+        output: list[str] | str | None = None,
+        layer: list[str] | str | None = None,
+        format: str | None = None
+    ) -> dict:
+
+        if layer is None:
+            layer = []
+        elif isinstance(layer, str):
+            layer = [layer]
+        if output is None:
+            output = []
+        elif isinstance(output, str):
+            output = [output]
+
+        layer_names = layer
         outputs = output
-        if isinstance(outputs, str):
-            outputs = [outputs]
-        outputs = _ensure_list(outputs)
 
         def _compute_trf(source: LayerDataSource) -> np.ndarray:
             mm = [1, "mm"]
@@ -1309,17 +1421,7 @@ class Scene(ViewerState):
                 finally:
                     matrices[layer.name] = ras2ras
 
-        # go back to original axis names
-        self.world_axes(world_axes)
-        self.display(display_dimensions)
-
-        if not outputs:
-            for layer, matrix in matrices.items():
-                self.stdio.print(f"{layer}:")
-                self.stdio.print(matrix)
-
-        matrices = list(matrices.values())
-        return matrices[0] if return_list else matrices
+        return matrices
 
     @autolog
     def channel_mode(
