@@ -14,6 +14,7 @@ import readline  # autocomplete/history in user input
 import shlex  # parse user input as if a shell commandline
 import sys
 import traceback
+import warnings
 from functools import partial
 from gettext import gettext  # to fix usage string
 
@@ -166,7 +167,12 @@ class Console(argparse.ArgumentParser):
             if not os.path.exists(self.history_file):
                 with open(self.history_file, 'wt'):
                     pass
-            readline.read_history_file(self.history_file)
+            try:
+                readline.read_history_file(self.history_file)
+            except OSError:
+                # https://github.com/neuroscales/ngtools/issues/16
+                # -> Let's raise a warning -- better than crashing
+                warnings.warn("Could not read command line history")
             readline.set_history_length(self.history_size)
 
     def exit_console(self) -> None:
