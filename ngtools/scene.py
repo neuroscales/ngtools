@@ -49,9 +49,6 @@ if not hasattr(ng.Layer, "localDimensions"):
 LOG = logging.getLogger(__name__)
 
 
-sys.setrecursionlimit(100)
-
-
 def _ensure_list(x: object) -> list:
     """Ensure that an object is a list. Make one if needed."""
     if isinstance(x, np.ndarray):

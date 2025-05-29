@@ -300,7 +300,6 @@ def filesystem(protocol: URILike | FileSystem, **opt) -> FileSystem:
         opt["client_kwargs"].update(dandi_auth_opt(instance=instance))
     # -----------------------------------
 
-    print(protocol, opt)
     fs = fsspec.filesystem(protocol, **opt)
     _FILESYSTEMS_CACHE[(protocol, linc_auth, dandi_auth)] = fs
     return fs
