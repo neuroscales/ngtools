@@ -1460,7 +1460,7 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
     """Volume info for Zarr v3."""
 
     def __init__(self, url: str, nifti: bool | None = None) -> None:
-        super().__init__(self)
+        super().__init__(url)
         url = UPath(parse_protocols(self.url).url)
 
         if not exists(url / "zarr.json"):
@@ -1493,14 +1493,36 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
                 raise ValueError("Missing or invalid OME metadata.")
 
         self.nifti = None
-        if nifti is not False:
-            if exists(url / "nifti" / "zarr.json"):
-                url = url / "nifti" / "c0"
-                self.nifti = NiftiVolumeInfo(
-                    url, affine="best", align_corner=True
-                )
-            elif nifti is True:
+        self._load_nifti(url, nifti)
+
+    def _load_nifti(self, url: UPath, nifti: bool | None):
+        if nifti is False:
+            return
+
+        nifti_json = url / "nifti" / "zarr.json"
+
+        if not nifti_json.exists():
+            if nifti is True:
                 raise FileNotFoundError("Cannot find nifti group in zarr.")
+            return
+
+        try:
+            content = json.loads(nifti_json.read_text())
+            sep = content["chunk_key_encoding"]["configuration"]["separator"]
+        except (KeyError, json.JSONDecodeError):
+            raise ValueError(
+                "Failed to read dimension separator from NIfTI zarr metadata."
+            )
+
+        nifti_group = url / "nifti" / f"c{sep}0"
+        if not nifti_group.exists():
+            raise FileNotFoundError("Cannot find nifti group in zarr.")
+
+        self.nifti = NiftiVolumeInfo(
+            nifti_group,
+            affine="best",
+            align_corner=True
+        )
 
     def getDataType(self) -> np.dtype:
         """Array shape at a given level."""
