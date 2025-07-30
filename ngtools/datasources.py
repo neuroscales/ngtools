@@ -1383,7 +1383,19 @@ class ZarrVolumeInfo(VolumeInfo):
         oriented according to the nifti metadata.
         """
         return T.compose(
-            self.getNiftiTransform(),
+            # zarr output voxel size
+            ng.CoordinateSpaceTransform(
+                input_dimensions=self.getOutputDimensions(),
+                output_dimensions=self.getOutputDimensions(),
+            ),
+            # nifti transform, but mapping from (x,y,z,t,c) to (x,y,z,t,c)
+            # instead of (i,j,k,m,c) to (x,y,z,t,c)
+            ng.CoordinateSpaceTransform(
+                matrix=self.getNiftiMatrix(),
+                input_dimensions=self.getNiftiOutputDimensions(),
+                output_dimensions=self.getNiftiOutputDimensions(),
+            ),
+            # zarr input voxel size
             ng.CoordinateSpaceTransform(
                 input_dimensions=self.getInputDimensions(),
                 output_dimensions=self.getInputDimensions(),
