@@ -39,16 +39,23 @@ if not hasattr(ng.Layer, "channelDimensions"):
     ng.Layer.channel_dimensions \
         = ng.Layer.channelDimensions \
         = wrapped_property("channelDimensions", ng.CoordinateSpace)
-if not hasattr(ng.Layer, "localDimensions"):
+if (
+    hasattr(ng.Layer, "layerDimensions") and
+    not hasattr(ng.Layer, "localDimensions")
+):
     ng.Layer.local_dimensions \
         = ng.Layer.localDimensions \
         = ng.Layer.layerDimensions
+elif (
+    hasattr(ng.Layer, "localDimensions") and
+    not hasattr(ng.Layer, "layerDimensions")
+):
+    ng.Layer.layer_dimensions \
+        = ng.Layer.layerDimensions \
+        = ng.Layer.localDimensions
 
 
 LOG = logging.getLogger(__name__)
-
-
-sys.setrecursionlimit(100)
 
 
 def _ensure_list(x: object) -> list:
