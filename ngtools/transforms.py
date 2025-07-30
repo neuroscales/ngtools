@@ -965,7 +965,11 @@ def ensure_same_scale(
 
 def subtransform(
     transform: ng.CoordinateSpaceTransform,
-    unit: str
+    unit: str | list[str] | None = None,
+    *,
+    names: str | list[str] | None = None,
+    input_names: str | list[str] | None = None,
+    output_names: str | list[str] | None = None,
 ) -> ng.CoordinateSpaceTransform:
     """
     Generate a subtransform by keeping only axes of a certain unit kind.
@@ -974,8 +978,17 @@ def subtransform(
     ----------
     transform : ng.CoordinateSpaceTransform
         Transformation
-    unit : str
+    unit : str | list[str]
         Unit kind to keep.
+
+    Other Parameters
+    ----------------
+    names : str | list[str], optional
+        Axis names to keep.
+    input_names, str | list[str], default=`names`
+        Names of input axes to keep.
+    output_names, str | list[str], default=`names`
+        Names of output axes to keep.
 
     Returns
     -------
@@ -983,7 +996,13 @@ def subtransform(
         Converted transformation
 
     """
-    kind = U.split_unit(unit)[1]
+    kind = None
+    if unit is not None:
+        unit = _ensure_list(unit)
+        kind = [U.split_unit(u)[1] for u in unit]
+    input_names = _ensure_list(input_names or names)
+    output_names = _ensure_list(output_names or names)
+
     idim: ng.CoordinateSpace = transform.input_dimensions
     odim: ng.CoordinateSpace = transform.output_dimensions
     matrix = transform.matrix
@@ -991,10 +1010,13 @@ def subtransform(
         matrix = np.eye(len(idim.names)+1)[:-1]
     # filter input axes
     ikeep = []
-    for i, unit in enumerate(idim.units):
+    for i, (name, unit) in enumerate(zip(idim.names, idim.units)):
         unit = U.split_unit(unit)[1]
-        if unit == kind:
-            ikeep.append(i)
+        if kind and unit not in kind:
+            continue
+        if input_names and name not in input_names:
+            continue
+        ikeep.append(i)
     idim = ng.CoordinateSpace({
         idim.names[i]: [idim.scales[i], idim.units[i]]
         for i in ikeep
@@ -1002,10 +1024,13 @@ def subtransform(
     matrix = matrix[:, ikeep + [-1]]
     # filter output axes
     okeep = []
-    for i, unit in enumerate(odim.units):
+    for i, (name, unit) in enumerate(zip(odim.names, odim.units)):
         unit = U.split_unit(unit)[1]
-        if unit == kind:
-            okeep.append(i)
+        if kind and unit not in kind:
+            continue
+        if output_names and name not in output_names:
+            continue
+        okeep.append(i)
     odim = ng.CoordinateSpace({
         odim.names[i]: [odim.scales[i], odim.units[i]]
         for i in okeep
