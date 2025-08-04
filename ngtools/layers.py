@@ -5,7 +5,6 @@ from os import PathLike
 from typing import Iterator
 
 # externals
-import neuroglancer as ng
 import numpy as np
 
 # internals
@@ -19,6 +18,12 @@ from ngtools.local.tracts import TractDataSource, TractSkeleton
 from ngtools.opener import parse_protocols
 from ngtools.shaders import shaders
 from ngtools.utils import Wraps
+
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools.nglite as ng
 
 LOG = logging.getLogger(__name__)
 

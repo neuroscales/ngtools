@@ -14,9 +14,7 @@ from urllib.parse import unquote as urlunquote
 from urllib.parse import urlparse
 
 # externals
-import neuroglancer as ng
 import numpy as np
-from neuroglancer.viewer_state import wrapped_property
 from numpy.typing import ArrayLike
 
 # import to trigger datasource registration
@@ -33,6 +31,14 @@ from ngtools.opener import exists, filesystem, open, parse_protocols
 from ngtools.shaders import colormaps, load_fs_lut, rotate_shader, shaders
 from ngtools.units import convert_unit
 from ngtools.utils import NG_URLS, Wraps
+
+# optionals
+try:
+    import neuroglancer as ng
+    from neuroglancer.viewer_state import wrapped_property
+except ImportError:
+    import ngtools.nglite as ng
+    from ngtools.nglite.viewer_state import wrapped_property
 
 # monkey-patch Layer state to expose channelDimensions
 if not hasattr(ng.Layer, "channelDimensions"):

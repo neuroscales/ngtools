@@ -6,8 +6,11 @@ import socket
 import sys
 from urllib.parse import quote
 
-# externals
-import neuroglancer as ng
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools.nglite as ng
 
 LOG = logging.getLogger(__name__)
 

@@ -19,7 +19,6 @@ from types import EllipsisType
 from typing import Callable, Iterator
 
 # externals
-import neuroglancer as ng
 import nibabel as nib
 import numpy as np
 import zarr
@@ -40,6 +39,12 @@ from ngtools.opener import (
     read_json,
 )
 from ngtools.utils import Wraps
+
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools.nglite as ng
 
 LOG = logging.getLogger(__name__)
 

@@ -9,9 +9,14 @@ from threading import RLock
 from typing import Any, Generic, Literal, ParamSpec, TypeVar
 
 # externals
-import neuroglancer as ng
 import neuroglancer.json_wrappers as ngj
 import numpy as np
+
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools.nglite as ng
 
 T = TypeVar('T')
 P = ParamSpec('P')

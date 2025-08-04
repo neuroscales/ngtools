@@ -93,7 +93,6 @@ from tempfile import TemporaryDirectory
 from typing import IO
 
 # externals
-import neuroglancer as ng
 import numpy as np
 from nitransforms.io import afni, fsl, itk, lta
 
@@ -102,6 +101,12 @@ import ngtools.spaces as S
 import ngtools.units as U
 from ngtools._lta.lta import LinearTransformArray
 from ngtools.opener import open, parse_protocols, stringify_path
+
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools.nglite as ng
 
 LOG = logging.getLogger(__name__)
 

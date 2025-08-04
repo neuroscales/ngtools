@@ -41,11 +41,16 @@ neurotransforms : dict[tuple[str, str], ng.CoordinateSpaceTransform]
 import itertools
 
 # externals
-import neuroglancer as ng
 import numpy as np
 
 # internals
 import ngtools.units as U
+
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools.nglite as ng
 
 letter2full: dict[str, str] = {
     "r": "right",
