@@ -32,6 +32,16 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.optional-dependencies]
+nglite = [
+  "atomicwrites>=1.4.1",
+  "google-apitools>=0.5.32",
+  "google-auth>=2.38.0",
+  "numpy>=1.11.0",
+  "pillow>=3.2.0",
+  "requests>=2.32.3",
+]
+
 [project.urls]
 Homepage = "https://github.com/balbasty/ngtools"
 Issues = "https://github.com/balbasty/ngtools/issues"
