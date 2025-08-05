@@ -32,13 +32,19 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-nglite = [
-  "atomicwrites>=1.4.1",
-  "google-apitools>=0.5.32",
-  "google-auth>=2.38.0",
-  "numpy>=1.11.0",
-  "pillow>=3.2.0",
-  "requests>=2.32.3",
+nglite = [  # neuroglancer
+    "atomicwrites>=1.4.1",
+    "google-apitools>=0.5.32",
+    "google-auth>=2.38.0",
+    "numpy>=1.11.0",
+    "pillow>=3.2.0",
+    "requests>=2.32.3",
+]
+ntlite = [  # nitransforms
+    "numpy >= 2.1",
+    "scipy >= 1.8",
+    "nibabel >= 5.2",
+    "h5py >= 3.11",
 ]
 
 [project.urls]
@@ -52,9 +58,9 @@ neuroglancer = "ngtools.local.cli:main"
 
 [build-system]
 requires = [
-  "setuptools >= 61.0",
-  "wheel",
-  "versioningit >= 1.0",
+    "setuptools >= 61.0",
+    "wheel",
+    "versioningit >= 1.0",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -76,10 +82,10 @@ file = "ngtools/_version.py"
 
 [tool.pytest.ini_options]
 pythonpath = [
-  "."
+    "."
 ]
 testpaths = [
-  "ngtools/tests"
+    "ngtools/tests"
 ]
 
 [tool.mypy]
@@ -87,27 +93,27 @@ ignore_missing_imports = true
 
 [tool.ruff]
 exclude = [
-  ".bzr",
-  ".direnv",
-  ".eggs",
-  ".git",
-  ".git-rewrite",
-  ".hg",
-  ".mypy_cache",
-  ".nox",
-  ".pants.d",
-  ".pytype",
-  ".ruff_cache",
-  ".svn",
-  ".tox",
-  ".venv",
-  "__pypackages__",
-  "_build",
-  "buck-out",
-  "build",
-  "dist",
-  "node_modules",
-  "venv"
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv"
 ]
 line-length = 88
 indent-width = 4
@@ -117,12 +123,12 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["ANN", "D", "E", "F", "I"]
 ignore = [
-  "ANN002",  # args should not be annotated
-  "ANN003",  # kwargs should not be annotated
-  "ANN101",  # self should not be annotated.
-  "ANN102",  # cls should not be annotated.
-  "D105",    # Missing docstring in magic method
-  "D205"     # 1 blank line required between summary line and description -> triggered in __init__ docstrings
+    "ANN002",  # args should not be annotated
+    "ANN003",  # kwargs should not be annotated
+    "ANN101",  # self should not be annotated.
+    "ANN102",  # cls should not be annotated.
+    "D105",    # Missing docstring in magic method
+    "D205"     # 1 blank line required between summary line and description -> triggered in __init__ docstrings
 ]
 fixable = ["ALL"]
 unfixable = []
