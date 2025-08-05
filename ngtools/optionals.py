@@ -146,10 +146,7 @@ def try_import_as(path: str, fallback: str | None = None) -> ModuleType | None:
         Return `None` if import fails.
 
     """
-    return (
-        try_import(path, None, _as=True) or
-        try_import(fallback, None, _as=True)
-    )
+    return _try_import(path, _as=True) or _try_import(fallback, _as=True)
 
 
 def try_from_import(
@@ -187,6 +184,6 @@ def try_from_import(
 
     """
     return (
-        try_import(path, keys, _as=True) or
-        try_import(fallback, keys, _as=True)
+        _try_import(path, keys, _as=True) or
+        _try_import(fallback, keys, _as=True)
     )
