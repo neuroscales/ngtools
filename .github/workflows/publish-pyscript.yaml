@@ -1,4 +1,4 @@
-name: Publish ngtools on PyPI
+name: Publish ngtools-pyscript on PyPI
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ on:
       python-version:
         description: 'Python version'
         required: false
-        default: '3.8'
+        default: '3.11'
 
 jobs:
   publish:
@@ -40,6 +40,7 @@ jobs:
         shell: bash
       - name: Build a binary wheel and a source tarball
         run: |
+          cd ngtools-pyscript
           python -m build
         shell: bash
       - name: Publish distribution 📦 to Test PyPI
