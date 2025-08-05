@@ -46,11 +46,16 @@ import fsspec
 import fsspec.asyn
 import numpy as np
 import requests
-from indexed_gzip import IndexedGzipFile
 from typing_extensions import Buffer
 
 # internals
 from ngtools.protocols import FORMATS, LAYERS, PROTOCOLS
+
+# optionals
+try:
+    from indexed_gzip import IndexedGzipFile as GzipFile
+except ImportError:
+    from gzip import GzipFile
 
 LOG = logging.getLogger(__name__)
 
@@ -590,7 +595,7 @@ class open:
         except Exception:
             return
         if magic == b'\x1f\x8b':
-            fileobj = IndexedGzipFile(fileobj)
+            fileobj = GzipFile(fileobj)
             self.fileobjs.append(fileobj)
         if magic == b'BZh':
             fileobj = BZ2File(fileobj)
@@ -737,7 +742,7 @@ class async_open(open):
         except Exception:
             return
         if magic == b'\x1f\x8b':
-            fileobj = IndexedGzipFile(fileobj)
+            fileobj = GzipFile(fileobj)
             self.fileobjs.append(fileobj)
         if magic == b'BZh':
             fileobj = BZ2File(fileobj)

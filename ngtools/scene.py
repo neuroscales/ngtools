@@ -577,8 +577,15 @@ class Scene(ViewerState):
             if parsed.stream == "dandi":
                 # neuroglancer does not understand dandi:// uris,
                 # so we use the s3 url instead.
-                short_uri = filesystem(short_uri).s3_url(short_uri)
-                parsed = parsed.with_part(stream="https", url=short_uri)
+                try:
+                    from . import dandifs as _  # noqa: F401
+                except ImportError:
+                    raise ValueError(
+                        "dandi must be available to parse dandi:// URLs"
+                    )
+                else:
+                    short_uri = filesystem(short_uri).s3_url(short_uri)
+                    parsed = parsed.with_part(stream="https", url=short_uri)
 
             elif parsed.stream == "file":
                 # neuroglancer does not understand file:// uris,

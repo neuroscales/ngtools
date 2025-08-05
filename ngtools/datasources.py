@@ -38,13 +38,11 @@ from ngtools.opener import (
     parse_protocols,
     read_json,
 )
+from ngtools.optionals import try_import_as
 from ngtools.utils import Wraps
 
 # optionals
-try:
-    import neuroglancer as ng
-except ImportError:
-    import ngtools.nglite as ng
+ng = try_import_as('neuroglancer', fallback='ngtools.nglite')
 
 LOG = logging.getLogger(__name__)
 
