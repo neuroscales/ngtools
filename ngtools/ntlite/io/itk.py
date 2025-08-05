@@ -2,16 +2,22 @@
 import warnings
 import numpy as np
 from scipy.io import loadmat as _read_mat, savemat as _save_mat
-from h5py import File as H5File
 from nibabel import Nifti1Header, Nifti1Image
 from nibabel.affines import from_matvec
-from nitransforms.io.base import (
+from .base import (
     BaseLinearTransformList,
     DisplacementsField,
     LinearParameters,
     TransformIOError,
     TransformFileError,
 )
+
+try:
+    from h5py import File as H5File
+    _H5_AVAILABLE = True
+except ImportError:
+    _H5_AVAILABLE = False
+
 
 LPS = np.diag([-1, -1, 1, 1])
 
@@ -114,6 +120,8 @@ class ITKLinearTransform(LinearParameters):
             with open(str(filename), "rb") as fileobj:
                 return cls.from_binary(fileobj)
         elif str(filename).endswith(".h5"):
+            if not _H5_AVAILABLE:
+                raise ImportError("h5py")
             with H5File(str(filename)) as f:
                 return cls.from_h5obj(f)
 
@@ -126,6 +134,8 @@ class ITKLinearTransform(LinearParameters):
         if fileobj.name.endswith(".mat"):
             return cls.from_binary(fileobj)
         elif fileobj.name.endswith(".h5"):
+            if not _H5_AVAILABLE:
+                raise ImportError("h5py")
             with H5File(fileobj) as f:
                 return cls.from_h5obj(f)
 
@@ -262,6 +272,8 @@ class ITKLinearTransformArray(BaseLinearTransformList):
             with open(str(filename), "rb") as f:
                 return cls.from_binary(f)
         elif str(filename).endswith(".h5"):
+            if not _H5_AVAILABLE:
+                raise ImportError("h5py")
             with H5File(str(filename)) as f:
                 return cls.from_h5obj(f)
 
@@ -276,6 +288,8 @@ class ITKLinearTransformArray(BaseLinearTransformList):
             return cls.from_binary(fileobj)
 
         elif fileobj.name.endswith(".h5"):
+            if not _H5_AVAILABLE:
+                raise ImportError("h5py")
             with H5File(fileobj) as f:
                 return cls.from_h5obj(f)
         return cls.from_string(fileobj.read())
@@ -373,6 +387,9 @@ class ITKCompositeH5:
         """Read the struct from a file given its path."""
         if not str(filename).endswith(".h5"):
             raise TransformFileError("Extension is not .h5")
+
+        if not _H5_AVAILABLE:
+            raise ImportError("h5py")
 
         with H5File(str(filename)) as f:
             return cls.from_h5obj(f, only_linear=only_linear)

@@ -9,15 +9,21 @@
 """Surface transforms."""
 import pathlib
 import warnings
-import h5py
 import numpy as np
 import nibabel as nb
 from scipy import sparse
 from scipy.spatial import KDTree
 from scipy.spatial.distance import cdist
-from nitransforms.base import (
+from .base import (
     SurfaceMesh
 )
+
+
+try:
+    import h5py
+    _H5_AVAILABLE = True
+except ImportError:
+    _H5_AVAILABLE = False
 
 
 class SurfaceTransformBase():
@@ -115,6 +121,8 @@ class SurfaceCoordinateTransform(SurfaceTransformBase):
 
     def _to_hdf5(self, x5_root):
         """Write transform to HDF5 file."""
+        if not _H5_AVAILABLE:
+            raise ImportError("h5py")
         triangles = x5_root.create_group("Triangles")
         coords = x5_root.create_group("Coordinates")
         coords.create_dataset("0", data=self.reference._coords)
@@ -138,6 +146,9 @@ class SurfaceCoordinateTransform(SurfaceTransformBase):
             raise NotImplementedError
             # sparse.save_npz(filename, self.mat)
             # return filename
+
+        if not _H5_AVAILABLE:
+            raise ImportError("h5py")
 
         with h5py.File(filename, "w") as out_file:
             out_file.attrs["Format"] = "X5"
@@ -170,6 +181,9 @@ class SurfaceCoordinateTransform(SurfaceTransformBase):
 
         if fmt != "X5":
             raise ValueError("Only npz and X5 formats are supported.")
+
+        if not _H5_AVAILABLE:
+            raise ImportError("h5py")
 
         with h5py.File(filename, "r") as f:
             assert f.attrs["Format"] == "X5"
@@ -398,6 +412,10 @@ class SurfaceResampler(SurfaceTransformBase):
 
     def _to_hdf5(self, x5_root):
         """Write transform to HDF5 file."""
+
+        if not _H5_AVAILABLE:
+            raise ImportError("h5py")
+
         triangles = x5_root.create_group("Triangles")
         coords = x5_root.create_group("Coordinates")
         coords.create_dataset("0", data=self.reference._coords)
@@ -428,6 +446,9 @@ class SurfaceResampler(SurfaceTransformBase):
             raise NotImplementedError
             # sparse.save_npz(filename, self.mat)
             # return filename
+
+        if not _H5_AVAILABLE:
+            raise ImportError("h5py")
 
         with h5py.File(filename, "w") as out_file:
             out_file.attrs["Format"] = "X5"
@@ -463,6 +484,9 @@ class SurfaceResampler(SurfaceTransformBase):
 
         if fmt != "X5":
             raise ValueError("Only npz and X5 formats are supported.")
+
+        if not _H5_AVAILABLE:
+            raise ImportError("h5py")
 
         with h5py.File(filename, "r") as f:
             assert f.attrs["Format"] == "X5"

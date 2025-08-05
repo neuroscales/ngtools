@@ -21,7 +21,7 @@ from nibabel.arrayproxy import get_obj_dtype
 from nibabel.spatialimages import SpatialImage
 from scipy import ndimage as ndi
 
-from nitransforms.base import (
+from .base import (
     ImageGrid,
     TransformBase,
     TransformError,

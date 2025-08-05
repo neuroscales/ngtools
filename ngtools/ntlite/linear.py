@@ -17,23 +17,28 @@ from nibabel.affines import from_matvec
 
 # Avoids circular imports
 try:
-    from nitransforms._version import __version__
+    from ._version import __version__
 except ModuleNotFoundError:  # pragma: no cover
     __version__ = "0+unknown"
 
-from nitransforms.base import (
+from .base import (
     ImageGrid,
     TransformBase,
     _as_homogeneous,
     EQUALITY_TOL,
 )
-from nitransforms.io import get_linear_factory, TransformFileError
-from nitransforms.io.x5 import (
-    X5Transform,
-    X5Domain,
-    to_filename as save_x5,
-    from_filename as load_x5,
-)
+from .io import get_linear_factory, TransformFileError
+
+try:
+    from .io.x5 import (
+        X5Transform,
+        X5Domain,
+        to_filename as save_x5,
+        from_filename as load_x5,
+    )
+    _X5_AVAILABLE = True
+except ImportError:
+    _X5_AVAILABLE = False
 
 
 class Affine(TransformBase):
@@ -303,6 +308,9 @@ should be (0, 0, 0, 1), got %s."""
 
     def to_x5(self, store_inverse=False, metadata=None):
         """Return an :class:`~nitransforms.io.x5.X5Transform` representation."""
+        if not _X5_AVAILABLE:
+            raise ImportError("h5py")
+
         metadata = {"WrittenBy": f"NiTransforms {__version__}"} | (metadata or {})
 
         domain = None
@@ -456,6 +464,9 @@ def load(filename, fmt=None, reference=None, moving=None):
 
 def from_x5(x5_list, reference=None, x5_position=0):
     """Create an affine from a list of :class:`~nitransforms.io.x5.X5Transform` objects."""
+
+    if not _X5_AVAILABLE:
+        raise ImportError("h5py")
 
     x5_xfm = x5_list[x5_position]
     Transform = Affine if x5_xfm.array_length == 1 else LinearTransformsMapping

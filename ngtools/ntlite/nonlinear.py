@@ -14,11 +14,10 @@ from collections import namedtuple
 import numpy as np
 import nibabel as nb
 
-from nitransforms import io
-from nitransforms.io.base import _ensure_image
-from nitransforms.io.x5 import from_filename as load_x5
-from nitransforms.interp.bspline import grid_bspline_weights, _cubic_bspline
-from nitransforms.base import (
+from . import io
+from .io.base import _ensure_image
+from .interp.bspline import grid_bspline_weights, _cubic_bspline
+from .base import (
     TransformBase,
     TransformError,
     ImageGrid,
@@ -26,9 +25,15 @@ from nitransforms.base import (
 )
 from scipy.ndimage import map_coordinates
 
+try:
+    from .io.x5 import from_filename as load_x5
+    _X5_AVAILABLE = True
+except ImportError:
+    _X5_AVAILABLE = False
+
 # Avoids circular imports
 try:
-    from nitransforms._version import __version__
+    from ._version import __version__
 except ModuleNotFoundError:  # pragma: no cover
     __version__ = "0+unknown"
 
@@ -261,6 +266,10 @@ class DenseFieldTransform(TransformBase):
 
     def to_x5(self, metadata=None):
         """Return an :class:`~nitransforms.io.x5.X5Transform` representation."""
+
+        if not _X5_AVAILABLE:
+            raise ImportError("h5py")
+
         metadata = {"WrittenBy": f"NiTransforms {__version__}"} | (metadata or {})
 
         domain = None
@@ -297,6 +306,8 @@ class DenseFieldTransform(TransformBase):
             raise NotImplementedError(f"Unsupported format <{fmt}>")
 
         if fmt == "X5":
+            if not _X5_AVAILABLE:
+                raise ImportError("h5py")
             return from_x5(load_x5(filename), x5_position=x5_position)
 
         return cls(_factory[fmt.lower()].from_filename(filename))
@@ -404,6 +415,10 @@ class BSplineFieldTransform(TransformBase):
 
     def to_x5(self, metadata=None):
         """Return an :class:`~nitransforms.io.x5.X5Transform` representation."""
+
+        if not _X5_AVAILABLE:
+            raise ImportError("h5py")
+
         metadata = {"WrittenBy": f"NiTransforms {__version__}"} | (metadata or {})
 
         domain = None
@@ -470,6 +485,9 @@ class BSplineFieldTransform(TransformBase):
 
 def from_x5(x5_list, x5_position=0):
     """Create a transform from a list of :class:`~nitransforms.io.x5.X5Transform` objects."""
+
+    if not _X5_AVAILABLE:
+        raise ImportError("h5py")
 
     x5_xfm = x5_list[x5_position]
 

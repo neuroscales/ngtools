@@ -12,21 +12,26 @@ import os
 from collections.abc import Iterable
 import numpy as np
 
-import h5py
-from nitransforms.base import (
+from .base import (
     TransformBase,
     TransformError,
 )
-from nitransforms.io import itk, x5 as x5io
-from nitransforms.io.x5 import from_filename as load_x5
-from nitransforms.linear import (  # noqa: F401
+from .linear import (  # noqa: F401
     Affine,
     from_x5 as linear_from_x5,
 )
-from nitransforms.nonlinear import (  # noqa: F401
+from .nonlinear import (  # noqa: F401
     DenseFieldTransform,
     from_x5 as nonlinear_from_x5,
 )
+
+try:
+    import h5py
+    from .io import itk, x5 as x5io
+    from .io.x5 import from_filename as load_x5
+    _X5_AVAILABLE = True
+except ImportError:
+    _X5_AVAILABLE = False
 
 
 class TransformChain(TransformBase):
@@ -206,6 +211,9 @@ class TransformChain(TransformBase):
     def from_filename(cls, filename, fmt="X5", reference=None, moving=None, x5_chain=0):
         """Load a transform file."""
 
+        if not _X5_AVAILABLE:
+            raise ImportWarning("h5py")
+
         retval = []
         if fmt and fmt.upper() == "X5":
             # Get list of X5 nodes and generate transforms
@@ -245,6 +253,9 @@ class TransformChain(TransformBase):
 
     def to_filename(self, filename, fmt="X5"):
         """Store the transform chain in X5 format."""
+
+        if not _X5_AVAILABLE:
+            raise ImportWarning("h5py")
 
         if fmt.upper() != "X5":
             raise NotImplementedError("Only X5 format is supported for chains")

@@ -2,7 +2,7 @@
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 """Read and write transforms."""
 
-from nitransforms.io.base import TransformIOError, TransformFileError
+from .base import TransformIOError, TransformFileError
 
 __all__ = [
     "afni",
@@ -18,7 +18,7 @@ __all__ = [
 _IO_TYPES = {}
 
 try:
-    from nitransforms.io import afni
+    from . import afni
 except ImportError:
     ...
 else:
@@ -26,7 +26,7 @@ else:
     _IO_TYPES["afni"] = (afni, "AFNILinearTransform")
 
 try:
-    from nitransforms.io import fsl
+    from . import fsl
 except ImportError:
     ...
 else:
@@ -34,7 +34,7 @@ else:
     _IO_TYPES["fsl"] = (fsl, "FSLLinearTransform")
 
 try:
-    from nitransforms.io import itk
+    from . import itk
 except ImportError:
     ...
 else:
@@ -44,7 +44,7 @@ else:
     _IO_TYPES["elastix"] = (itk, "ITKLinearTransform")
 
 try:
-    from nitransforms.io import lta
+    from . import lta
 except ImportError:
     ...
 else:
@@ -53,7 +53,7 @@ else:
     _IO_TYPES["fs"] = (lta, "FSLinearTransform")
 
 try:
-    from nitransforms.io import x5
+    from . import x5
 except ImportError:
     ...
 else:
