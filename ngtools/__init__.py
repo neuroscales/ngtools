@@ -3,11 +3,11 @@
 # flake8: noqa
 __all__ = ["__version__"]
 
-# optionals
-from .optionals import try_from_import
-
 # import to trigger fsspec registration
-_ = try_from_import('ngtools', 'dandifs')
+try:
+    from ngtools import dandifs as _
+except ImportError:
+    pass
 
 # version
 from ._version import __version__  # type: ignore
