@@ -18,7 +18,7 @@ from functools import wraps
 try:
     from neuroglancer import StackLayout as _StackLayout
 except ImportError:
-    from ngtools.nglite import StackLayout as _StackLayout
+    from ngtools._nglite import StackLayout as _StackLayout
 
 _old_stack_to_json = _StackLayout.to_json
 

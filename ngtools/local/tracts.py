@@ -8,8 +8,6 @@ from types import GeneratorType as generator
 from typing import Literal
 
 # externals
-import neuroglancer as ng
-import neuroglancer.skeleton as ngsk
 import numpy as np
 from nibabel.streamlines.tck import TckFile
 from nibabel.streamlines.trk import TrkFile
@@ -17,6 +15,14 @@ from nibabel.streamlines.trk import TrkFile
 # internals
 from ngtools.datasources import LocalSkeletonDataSource, datasource
 from ngtools.opener import open, parse_protocols, stringify_path
+
+# optionals
+try:
+    import neuroglancer as ng
+    import neuroglancer.skeleton as ngsk
+except ImportError:
+    import ngtools._nglite as ng
+    import ngtools._nglite.skeleton as ngsk
 
 
 @datasource(["trk", "tck", "tracts"])

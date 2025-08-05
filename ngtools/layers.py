@@ -21,7 +21,7 @@ from ngtools.shaders import shaders
 from ngtools.utils import Wraps
 
 # optionals
-ng = try_import_as('neuroglancer', fallback='ngtools.nglite')
+ng = try_import_as('neuroglancer', fallback='ngtools._nglite')
 
 LOG = logging.getLogger(__name__)
 

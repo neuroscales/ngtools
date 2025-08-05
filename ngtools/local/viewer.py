@@ -13,19 +13,28 @@ from functools import partial, wraps
 from typing import Generator
 
 # externals
-import neuroglancer as ng
 import numpy as np
-from neuroglancer.server import set_server_bind_address as ng_bind_address
-from neuroglancer.server import stop as ng_stop_server
 
 # internals
 from ngtools.local.console import ActionHelpFormatter, Console
 from ngtools.local.fileserver import LocalFileServer, StaticFileHandler
 from ngtools.local.handlers import LincHandler, LutHandler
 from ngtools.local.termcolors import bformat
+from ngtools.optionals import try_from_import
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
 from ngtools.utils import NG_URLS, find_available_port
+
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools._nglite as ng
+
+ng_bind_address, ng_stop_server = try_from_import(
+    "neuroglancer.server", ["set_server_bind_address", "stop"],
+    fallback="ngtools._nglite.server",
+)
 
 # unix-specific imports
 try:

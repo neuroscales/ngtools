@@ -10,7 +10,7 @@ from urllib.parse import quote
 try:
     import neuroglancer as ng
 except ImportError:
-    import ngtools.nglite as ng
+    import ngtools._nglite as ng
 
 LOG = logging.getLogger(__name__)
 

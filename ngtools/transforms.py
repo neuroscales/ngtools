@@ -106,10 +106,10 @@ from ngtools.optionals import try_from_import
 try:
     import neuroglancer as ng
 except ImportError:
-    import ngtools.nglite as ng
+    import ngtools._nglite as ng
 afni, fsl, itk, lta = try_from_import(
     'nitransforms.io', ['afni', 'fsl', 'itk', 'lta'],
-    fallback="ngtools.ntlite.io",
+    fallback="ngtools._ntlite.io",
 )
 
 LOG = logging.getLogger(__name__)

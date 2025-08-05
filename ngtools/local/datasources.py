@@ -6,7 +6,6 @@ from typing import IO
 from xml.etree import ElementTree as etree
 
 # externals
-import neuroglancer as ng
 import nibabel as nib
 import numpy as np
 import tifffile
@@ -21,6 +20,12 @@ from ngtools.datasources import (
     datasource,
 )
 from ngtools.opener import open, parse_protocols, stringify_path
+
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools._nglite as ng
 
 
 def _babel_load(

@@ -16,8 +16,8 @@ try:
     import neuroglancer as ng
     import neuroglancer.json_wrappers as ngj
 except ImportError:
-    import ngtools.nglite as ng
-    import ngtools.nglite.json_wrappers as ngj
+    import ngtools._nglite as ng
+    import ngtools._nglite.json_wrappers as ngj
 
 T = TypeVar('T')
 P = ParamSpec('P')

@@ -37,8 +37,8 @@ try:
     import neuroglancer as ng
     from neuroglancer.viewer_state import wrapped_property
 except ImportError:
-    import ngtools.nglite as ng
-    from ngtools.nglite.viewer_state import wrapped_property
+    import ngtools._nglite as ng
+    from ngtools._nglite.viewer_state import wrapped_property
 
 # monkey-patch Layer state to expose channelDimensions
 if not hasattr(ng.Layer, "channelDimensions"):
