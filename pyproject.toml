@@ -17,7 +17,6 @@ requires-python = ">=3.10"
 dependencies = [
     "neuroglancer",
     "numpy >= 1.20",               # // np.typing
-    "dask",                        # Remote arrays
     "fsspec[full] >= 2021.0.0",    # // first stable release
     "cryptography >= 36.0.2",      # // from boto3, see issue #32
     "universal_pathlib",           # UPath
