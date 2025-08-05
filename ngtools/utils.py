@@ -6,6 +6,7 @@ import socket
 import sys
 from urllib.parse import quote
 
+# optionals
 try:
     import neuroglancer as ng
 except ImportError:
