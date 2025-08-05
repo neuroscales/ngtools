@@ -5,7 +5,7 @@ __all__ = ["__version__"]
 
 # import to trigger fsspec registration
 try:
-    from ngtools import dandifs as _
+    from . import dandifs as _
 except ImportError:
     pass
 
@@ -18,7 +18,7 @@ from functools import wraps
 try:
     from neuroglancer import StackLayout as _StackLayout
 except ImportError:
-    from ngtools._nglite import StackLayout as _StackLayout
+    from ._nglite import StackLayout as _StackLayout
 
 _old_stack_to_json = _StackLayout.to_json
 
