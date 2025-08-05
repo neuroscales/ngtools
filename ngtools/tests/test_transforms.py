@@ -1,7 +1,8 @@
 """Tests for the `transforms` module."""
-import neuroglancer as ng
-
 from ngtools import transforms as T
+from ngtools.optionals import try_import_as
+
+ng = try_import_as('neuroglancer', 'ngtools.nglite')
 
 
 def test_convert_transform() -> None:
