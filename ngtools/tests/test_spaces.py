@@ -1,7 +1,8 @@
 """Tests for the `spaces` module."""
-import neuroglancer as ng
-
 from ngtools import spaces as S
+from ngtools.optionals import try_import_as
+
+ng = try_import_as('neuroglancer', 'ngtools.nglite')
 
 
 def test_get_neuronames() -> None:

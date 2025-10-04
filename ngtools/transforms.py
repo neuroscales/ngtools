@@ -93,25 +93,39 @@ from tempfile import TemporaryDirectory
 from typing import IO
 
 # externals
-import neuroglancer as ng
 import numpy as np
-from nitransforms.io import afni, fsl, itk, lta
 
 # internals
 import ngtools.spaces as S
 import ngtools.units as U
 from ngtools._lta.lta import LinearTransformArray
 from ngtools.opener import open, parse_protocols, stringify_path
+from ngtools.optionals import try_from_import
+
+# optionals
+try:
+    import neuroglancer as ng
+except ImportError:
+    import ngtools._nglite as ng
+afni, fsl, itk, lta = try_from_import(
+    'nitransforms.io', ['afni', 'fsl', 'itk', 'lta'],
+    fallback="ngtools._ntlite.io",
+)
 
 LOG = logging.getLogger(__name__)
 
-AFFINE_FORMATMAP = {
-    'afni': afni.AFNILinearTransform,
-    'fsl': fsl.FSLLinearTransform,
-    'itk': itk.ITKLinearTransform,
-    'lta': getattr(lta, 'LinearTransformArray',
-                   getattr(lta, 'FSLinearTransform')),
-}
+AFFINE_FORMATMAP = {}
+if afni:
+    AFFINE_FORMATMAP['afni'] = afni.AFNILinearTransform
+if afni:
+    AFFINE_FORMATMAP['fsl'] = fsl.FSLLinearTransform
+if afni:
+    AFFINE_FORMATMAP['itk'] = itk.ITKLinearTransform
+if afni:
+    if hasattr(lta, 'LinearTransformArray'):
+        AFFINE_FORMATMAP['lta'] = lta.LinearTransformArray
+    else:
+        AFFINE_FORMATMAP['lta'] = lta.FSLinearTransform
 
 
 def matrix_to_quaternion(mat: np.ndarray) -> np.ndarray:
@@ -300,7 +314,7 @@ def load_affine(
             LOG.debug(e)
             raise e
 
-    if format:
+    if format in AFFINE_FORMATMAP:
         try:
             out = _read(AFFINE_FORMATMAP[format])
             LOG.debug(f'Succesfully read format "{format}".')

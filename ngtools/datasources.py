@@ -19,12 +19,8 @@ from types import EllipsisType
 from typing import Callable, Iterator
 
 # externals
-import neuroglancer as ng
 import nibabel as nib
 import numpy as np
-import zarr
-import zarr.storage
-from cloudvolume import CloudVolume
 from nibabel.spatialimages import HeaderDataError
 from numpy.typing import ArrayLike
 from upath import UPath
@@ -39,7 +35,13 @@ from ngtools.opener import (
     parse_protocols,
     read_json,
 )
+from ngtools.optionals import try_from_import, try_import, try_import_as
 from ngtools.utils import Wraps
+
+# optionals
+ng = try_import_as('neuroglancer', fallback='ngtools._nglite')
+zarr = try_import('zarr.storage')
+CloudVolume = try_from_import('cloudvolume', 'CloudVolume')
 
 LOG = logging.getLogger(__name__)
 
@@ -1643,6 +1645,8 @@ class ZarrDataSource(VolumeDataSource, metaclass=_ZarrDataSourceFactory):
 
     def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
         """Return an array-like object pointing to a pyramid level."""
+        if zarr is None:
+            raise ImportError("zarr must be available to access zarr data")
         tic = time.time()
         url = parse_protocols(self.url).url
         fs = filesystem(url)
@@ -1796,6 +1800,8 @@ class N5DataSource(VolumeDataSource):
         url = parse_protocols(self.url).url
         fs = filesystem(url)
 
+        if zarr is None:
+            raise ImportError("zarr v2 must be available to access N5 data")
         try:
             from zarr.n5 import N5FSStore
         except (ImportError, ModuleNotFoundError):
@@ -1993,5 +1999,9 @@ class PrecomputedVolumeDataSource(VolumeDataSource, PrecomputedDataSource):
         return PrecomputedVolumeInfo(self.url)
 
     def _get_dataobj(self, level: int = 0, mode: str = "r") -> ArrayLike:
+        if CloudVolume is None:
+            raise ImportError(
+                "cloudvolume must be available to access precomputed data"
+            )
         url = parse_protocols(self.url).url
         return CloudVolume(url, mip=level)

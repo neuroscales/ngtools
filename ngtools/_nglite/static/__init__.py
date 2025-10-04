@@ -1,0 +1,102 @@
+# @license
+# Copyright 2016 Google Inc.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import importlib.resources
+import os
+import posixpath
+import re
+
+mime_type_map = {
+    ".css": "text/css",
+    ".js": "application/javascript",
+    ".html": "text/html",
+    ".map": "application/json",
+    ".wasm": "application/wasm",
+}
+
+
+def guess_mime_type_from_path(path):
+    return mime_type_map.get(posixpath.splitext(path)[1], "application/octet-stream")
+
+
+class StaticContentSource:
+    def get(self, name, query):
+        if name == "":
+            name = "index.html"
+        return self.get_content(name), guess_mime_type_from_path(name)
+
+    def get_content(self, name):
+        raise NotImplementedError
+
+
+class ImportlibResourcesContentSource(StaticContentSource):
+    def get_content(self, name):
+        if not re.match(r"^[a-z0-9][a-zA-Z0-9_\-\.]*\.(?:js|map|css|wasm|html)$", name):
+            raise ValueError("Invalid static resource name: %r" % name)
+        path = importlib.resources.files(__name__).joinpath("client", name)
+        if path.is_file():
+            return path.read_bytes()
+        raise ValueError(
+            'Static resources not built.  Run: "npm run build-python" or use an alternative static content source.'
+        )
+
+
+PkgResourcesContentSource = ImportlibResourcesContentSource
+
+
+class HttpSource(StaticContentSource):
+    def __init__(self, url):
+        self.url = url
+
+    def get(self, name, query):
+        import requests
+
+        print("http", repr(name), repr(query))
+
+        full_url = posixpath.join(self.url, name)
+        r = requests.get(full_url + query)
+        if r.status_code >= 200 and r.status_code < 300:
+            return r.content, (
+                r.headers.get("content-type") or guess_mime_type_from_path(name)
+            )
+        raise ValueError(f"Failed to retrieve {full_url!r}: {r.reason}")
+
+
+class FileSource(StaticContentSource):
+    def __init__(self, path, file_open=None):
+        self.file_path = path
+        self.file_open = file_open or open
+
+    def get_content(self, name):
+        full_path = os.path.join(self.file_path, name)
+        try:
+            with self.file_open(full_path, "rb") as f:
+                return f.read()
+        except Exception as e:
+            raise ValueError(f"Failed to read local path {full_path!r}: {e}")
+
+
+def get_default_static_content_source():
+    return ImportlibResourcesContentSource()
+
+
+def get_static_content_source(source=None, url=None, path=None, file_open=None):
+    if source is not None:
+        return source
+    elif url is not None:
+        return HttpSource(url)
+    elif path is not None:
+        return FileSource(path=path, file_open=file_open)
+    else:
+        return get_default_static_content_source()

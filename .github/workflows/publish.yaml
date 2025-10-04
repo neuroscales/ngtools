@@ -1,4 +1,4 @@
-name: Publish on PyPI
+name: Publish ngtools on PyPI
 
 on:
   workflow_dispatch:

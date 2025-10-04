@@ -4,14 +4,21 @@
 __all__ = ["__version__"]
 
 # import to trigger fsspec registration
-from . import dandifs  # noqa: F401
+try:
+    from . import dandifs as _
+except ImportError:
+    pass
 
 # version
 from ._version import __version__  # type: ignore
 
 # monkey patch neuroglancer
-from neuroglancer import StackLayout as _StackLayout
 from functools import wraps
+
+try:
+    from neuroglancer import StackLayout as _StackLayout
+except ImportError:
+    from ._nglite import StackLayout as _StackLayout
 
 _old_stack_to_json = _StackLayout.to_json
 

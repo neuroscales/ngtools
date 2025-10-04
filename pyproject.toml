@@ -4,9 +4,8 @@ authors = [{name = "Yael Balbastre", email = "y.balbastre@ucl.ac.uk"}]
 maintainers = [{name = "Yael Balbastre", email = "y.balbastre@ucl.ac.uk"}]
 description = "Build and manipulate Neuroglancer scenes"
 readme = "README.md"
-license = {file = "LICENSE"}
+license-files = ["LICENSE"]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Intended Audience :: Science/Research",
@@ -17,7 +16,6 @@ requires-python = ">=3.10"
 dependencies = [
     "neuroglancer",
     "numpy >= 1.20",               # // np.typing
-    "dask",                        # Remote arrays
     "fsspec[full] >= 2021.0.0",    # // first stable release
     "cryptography >= 36.0.2",      # // from boto3, see issue #32
     "universal_pathlib",           # UPath
@@ -32,9 +30,25 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.optional-dependencies]
+nglite = [  # neuroglancer
+    "atomicwrites>=1.4.1",
+    "google-apitools>=0.5.32",
+    "google-auth>=2.38.0",
+    "numpy>=1.11.0",
+    "pillow>=3.2.0",
+    "requests>=2.32.3",
+]
+ntlite = [  # nitransforms
+    "numpy >= 2.1",
+    "scipy >= 1.8",
+    "nibabel >= 5.2",
+    "h5py >= 3.11",
+]
+
 [project.urls]
-Homepage = "https://github.com/balbasty/ngtools"
-Issues = "https://github.com/balbasty/ngtools/issues"
+Homepage = "https://github.com/neuroscales/ngtools"
+Issues = "https://github.com/neuroscales/ngtools/issues"
 
 [project.scripts]
 nglocal = "ngtools.local.cli:main"
@@ -43,9 +57,9 @@ neuroglancer = "ngtools.local.cli:main"
 
 [build-system]
 requires = [
-  "setuptools >= 61.0",
-  "wheel",
-  "versioningit >= 1.0",
+    "setuptools >= 61.0",
+    "wheel",
+    "versioningit >= 1.0",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -67,10 +81,10 @@ file = "ngtools/_version.py"
 
 [tool.pytest.ini_options]
 pythonpath = [
-  "."
+    "."
 ]
 testpaths = [
-  "ngtools/tests"
+    "ngtools/tests"
 ]
 
 [tool.mypy]
@@ -78,27 +92,27 @@ ignore_missing_imports = true
 
 [tool.ruff]
 exclude = [
-  ".bzr",
-  ".direnv",
-  ".eggs",
-  ".git",
-  ".git-rewrite",
-  ".hg",
-  ".mypy_cache",
-  ".nox",
-  ".pants.d",
-  ".pytype",
-  ".ruff_cache",
-  ".svn",
-  ".tox",
-  ".venv",
-  "__pypackages__",
-  "_build",
-  "buck-out",
-  "build",
-  "dist",
-  "node_modules",
-  "venv"
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv"
 ]
 line-length = 88
 indent-width = 4
@@ -108,12 +122,12 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["ANN", "D", "E", "F", "I"]
 ignore = [
-  "ANN002",  # args should not be annotated
-  "ANN003",  # kwargs should not be annotated
-  "ANN101",  # self should not be annotated.
-  "ANN102",  # cls should not be annotated.
-  "D105",    # Missing docstring in magic method
-  "D205"     # 1 blank line required between summary line and description -> triggered in __init__ docstrings
+    "ANN002",  # args should not be annotated
+    "ANN003",  # kwargs should not be annotated
+    "ANN101",  # self should not be annotated.
+    "ANN102",  # cls should not be annotated.
+    "D105",    # Missing docstring in magic method
+    "D205"     # 1 blank line required between summary line and description -> triggered in __init__ docstrings
 ]
 fixable = ["ALL"]
 unfixable = []
