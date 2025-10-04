@@ -334,9 +334,14 @@ async def async_exists(uri: URILike, **opt) -> bool:
 
 def read_json(fileobj: FileLike, *args, **kwargs) -> dict:
     """Read local or remote JSON file."""
+    if hasattr(fileobj, "open"):
+        with fileobj.open("rb") as f:
+            return read_json(f, *args, **kwargs)
+    if not hasattr(fileobj, "read"):
+        with open(fileobj, "rb") as f:
+            return read_json(f, *args, **kwargs)
     tic = time.time()
-    with open(fileobj, "rb") as f:
-        data = json.load(f, *args, **kwargs)
+    data = json.load(fileobj, *args, **kwargs)
     toc = time.time()
     LOG.debug(f"read_json({fileobj}): {toc-tic} s")
     return data
@@ -344,9 +349,14 @@ def read_json(fileobj: FileLike, *args, **kwargs) -> dict:
 
 def write_json(obj: dict, fileobj: FileLike, *args, **kwargs) -> None:
     """Write local or remote JSON file."""
+    if hasattr(fileobj, "open"):
+        with fileobj.open("w") as f:
+            return write_json(f, *args, **kwargs)
+    if not hasattr(fileobj, "write"):
+        with open(fileobj, "w") as f:
+            return write_json(f, *args, **kwargs)
     tic = time.time()
-    with open(fileobj, "w") as f:
-        json.dump(obj, f, *args, **kwargs)
+    json.dump(obj, fileobj, *args, **kwargs)
     toc = time.time()
     LOG.debug(f"write_json(..., {fileobj}): {toc-tic} s")
     return
@@ -544,7 +554,7 @@ class open:
 
     def _close(self) -> None:
         # close all the file-like objects that we've created
-        for fileobj in reversed(self.fileobjs):
+        for fileobj in reversed(getattr(self, "fileobjs", [])):
             fileobj.close()
         self.fileobjs = []
         self._is_open = False
