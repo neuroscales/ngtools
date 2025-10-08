@@ -22,7 +22,7 @@ from neuroglancer.server import stop as ng_stop_server
 from ngtools.local.console import ActionHelpFormatter, Console
 from ngtools.local.fileserver import LocalFileServer, StaticFileHandler
 from ngtools.local.handlers import LincHandler, LutHandler
-from ngtools.local.termcolors import bformat
+from ngtools.local.termcolors import SUPPORTS_COLOR, bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
 from ngtools.utils import NG_URLS, find_available_port
@@ -127,6 +127,14 @@ class OSMixin:
         long = kwargs.pop("long", False)
         hidden = kwargs.pop("hidden", False)
 
+        if SUPPORTS_COLOR:
+            bold = bformat.bold
+            magenta = bformat.fg.magenta
+            blue = bformat.fg.blue
+            green = bformat.fg.green
+        else:
+            bold = magenta = blue = green = (lambda x: x)
+
         if long:
             files = os.scandir(os.path.expanduser(path))
             files = sorted(files, key=lambda x: x.name)
@@ -156,12 +164,12 @@ class OSMixin:
                 else:
                     mystat["times"].append(date.strftime("%H:%M"))
                 if entry.is_symlink():
-                    fname = bformat.bold(bformat.fg.magenta(entry.name))
+                    fname = bold(magenta(entry.name))
                     fname += " -> " + os.readlink(entry.path)
                 elif entry.is_dir():
-                    fname = bformat.bold(bformat.fg.blue(entry.name))
+                    fname = bold(blue(entry.name))
                 elif "x" in mystat["perms"][-1]:
-                    fname = bformat.bold(bformat.fg.green(entry.name))
+                    fname = bold(green(entry.name))
                 else:
                     fname = entry.name
                 mystat["names"].append(fname)
@@ -756,12 +764,15 @@ class LocalNeuroglancer(OSMixin):
 
 _clihelp = type('_clihelp', (object,), {})
 
-b = bformat.bold
-u = bformat.underline
-i = bformat.italic
-R = bformat.fg.red
-G = bformat.fg.green
-B = bformat.fg.blue
+if SUPPORTS_COLOR:
+    b = bformat.bold
+    u = bformat.underline
+    i = bformat.italic
+    R = bformat.fg.red
+    G = bformat.fg.green
+    B = bformat.fg.blue
+else:
+    b = u = i = R = G = B = (lambda x: x)
 
 _clihelp.header_attributes = textwrap.dedent(
     f"{b('Arguments')}\n{b('----------')}\n"

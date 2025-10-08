@@ -20,7 +20,7 @@ from gettext import gettext  # to fix usage string
 
 # internals
 from ngtools.local.iostream import StandardIO
-from ngtools.local.termcolors import bformat, iformat
+from ngtools.local.termcolors import SUPPORTS_COLOR, bformat, iformat
 
 LOG = logging.getLogger(__name__)
 
@@ -185,13 +185,17 @@ class Console(argparse.ArgumentParser):
         """Wait for next user input."""
         self.enter_console()
 
+        if SUPPORTS_COLOR:
+            bold = bformat.bold
+            green = iformat.fg.green
+        else:
+            bold = green = (lambda x: x)
+
         self.print(
-            f'\nType {bformat.bold("help")} to list available '
-            f'commands, or {bformat.bold("help <command>")} '
-            f'for specific help.\n'
-            f'Type {bformat.bold("Ctrl+C")} to interrupt the '
-            f'current command and {bformat.bold("Ctrl+D")} to '
-            f'exit the app.'
+            f'\nType {bold("help")} to list available commands, or '
+            f'{bold("help <command>")} for specific help.\n'
+            f'Type {bold("Ctrl+C")} to interrupt the current command '
+            f'and {bold("Ctrl+D")} to exit the app.'
         )
 
         def are_you_sure() -> bool:
@@ -212,7 +216,7 @@ class Console(argparse.ArgumentParser):
             while True:
                 try:
                     # Query input
-                    args = self.input(iformat.fg.green(f'[{count}] '))
+                    args = self.input(green(f'[{count}] '))
                     args = args.strip()
                     if not args:
                         continue
