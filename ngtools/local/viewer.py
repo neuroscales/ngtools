@@ -15,7 +15,6 @@ from typing import Generator
 # externals
 import neuroglancer as ng
 import numpy as np
-from neuroglancer.server import global_server
 from neuroglancer.server import set_server_bind_address as ng_bind_address
 from neuroglancer.server import stop as ng_stop_server
 
@@ -336,7 +335,7 @@ class LocalNeuroglancer(OSMixin):
     def get_server_url(self, regular: bool = False) -> str:
         """URL of the neuroglancer server."""
         key = "regular_server_url" if regular else "server_url"
-        url = getattr(global_server, key)
+        url = getattr(ng.server.global_server, key)
         return url.rstrip("/") + "/"
 
     def get_viewer_url(self, regular: bool = False) -> str:
