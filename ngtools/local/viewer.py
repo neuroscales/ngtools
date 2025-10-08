@@ -340,7 +340,8 @@ class LocalNeuroglancer(OSMixin):
 
     def get_viewer_url(self, regular: bool = False) -> str:
         """URL of the viewer."""
-        return f"{self.get_server_url(regular)}/v/{self.viewer.token}/"
+        server_url = self.get_server_url(regular).rstrip("/")
+        return f"{server_url}/v/{self.viewer.token}/"
 
     def get_fileserver_url(self, regular: bool = True) -> str:
         """URL of the neuroglancer server."""
