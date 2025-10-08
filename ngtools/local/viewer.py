@@ -25,7 +25,7 @@ from ngtools.local.handlers import LincHandler, LutHandler
 from ngtools.local.termcolors import SUPPORTS_COLOR, bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
-from ngtools.utils import NG_URLS, find_available_port
+from ngtools.utils import _IS_GOOGLE_COLAB, NG_URLS, find_available_port
 
 # unix-specific imports
 try:
@@ -277,7 +277,8 @@ class LocalNeuroglancer(OSMixin):
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
-        ip = self.get_viewer_url().split("://")[1].split(":")[0]
+        if not _IS_GOOGLE_COLAB:
+            ip = self.get_viewer_url().split("://")[1].split(":")[0]
 
         # Add specific handlers
         if fileserver is not False:
