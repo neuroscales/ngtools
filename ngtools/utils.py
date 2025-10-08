@@ -194,11 +194,11 @@ def get_server_url(bind_address: str, port: int) -> str:
     """Get server URL, which works even if we are in a colab notebook."""
     # Copied from neuroglancer
     if _IS_GOOGLE_COLAB:
-        return _get_colab_server_url(port)
-    return _get_regular_server_url(bind_address, port)
+        return get_colab_server_url(port)
+    return get_regular_server_url(bind_address, port)
 
 
-def _get_regular_server_url(bind_address: str, port: int) -> str:
+def get_regular_server_url(bind_address: str, port: int) -> str:
     if bind_address == "0.0.0.0" or bind_address == "::":
         hostname = socket.getfqdn()
     else:
@@ -206,7 +206,7 @@ def _get_regular_server_url(bind_address: str, port: int) -> str:
     return f"http://{hostname}:{port}"
 
 
-def _get_colab_server_url(port: int) -> str:
+def get_colab_server_url(port: int) -> str:
     from google.colab.output import eval_js
 
     return eval_js(f"google.colab.kernel.proxyPort({port})")

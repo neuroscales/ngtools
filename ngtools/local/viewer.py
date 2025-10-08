@@ -15,6 +15,7 @@ from typing import Generator
 # externals
 import neuroglancer as ng
 import numpy as np
+from neuroglancer.server import global_server
 from neuroglancer.server import set_server_bind_address as ng_bind_address
 from neuroglancer.server import stop as ng_stop_server
 
@@ -332,17 +333,19 @@ class LocalNeuroglancer(OSMixin):
         """
         return self._scene()
 
-    def get_server_url(self) -> str:
+    def get_server_url(self, regular: bool = False) -> str:
         """URL of the neuroglancer server."""
-        return ng.server.get_server_url().rstrip("/") + "/"
+        key = "regular_server_url" if regular else "server_url"
+        url = getattr(global_server, key)
+        return url.rstrip("/") + "/"
 
-    def get_viewer_url(self) -> str:
+    def get_viewer_url(self, regular: bool = False) -> str:
         """URL of the viewer."""
-        return self.viewer.get_viewer_url().rstrip("/") + "/"
+        return f"{self.get_server_url(regular)}/v/{self.viewer.token}/"
 
-    def get_fileserver_url(self) -> str:
+    def get_fileserver_url(self, regular: bool = True) -> str:
         """URL of the neuroglancer server."""
-        return self.fileserver.get_url().rstrip("/") + "/"
+        return self.fileserver.get_url(regular).rstrip("/") + "/"
 
     # ==================================================================
     #

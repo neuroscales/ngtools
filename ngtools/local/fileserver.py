@@ -24,7 +24,9 @@ from wsgiref.headers import Headers
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 # internals
-from ngtools.utils import find_available_port, get_server_url
+from ngtools.utils import (
+    find_available_port, get_regular_server_url, get_server_url
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -59,6 +61,7 @@ class LocalFileServer:
         self.port = port
         self.ip = ip
         self.url = get_server_url(ip, port)
+        self.regular_url = get_regular_server_url(ip, port)
 
         if isinstance(app, (list, tuple)):
             app = Application(app)
@@ -79,9 +82,9 @@ class LocalFileServer:
     def app(self, value: Callable) -> Callable:
         return self.server.set_app(value)
 
-    def get_url(self) -> str | None:
+    def get_url(self, regular: bool = True) -> str | None:
         """URL of the fileserver."""
-        return self.url
+        return self.regular_url if regular else self.url
 
     def start(self) -> None:
         """Start server and server forever."""
