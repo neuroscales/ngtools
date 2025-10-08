@@ -268,7 +268,7 @@ class ViewerState(Wraps(ng.ViewerState)):
         })
         return value
 
-    __default__relativeDisplayScales__ = __default_relative_display_scales__
+    __default_relativeDisplayScales__ = __default_relative_display_scales__
     __set_relativeDisplayScales__ = __set_relative_display_scales__
 
     # --- display_dimensions -------------------------------------------
