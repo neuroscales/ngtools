@@ -9,6 +9,13 @@ from urllib.parse import quote
 # externals
 import neuroglancer as ng
 
+try:
+    import google.colab
+    _IS_GOOGLE_COLAB = True
+except ImportError:
+    _IS_GOOGLE_COLAB = False
+
+
 LOG = logging.getLogger(__name__)
 
 
@@ -181,3 +188,25 @@ def find_available_port(port: int = 0, ip: str = "") -> tuple[int, str]:
         print(f'Port {port0} already in use. Use port {port} instead.',
               file=sys.stderr)
     return port, ip
+
+
+def get_server_url(bind_address: str, port: int) -> str:
+    """Get server URL, which works even if we are in a colab notebook."""
+    # Copied from neuroglancer
+    if _IS_GOOGLE_COLAB:
+        return _get_colab_server_url(port)
+    return _get_regular_server_url(bind_address, port)
+
+
+def _get_regular_server_url(bind_address: str, port: int) -> str:
+    if bind_address == "0.0.0.0" or bind_address == "::":
+        hostname = socket.getfqdn()
+    else:
+        hostname = bind_address
+    return f"http://{hostname}:{port}"
+
+
+def _get_colab_server_url(port: int) -> str:
+    from google.colab.output import eval_js
+
+    return eval_js(f"google.colab.kernel.proxyPort({port})")
