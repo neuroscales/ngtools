@@ -1941,21 +1941,44 @@ class PrecomputedVolumeInfo(PrecomputedInfo):
 
 
 class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
-    def __call__(cls, url: str | dict) -> "PrecomputedDataSource":
-        info = cls._load_dict(url)
-        return {
+    def __call__(cls, url: str | dict | LayerDataSource) -> "PrecomputedDataSource":
+        if isinstance(url, (dict, str)):
+            info = cls._load_dict(url)
+        else:
+            url = url.url
+            info = cls._load_dict(url)
+        mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
             "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource,
-        }[info["@type"]](info)
+        }
+        subclass = mapping[info["@type"]]
+        return super(_PrecomputedDataSourceFactory, subclass).__call__(url=url)
 
 
 @datasource("precomputed")
 class PrecomputedDataSource(LayerDataSource,
                             metaclass=_PrecomputedDataSourceFactory):
     """Base wrapper for precomputed data sources."""
+    @classmethod
+    def _load_dict(cls, url: str | dict) -> dict:
+        if not isinstance(url, dict):
+            url = url.rstrip('/')
+            if url.startswith("precomputed://"):
+                url = url[14:]
+            if not url.endswith("/info"):
+                url += "/info"
+            with open(url, "rb") as f:
+                info = json.load(f)
+        else:
+            info = url
+        return info
+
+    def __init__(self, *args, **kwargs) -> None:
+        self._info = self._load_dict(kwargs["url"])
+        super().__init__(*args, **kwargs)
 
     ...
 
@@ -1983,6 +2006,26 @@ class PrecomputedAnnotationDataSource(
 ):
     """Base wrapper for precomputed annotations sources."""
 
+    def __init__(self, *args, **kwargs) -> None:
+        # self.url = kwargs["url"]
+        self._info = self._load_dict(kwargs["url"])
+        super().__init__(*args, **kwargs)
+        self.transform = self.transform
+
+    @property
+    def _transform(self) -> list[int]:
+        dimensions = ng.CoordinateSpace(
+            names=["x", "y", "z"],
+            units="mm",
+            scales=[1, 1, 1],
+        )
+
+        rank = len(dimensions.names)
+        return ng.CoordinateSpaceTransform(
+            matrix=np.eye(rank+1)[:-1],
+            input_dimensions=dimensions,
+            output_dimensions=dimensions
+        )
     ...
 
 

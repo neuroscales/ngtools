@@ -14,6 +14,7 @@ from ngtools.datasources import (
     MeshDataSource,
     SkeletonDataSource,
     VolumeDataSource,
+    AnnotationDataSource
 )
 from ngtools.local.tracts import TractDataSource, TractSkeleton
 from ngtools.opener import parse_protocols
@@ -206,6 +207,9 @@ class LayerFactory(type):
             elif isinstance(source, MeshDataSource):
                 LOG.debug("LayerFactory - guess MeshLayer")
                 GuessedLayer = MeshLayer
+            elif isinstance(source, AnnotationDataSource):
+                LOG.debug("LayerFactory - guess AnnotationLayer")
+                GuessedLayer = AnnotationLayer
             if GuessedLayer:
                 # kwargs["source"] = sources
                 return GuessedLayer(*args, **kwargs)
