@@ -1941,12 +1941,21 @@ class PrecomputedVolumeInfo(PrecomputedInfo):
 
 
 class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
-    def __call__(cls, url: str | dict | LayerDataSource) -> "PrecomputedDataSource":
-        if isinstance(url, (dict, str)):
-            info = cls._load_dict(url)
-        else:
-            url = url.url
-            info = cls._load_dict(url)
+    def __call__(self, arg, *args, **kwargs) -> "PrecomputedDataSource":
+        if kwargs.get("url", ""):
+            url = kwargs["url"]
+            if isinstance(url, (str, PathLike)):
+                url = kwargs["url"] = str(url)
+        elif isinstance(args, (str, PathLike)):
+            url = arg = str(arg)
+        elif hasattr(arg, "url"):
+            url = arg.url
+        elif isinstance(arg, dict) and "url" in arg:
+            url = arg["url"]
+        elif not isinstance(arg, self._LocalSource):
+            raise ValueError("Missing data source url")
+        kwargs["url"] = url
+        info = self._load_dict(url)
         mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
@@ -1955,7 +1964,7 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource,
         }
         subclass = mapping[info["@type"]]
-        return super(_PrecomputedDataSourceFactory, subclass).__call__(url=url)
+        return super(_PrecomputedDataSourceFactory, subclass).__call__(*args, **kwargs)
 
 
 @datasource("precomputed")
@@ -1977,7 +1986,7 @@ class PrecomputedDataSource(LayerDataSource,
         return info
 
     def __init__(self, *args, **kwargs) -> None:
-        self._info = self._load_dict(kwargs["url"])
+        self._info = self._load_dict(kwargs.get("url", ""))
         super().__init__(*args, **kwargs)
 
     ...
