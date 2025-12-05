@@ -167,7 +167,7 @@ class LayerFactory(type):
                 "mesh": MeshLayer,
                 "surface": MeshLayer,
                 "skeleton": SkeletonLayer,
-                "tracts": TractLayer,
+                "tracts": AnnotationTractLayer,
                 "annotation": AnnotationLayer,
             }.get(layer_type, None)
             if GuessedLayer:
@@ -722,6 +722,13 @@ class AnnotationLayer(_SourceMixin, Wraps(ng.AnnotationLayer), Layer):
     """  # noqa: E501
 
     ...
+
+
+class AnnotationTractLayer(AnnotationLayer):
+    def __init__(self, *args, **kwargs) -> None:
+        if 'shader' not in kwargs:
+            kwargs['shader'] = shaders.annotation.default
+        super().__init__(*args, **kwargs)
 
 
 class LocalAnnotationLayer(Wraps(ng.LocalAnnotationLayer), AnnotationLayer):

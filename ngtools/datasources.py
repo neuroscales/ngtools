@@ -1955,13 +1955,14 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
         elif not isinstance(arg, self._LocalSource):
             raise ValueError("Missing data source url")
         kwargs["url"] = url
+        layer = parse_protocols(url).layer
         info = self._load_dict(url)
         mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource,
+            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != "tracts" else PrecomputedTractsDataSource,
         }
         subclass = mapping[info["@type"]]
         return super(_PrecomputedDataSourceFactory, subclass).__call__(*args, **kwargs)
@@ -1975,8 +1976,7 @@ class PrecomputedDataSource(LayerDataSource,
     def _load_dict(cls, url: str | dict) -> dict:
         if not isinstance(url, dict):
             url = url.rstrip('/')
-            if url.startswith("precomputed://"):
-                url = url[14:]
+            url = parse_protocols(url).url
             if not url.endswith("/info"):
                 url += "/info"
             with open(url, "rb") as f:
@@ -2035,6 +2035,14 @@ class PrecomputedAnnotationDataSource(
             input_dimensions=dimensions,
             output_dimensions=dimensions
         )
+    ...
+
+
+class PrecomputedTractsDataSource(PrecomputedAnnotationDataSource):
+    """Base wrapper for track precomputed annotations sources."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
     ...
 
 
