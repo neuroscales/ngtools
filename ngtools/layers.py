@@ -14,6 +14,7 @@ from ngtools.datasources import (
     MeshDataSource,
     SkeletonDataSource,
     VolumeDataSource,
+    AnnotationDataSource
 )
 from ngtools.local.tracts import TractDataSource, TractSkeleton
 from ngtools.opener import parse_protocols
@@ -166,7 +167,7 @@ class LayerFactory(type):
                 "mesh": MeshLayer,
                 "surface": MeshLayer,
                 "skeleton": SkeletonLayer,
-                "tracts": TractLayer,
+                "tracts": AnnotationTractLayer,
                 "annotation": AnnotationLayer,
             }.get(layer_type, None)
             if GuessedLayer:
@@ -206,6 +207,9 @@ class LayerFactory(type):
             elif isinstance(source, MeshDataSource):
                 LOG.debug("LayerFactory - guess MeshLayer")
                 GuessedLayer = MeshLayer
+            elif isinstance(source, AnnotationDataSource):
+                LOG.debug("LayerFactory - guess AnnotationLayer")
+                GuessedLayer = AnnotationLayer
             if GuessedLayer:
                 # kwargs["source"] = sources
                 return GuessedLayer(*args, **kwargs)
@@ -718,6 +722,13 @@ class AnnotationLayer(_SourceMixin, Wraps(ng.AnnotationLayer), Layer):
     """  # noqa: E501
 
     ...
+
+
+class AnnotationTractLayer(AnnotationLayer):
+    def __init__(self, *args, **kwargs) -> None:
+        if 'shader' not in kwargs:
+            kwargs['shader'] = shaders.annotation.default
+        super().__init__(*args, **kwargs)
 
 
 class LocalAnnotationLayer(Wraps(ng.LocalAnnotationLayer), AnnotationLayer):

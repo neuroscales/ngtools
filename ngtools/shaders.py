@@ -464,6 +464,19 @@ class shaders:
             }
             """).lstrip()
 
+    class annotation:
+        """Shaders for annotations."""
+
+        # Default shader: emit grayscale based on normalized value
+        default = dedent(
+            """
+            void main() {
+            setColor(prop_orientation_color());
+            setLineWidth(0.1);
+            setEndpointMarkerSize(0.0);
+            }
+            """).lstrip()
+
     default = dedent(
         """
         #uicontrol invlerp normalized
