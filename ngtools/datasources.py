@@ -1817,13 +1817,14 @@ class N5DataSource(VolumeDataSource):
 class _PrecomputedInfoFactory(type):
     def __call__(cls, url: str | dict) -> "PrecomputedInfo":
         info = cls._load_dict(url)
-        return {
+        subclass = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeInfo,
             "neuroglancer_multilod_draco": PrecomputedMeshInfo,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshInfo,
             "neuroglancer_skeletons": PrecomputedSkeletonInfo,
             "neuroglancer_annotations_v1": PrecomputedAnnotationInfo,
-        }[info["@type"]](info)
+        }[info["@type"]]
+        return super(_PrecomputedInfoFactory, subclass).__call__(info)
 
 
 class PrecomputedInfo(metaclass=_PrecomputedInfoFactory):
@@ -1835,8 +1836,10 @@ class PrecomputedInfo(metaclass=_PrecomputedInfoFactory):
     @classmethod
     def _load_dict(cls, url: str | dict) -> dict:
         if not isinstance(url, dict):
-            if url.startswith("precomputed://"):
-                url = url[14:]
+            url = url.rstrip('/')
+            url = parse_protocols(url).url
+            if not url.endswith("/info"):
+                url += "/info"
             with open(url, "rb") as f:
                 info = json.load(f)
         else:
@@ -1955,7 +1958,8 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
         elif not isinstance(arg, self._LocalSource):
             raise ValueError("Missing data source url")
         kwargs["url"] = url
-        layer = parse_protocols(url).layer
+        parsed = parse_protocols(url)
+        layer = parsed.layer
         info = self._load_dict(url)
         mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
@@ -1974,16 +1978,7 @@ class PrecomputedDataSource(LayerDataSource,
     """Base wrapper for precomputed data sources."""
     @classmethod
     def _load_dict(cls, url: str | dict) -> dict:
-        if not isinstance(url, dict):
-            url = url.rstrip('/')
-            url = parse_protocols(url).url
-            if not url.endswith("/info"):
-                url += "/info"
-            with open(url, "rb") as f:
-                info = json.load(f)
-        else:
-            info = url
-        return info
+        return PrecomputedInfo(url)._info
 
     def __init__(self, *args, **kwargs) -> None:
         self._info = self._load_dict(kwargs.get("url", ""))
