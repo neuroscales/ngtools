@@ -1957,6 +1957,8 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             url = arg["url"]
         elif not isinstance(arg, self._LocalSource):
             raise ValueError("Missing data source url")
+        if hasattr(arg, "transform"):
+            kwargs["transform"] = arg.transform
         kwargs["url"] = url
         parsed = parse_protocols(url)
         layer = parsed.layer
