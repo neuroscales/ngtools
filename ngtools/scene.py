@@ -1162,7 +1162,7 @@ class Scene(ViewerState):
             if skeleton_shader == "None":
                 layer.skeleton_shader = shaders.skeleton.orientation
 
-            for source in (getattr(layer, "source", [])):
+            for source in getattr(layer, "source", []):
                 source: LayerDataSource
                 source.transform = T.compose(
                     full_trf, source.transform, adapt=adapt
