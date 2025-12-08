@@ -730,7 +730,8 @@ class AnnotationLayer(_SourceMixin, Wraps(ng.AnnotationLayer), Layer):
 class TractAnnotationLayer(AnnotationLayer):
     def __init__(self, *args, **kwargs) -> None:
         if 'shader' not in kwargs:
-            info = PrecomputedInfo(kwargs.get('source', args[0] if args else None))._info
+            info = PrecomputedInfo(kwargs.get(
+                'source', args[0] if args else None))._info
             orientations = {"x": False, "y": False, "z": False}
             for property in info["properties"]:
                 if property["id"][:-1] == "orientation_":
@@ -741,7 +742,7 @@ class TractAnnotationLayer(AnnotationLayer):
                     kwargs['shader'] = shaders.annotation.default
                     super().__init__(*args, **kwargs)
                     return
-            
+
             kwargs['shader'] = shaders.annotation.orientation
         super().__init__(*args, **kwargs)
 
