@@ -485,7 +485,7 @@ class shaders:
             setEndpointMarkerSize(0.0);
             }
             """).lstrip()
-        
+
         # Default shader: emit grayscale based on normalized value
         default = dedent(
             """

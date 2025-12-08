@@ -1944,11 +1944,13 @@ class PrecomputedVolumeInfo(PrecomputedInfo):
 
 
 class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
-    def __call__(cls, arg: _LayerDataSourceFactory._DataSourceLike = None, *args, **kwargs) -> "PrecomputedDataSource":
+    def __call__(
+            cls, arg: _LayerDataSourceFactory._DataSourceLike = None, *args, **kwargs
+    ) -> "PrecomputedDataSource":
         if cls is not PrecomputedDataSource:
             obj = super().__call__(arg, *args, **kwargs)
             return obj
-        
+
         if kwargs.get("url", ""):
             url = kwargs["url"]
             if isinstance(url, (str, PathLike)):
@@ -1971,7 +1973,8 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != "tracts" else PrecomputedTractsDataSource,
+            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != "tracts" else (
+                PrecomputedTractsDataSource),
         }
         subclass = mapping[info["@type"]]
         return super(_PrecomputedDataSourceFactory, subclass).__call__(arg, *args, **kwargs)
@@ -1985,7 +1988,7 @@ class PrecomputedDataSource(LayerDataSource,
     def _load_dict(cls, url: str | dict) -> dict:
         return PrecomputedInfo(url)._info
 
-    def __init__(self, *args, **kwargs) -> None:      
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._info = self._load_dict(self.url)
 
