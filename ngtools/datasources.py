@@ -1944,7 +1944,11 @@ class PrecomputedVolumeInfo(PrecomputedInfo):
 
 
 class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
-    def __call__(self, arg, *args, **kwargs) -> "PrecomputedDataSource":
+    def __call__(cls, arg: _LayerDataSourceFactory._DataSourceLike = None, *args, **kwargs) -> "PrecomputedDataSource":
+        if cls is not PrecomputedDataSource:
+            obj = super().__call__(arg, *args, **kwargs)
+            return obj
+        
         if kwargs.get("url", ""):
             url = kwargs["url"]
             if isinstance(url, (str, PathLike)):
@@ -1955,14 +1959,13 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             url = arg.url
         elif isinstance(arg, dict) and "url" in arg:
             url = arg["url"]
-        elif not isinstance(arg, self._LocalSource):
+        elif not isinstance(arg, cls._LocalSource):
             raise ValueError("Missing data source url")
-        if hasattr(arg, "transform"):
-            kwargs["transform"] = arg.transform
-        kwargs["url"] = url
+        if not arg:
+            kwargs["url"] = url
         parsed = parse_protocols(url)
         layer = parsed.layer
-        info = self._load_dict(url)
+        info = cls._load_dict(url)
         mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
@@ -1971,7 +1974,7 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != "tracts" else PrecomputedTractsDataSource,
         }
         subclass = mapping[info["@type"]]
-        return super(_PrecomputedDataSourceFactory, subclass).__call__(*args, **kwargs)
+        return super(_PrecomputedDataSourceFactory, subclass).__call__(arg, *args, **kwargs)
 
 
 @datasource("precomputed")
@@ -1982,9 +1985,9 @@ class PrecomputedDataSource(LayerDataSource,
     def _load_dict(cls, url: str | dict) -> dict:
         return PrecomputedInfo(url)._info
 
-    def __init__(self, *args, **kwargs) -> None:
-        self._info = self._load_dict(kwargs.get("url", ""))
+    def __init__(self, *args, **kwargs) -> None:      
         super().__init__(*args, **kwargs)
+        self._info = self._load_dict(self.url)
 
     ...
 
@@ -2013,8 +2016,6 @@ class PrecomputedAnnotationDataSource(
     """Base wrapper for precomputed annotations sources."""
 
     def __init__(self, *args, **kwargs) -> None:
-        # self.url = kwargs["url"]
-        self._info = self._load_dict(kwargs["url"])
         super().__init__(*args, **kwargs)
         self.transform = self.transform
 
