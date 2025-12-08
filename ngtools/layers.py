@@ -14,7 +14,8 @@ from ngtools.datasources import (
     MeshDataSource,
     SkeletonDataSource,
     VolumeDataSource,
-    AnnotationDataSource
+    AnnotationDataSource,
+    PrecomputedInfo,
 )
 from ngtools.local.tracts import TractDataSource, TractSkeleton
 from ngtools.opener import parse_protocols
@@ -729,7 +730,19 @@ class AnnotationLayer(_SourceMixin, Wraps(ng.AnnotationLayer), Layer):
 class TractAnnotationLayer(AnnotationLayer):
     def __init__(self, *args, **kwargs) -> None:
         if 'shader' not in kwargs:
-            kwargs['shader'] = shaders.annotation.default
+            info = PrecomputedInfo(kwargs.get('source', args[0] if args else None))._info
+            orientations = {"x": False, "y": False, "z": False}
+            for property in info["properties"]:
+                if property["id"][:-1] == "orientation_":
+                    axis = property["id"][-1]
+                    orientations[axis] = True
+            for axis in ["x", "y", "z"]:
+                if not orientations[axis]:
+                    kwargs['shader'] = shaders.annotation.default
+                    super().__init__(*args, **kwargs)
+                    return
+            
+            kwargs['shader'] = shaders.annotation.orientation
         super().__init__(*args, **kwargs)
 
 
