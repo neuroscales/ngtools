@@ -464,6 +464,39 @@ class shaders:
             }
             """).lstrip()
 
+    class annotation:
+        """Shaders for annotations."""
+
+        orientation = colormaps.orientation + '\n' + dedent(
+            """
+            #uicontrol bool orient_color checkbox(default=true)
+            void main() {
+            vec3 orient = vec3(prop_orientation_x(), prop_orientation_y(), 
+                prop_orientation_z());
+            // <!-- BEGIN ROTATION -->
+            // Order: 00 10 20 01 11 21 02 12 22
+            mat3 mat = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+            // <!-- END ROTATION -->
+            orient = mat * orient;
+            if (orient_color)
+                setColor(colormapOrient(orient));
+            else
+                setColor(defaultColor());
+            setLineWidth(0.1);
+            setEndpointMarkerSize(0.0);
+            }
+            """).lstrip()
+
+        # Default shader: emit grayscale based on normalized value
+        default = dedent(
+            """
+            void main() {
+            setColor(defaultColor());
+            setLineWidth(0.1);
+            setEndpointMarkerSize(0.0);
+            }
+            """).lstrip()
+
     default = dedent(
         """
         #uicontrol invlerp normalized
