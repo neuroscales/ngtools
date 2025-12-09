@@ -302,8 +302,8 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
     def __set_url__(self, value: str) -> str:
         LocalObject = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
         if not isinstance(value, LocalObject):
-            format = parse_protocols(value)[1]
-            if format not in self.PROTOCOLS:
+            format = parse_protocols(value).format
+            if format is not None and format not in self.PROTOCOLS:
                 raise ValueError(
                     "Cannot assign uri with protocol", format, "in "
                     "data source of type:", type(self)
@@ -1973,7 +1973,7 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != 
+            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer !=
                 "tracts" else PrecomputedTractsDataSource,
         }
         subclass = mapping[info["@type"]]
