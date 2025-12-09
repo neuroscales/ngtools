@@ -581,7 +581,17 @@ class Scene(ViewerState):
                     raise ValueError(
                         "Cannot load local files without a fileserver"
                     )
-                short_uri = fileserver + "/local/" + op.abspath(short_uri)
+                if parsed.format == "precomputed" and short_uri.endswith(".trk"):
+                    short_uri = fileserver + "/ann/" + op.abspath(
+                        short_uri
+                    )
+                    if transform is None:
+                        transform = short_uri + "/transform.lta"
+                else:
+                    short_uri = fileserver + "/local/" + op.abspath(short_uri)
+                    if transform is None and parsed.format == "precomputed":
+                        transform = short_uri + "/transform.lta"
+
                 parsed = parsed.with_part(stream="http", url=short_uri)
 
             if fileserver:
