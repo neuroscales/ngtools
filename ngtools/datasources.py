@@ -299,10 +299,7 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             f"`{name}` not implemented for this format ({cls.__name__})."
         )
 
-    # There is a typo (__set__url__ instead of __set_url__), but
-    # fixing it breaks code, so we need to fix the function before
-    # fixng the typo.
-    def __set__url__(self, value: str) -> str:
+    def __set_url__(self, value: str) -> str:
         LocalObject = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
         if not isinstance(value, LocalObject):
             format = parse_protocols(value).format
@@ -1976,7 +1973,7 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != 
+            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer !=
                 "tracts" else PrecomputedTractsDataSource,
         }
         subclass = mapping[info["@type"]]
