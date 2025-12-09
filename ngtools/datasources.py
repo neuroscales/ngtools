@@ -299,7 +299,10 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             f"`{name}` not implemented for this format ({cls.__name__})."
         )
 
-    def __set_url__(self, value: str) -> str:
+    # There is a typo (__set__url__ instead of __set_url__), but
+    # fixing it breaks code, so we need to fix the function before
+    # fixng the typo.
+    def __set__url__(self, value: str) -> str:
         LocalObject = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
         if not isinstance(value, LocalObject):
             format = parse_protocols(value)[1]
