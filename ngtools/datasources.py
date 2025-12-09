@@ -1820,13 +1820,14 @@ class N5DataSource(VolumeDataSource):
 class _PrecomputedInfoFactory(type):
     def __call__(cls, url: str | dict) -> "PrecomputedInfo":
         info = cls._load_dict(url)
-        return {
+        subclass = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeInfo,
             "neuroglancer_multilod_draco": PrecomputedMeshInfo,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshInfo,
             "neuroglancer_skeletons": PrecomputedSkeletonInfo,
             "neuroglancer_annotations_v1": PrecomputedAnnotationInfo,
-        }[info["@type"]](info)
+        }[info["@type"]]
+        return super(_PrecomputedInfoFactory, subclass).__call__(info)
 
 
 class PrecomputedInfo(metaclass=_PrecomputedInfoFactory):
@@ -1838,8 +1839,10 @@ class PrecomputedInfo(metaclass=_PrecomputedInfoFactory):
     @classmethod
     def _load_dict(cls, url: str | dict) -> dict:
         if not isinstance(url, dict):
-            if url.startswith("precomputed://"):
-                url = url[14:]
+            url = url.rstrip('/')
+            url = parse_protocols(url).url
+            if not url.endswith("/info"):
+                url += "/info"
             with open(url, "rb") as f:
                 info = json.load(f)
         else:
@@ -1944,21 +1947,55 @@ class PrecomputedVolumeInfo(PrecomputedInfo):
 
 
 class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
-    def __call__(cls, url: str | dict) -> "PrecomputedDataSource":
+    def __call__(
+            cls, arg: _LayerDataSourceFactory._DataSourceLike = None, *args, **kwargs
+    ) -> "PrecomputedDataSource":
+        if cls is not PrecomputedDataSource:
+            obj = super().__call__(arg, *args, **kwargs)
+            return obj
+
+        if kwargs.get("url", ""):
+            url = kwargs["url"]
+            if isinstance(url, (str, PathLike)):
+                url = kwargs["url"] = str(url)
+        elif isinstance(args, (str, PathLike)):
+            url = arg = str(arg)
+        elif hasattr(arg, "url"):
+            url = arg.url
+        elif isinstance(arg, dict) and "url" in arg:
+            url = arg["url"]
+        elif not isinstance(arg, cls._LocalSource):
+            raise ValueError("Missing data source url")
+        if not arg:
+            kwargs["url"] = url
+        parsed = parse_protocols(url)
+        layer = parsed.layer
         info = cls._load_dict(url)
-        return {
+        mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource,
-        }[info["@type"]](info)
+            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != 
+                "tracts" else PrecomputedTractsDataSource,
+        }
+        subclass = mapping[info["@type"]]
+        return super(_PrecomputedDataSourceFactory, subclass).__call__(
+            arg, *args, **kwargs)
 
 
 @datasource("precomputed")
 class PrecomputedDataSource(LayerDataSource,
                             metaclass=_PrecomputedDataSourceFactory):
     """Base wrapper for precomputed data sources."""
+
+    @classmethod
+    def _load_dict(cls, url: str | dict) -> dict:
+        return PrecomputedInfo(url)._info
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._info = self._load_dict(self.url)
 
     ...
 
@@ -1986,6 +2023,32 @@ class PrecomputedAnnotationDataSource(
 ):
     """Base wrapper for precomputed annotations sources."""
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.transform = self.transform
+
+    @property
+    def _transform(self) -> ng.CoordinateSpaceTransform:
+        dimensions = ng.CoordinateSpace(
+            names=["x", "y", "z"],
+            units="mm",
+            scales=[1, 1, 1],
+        )
+
+        rank = len(dimensions.names)
+        return ng.CoordinateSpaceTransform(
+            matrix=np.eye(rank+1)[:-1],
+            input_dimensions=dimensions,
+            output_dimensions=dimensions
+        )
+    ...
+
+
+class PrecomputedTractsDataSource(PrecomputedAnnotationDataSource):
+    """Base wrapper for track precomputed annotations sources."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
     ...
 
 

@@ -24,9 +24,7 @@ from wsgiref.headers import Headers
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 # internals
-from ngtools.utils import (
-    find_available_port, get_regular_server_url, get_server_url
-)
+from ngtools.utils import find_available_port, get_regular_server_url, get_server_url
 
 LOG = logging.getLogger(__name__)
 
