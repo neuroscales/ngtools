@@ -1973,17 +1973,19 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != "tracts" else (
-                PrecomputedTractsDataSource),
+            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer != 
+                "tracts" else PrecomputedTractsDataSource,
         }
         subclass = mapping[info["@type"]]
-        return super(_PrecomputedDataSourceFactory, subclass).__call__(arg, *args, **kwargs)
+        return super(_PrecomputedDataSourceFactory, subclass).__call__(
+            arg, *args, **kwargs)
 
 
 @datasource("precomputed")
 class PrecomputedDataSource(LayerDataSource,
                             metaclass=_PrecomputedDataSourceFactory):
     """Base wrapper for precomputed data sources."""
+
     @classmethod
     def _load_dict(cls, url: str | dict) -> dict:
         return PrecomputedInfo(url)._info
@@ -2023,7 +2025,7 @@ class PrecomputedAnnotationDataSource(
         self.transform = self.transform
 
     @property
-    def _transform(self) -> list[int]:
+    def _transform(self) -> ng.CoordinateSpaceTransform:
         dimensions = ng.CoordinateSpace(
             names=["x", "y", "z"],
             units="mm",

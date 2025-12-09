@@ -471,7 +471,8 @@ class shaders:
             """
             #uicontrol bool orient_color checkbox(default=true)
             void main() {
-            vec3 orient = vec3(prop_orientation_x(), prop_orientation_y(), prop_orientation_z());
+            vec3 orient = vec3(prop_orientation_x(), prop_orientation_y(), 
+                prop_orientation_z());
             // <!-- BEGIN ROTATION -->
             // Order: 00 10 20 01 11 21 02 12 22
             mat3 mat = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);

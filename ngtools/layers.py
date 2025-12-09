@@ -10,12 +10,12 @@ import numpy as np
 
 # internals
 from ngtools.datasources import (
+    AnnotationDataSource,
     LayerDataSources,
     MeshDataSource,
+    PrecomputedInfo,
     SkeletonDataSource,
     VolumeDataSource,
-    AnnotationDataSource,
-    PrecomputedInfo,
 )
 from ngtools.local.tracts import TractDataSource, TractSkeleton
 from ngtools.opener import parse_protocols
@@ -728,6 +728,8 @@ class AnnotationLayer(_SourceMixin, Wraps(ng.AnnotationLayer), Layer):
 
 
 class TractAnnotationLayer(AnnotationLayer):
+    """Tract annotation layer."""
+
     def __init__(self, *args, **kwargs) -> None:
         if 'shader' not in kwargs:
             info = PrecomputedInfo(kwargs.get(
