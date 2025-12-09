@@ -168,7 +168,7 @@ class LayerFactory(type):
                 "mesh": MeshLayer,
                 "surface": MeshLayer,
                 "skeleton": SkeletonLayer,
-                "tracts": TractLayer,
+                "tracts": TractAnnotationLayer,
                 "tractsv1": TractLayer,
                 "tractsv2": TractAnnotationLayer,
                 "annotation": AnnotationLayer,
