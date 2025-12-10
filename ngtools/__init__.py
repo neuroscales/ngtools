@@ -1,4 +1,4 @@
-"""Miscelaneous tools to build and manipulate Neuroglancer scenes."""
+"""Miscellaneous tools to build and manipulate Neuroglancer scenes."""
 # ruff: noqa
 # flake8: noqa
 __all__ = ["__version__"]

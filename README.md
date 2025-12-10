@@ -10,7 +10,7 @@ pip install ngtools
 
 ## Description
 
-`ngtools` contains a set of user-friendly utilties to accompany
+`ngtools` contains a set of user-friendly utilities to accompany
 [`neuroglancer`](https://github.com/google/neuroglancer) -- an
 in-browser viewer for peta-scale volumetric data. Specifically, it
 implements:
