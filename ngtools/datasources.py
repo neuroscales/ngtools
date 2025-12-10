@@ -53,10 +53,21 @@ class _SizedCache(dict):
         if key in self:
             del self[key]
         super().__setitem__(key, value)
+        self._keys.append(key)
         if self._max_size:
-            keys = list(self.keys())
             while len(self) > self._max_size:
-                del self[keys.pop(0)]
+                del self[self._keys[0]]
+    
+    def __delitem__(self, key: object) -> None:
+        super().__delitem__(key)
+        self._keys.remove(key)
+
+class _SizedRefreshCache(_SizedCache):
+    def __getitem__(self, key: object) -> object:
+        value = super().__getitem__(key)
+        self._keys.remove(key)
+        self._keys.append(key)
+        return value
 
 
 _DATASOURCE_REGISTRY = {}
@@ -1968,13 +1979,14 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
         parsed = parse_protocols(url)
         layer = parsed.layer
         info = cls._load_dict(url)
+        annotation_type = info.get("annotation_type", "").upper()
         mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer !=
-                "tracts" else PrecomputedTractsDataSource,
+            "neuroglancer_annotations_v1": PrecomputedTractsDataSource if layer == 
+            "tracts" or annotation_type == "LINE" else PrecomputedAnnotationDataSource,
         }
         subclass = mapping[info["@type"]]
         return super(_PrecomputedDataSourceFactory, subclass).__call__(

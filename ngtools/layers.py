@@ -11,9 +11,11 @@ import numpy as np
 # internals
 from ngtools.datasources import (
     AnnotationDataSource,
+    LayerDataSource,
     LayerDataSources,
     MeshDataSource,
     PrecomputedInfo,
+    PrecomputedTractsDataSource,
     SkeletonDataSource,
     VolumeDataSource,
 )
@@ -210,6 +212,9 @@ class LayerFactory(type):
             elif isinstance(source, MeshDataSource):
                 LOG.debug("LayerFactory - guess MeshLayer")
                 GuessedLayer = MeshLayer
+            elif isinstance(source, PrecomputedTractsDataSource):
+                LOG.debug("LayerFactory - guess AnnotationLayer")
+                GuessedLayer = TractAnnotationLayer
             elif isinstance(source, AnnotationDataSource):
                 LOG.debug("LayerFactory - guess AnnotationLayer")
                 GuessedLayer = AnnotationLayer
@@ -732,8 +737,17 @@ class TractAnnotationLayer(AnnotationLayer):
 
     def __init__(self, *args, **kwargs) -> None:
         if 'shader' not in kwargs:
-            info = PrecomputedInfo(kwargs.get(
-                'source', args[0] if args else None))._info
+            if kwargs.get("source", ""):
+                url = kwargs["source"]
+                if isinstance(url, (str, PathLike)):
+                    url = str(url)
+                elif isinstance(url, LayerDataSources) and len(url) >= 1:
+                    url = url[0].url
+                elif isinstance(url, LayerDataSource):
+                    url = url.url
+                else:
+                    raise ValueError("Cannot determine source URL")
+            info = PrecomputedInfo(url)._info
             orientations = {"x": False, "y": False, "z": False}
             for property in info["properties"]:
                 if property["id"][:-1] == "orientation_":
