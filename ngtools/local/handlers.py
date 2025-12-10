@@ -2,7 +2,6 @@
 # stdlib
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Tuple
 
@@ -13,10 +12,10 @@ import trk_to_annotation.preprocessing as tap
 import trk_to_annotation.utils as tau
 
 # internals
-from ngtools.datasources import _SizedRefreshCache
 from ngtools.local.fileserver import Handler
 from ngtools.opener import exists, filesystem, linc_auth_opt
 from ngtools.shaders import load_fs_lut
+from ngtools.utils import _SizedRefreshCache
 
 LOG = logging.getLogger(__name__)
 
@@ -30,9 +29,8 @@ class TractAnnotationHandler(Handler):
     grid_densities = [1, 2, 4, 8]
 
     def get(self, protocol: str, path: str) -> None:  # noqa: D102
-
-        if protocol != "local":
-            path = protocol + "://" + path
+        
+        path = protocol + "://" + path
         
         if path.endswith("info"):
             try:
@@ -64,32 +62,15 @@ class TractAnnotationHandler(Handler):
             self.body = transform.encode("utf-8")
             return None
         
-        try:
-            folder_listing = {"path": path,
-                              "children": ["info", "0", "1", "2"]}
-            body = json.dumps(folder_listing).encode()
-            self.status = 200
-            self.headers.add_header("Content-Type", "application/json")
-            self.headers.add_header("Content-Length", str(len(body)))
-            self.body = body
-
-        except Exception as e:
-            return self.send_error(500, e)
+        return self.send_error(404, f"Not valid emulated path: {path}")
         
     def _read_from_file(self, path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Read annotation data from a given file. cache it as well as its segments."""
         if path in annotation_cache:
             return annotation_cache[path]
-        if os.path.exists(path):
-            segments, bbox, offsets, affine = tap.load_from_file(path)
-        else:
-            try:
-                file = filesystem(path)
-                with file.open(path, "rb") as f:
-                    segments, bbox, offsets, affine = tap.load_from_file(f)
-            except Exception as e:
-                raise FileNotFoundError(f"Tract file not found: {path}, {e}")
-            
+        file = filesystem(path)
+        with file.open(path, "rb") as f:
+            segments, bbox, offsets, affine = tap.load_from_file(f)
         segments, offsets = tap.split_along_grid(
             segments, bbox, [self.grid_densities[-1]]*3, offsets)
         annotation_cache[path] = (segments, bbox, offsets, affine)

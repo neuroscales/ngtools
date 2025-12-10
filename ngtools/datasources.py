@@ -39,35 +39,9 @@ from ngtools.opener import (
     parse_protocols,
     read_json,
 )
-from ngtools.utils import Wraps
+from ngtools.utils import Wraps, _SizedCache
 
 LOG = logging.getLogger(__name__)
-
-
-class _SizedCache(dict):
-    def __init__(self, max_size: int | None = None) -> None:
-        self._max_size = max_size
-        self._keys = []
-
-    def __setitem__(self, key: object, value: object) -> None:
-        if key in self:
-            del self[key]
-        super().__setitem__(key, value)
-        self._keys.append(key)
-        if self._max_size:
-            while len(self) > self._max_size:
-                del self[self._keys[0]]
-    
-    def __delitem__(self, key: object) -> None:
-        super().__delitem__(key)
-        self._keys.remove(key)
-
-class _SizedRefreshCache(_SizedCache):
-    def __getitem__(self, key: object) -> object:
-        value = super().__getitem__(key)
-        self._keys.remove(key)
-        self._keys.append(key)
-        return value
 
 
 _DATASOURCE_REGISTRY = {}
@@ -1979,14 +1953,15 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
         parsed = parse_protocols(url)
         layer = parsed.layer
         info = cls._load_dict(url)
-        annotation_type = info.get("annotation_type", "").upper()
+        is_tracts = cls.is_tracts(url)
         mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedTractsDataSource if layer == 
-            "tracts" or annotation_type == "LINE" else PrecomputedAnnotationDataSource,
+            "neuroglancer_annotations_v1": PrecomputedTractsDataSource if (
+                layer == "tracts") or (
+                is_tracts) else PrecomputedAnnotationDataSource,
         }
         subclass = mapping[info["@type"]]
         return super(_PrecomputedDataSourceFactory, subclass).__call__(
@@ -2005,6 +1980,20 @@ class PrecomputedDataSource(LayerDataSource,
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._info = self._load_dict(self.url)
+
+    @classmethod
+    def is_tracts(cls, url: str | dict) -> bool:
+        """Info file is for a tracts file."""
+        info = cls._load_dict(url)
+        orientations = {"x": False, "y": False, "z": False}
+        for property in info["properties"]:
+            if property["id"][:-1] == "orientation_":
+                axis = property["id"][-1]
+                orientations[axis] = True
+        for axis in ["x", "y", "z"]:
+            if not orientations[axis]:
+                return False
+        return True
 
     ...
 

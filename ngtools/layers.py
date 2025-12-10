@@ -14,7 +14,7 @@ from ngtools.datasources import (
     LayerDataSource,
     LayerDataSources,
     MeshDataSource,
-    PrecomputedInfo,
+    PrecomputedDataSource,
     PrecomputedTractsDataSource,
     SkeletonDataSource,
     VolumeDataSource,
@@ -747,19 +747,10 @@ class TractAnnotationLayer(AnnotationLayer):
                     url = url.url
                 else:
                     raise ValueError("Cannot determine source URL")
-            info = PrecomputedInfo(url)._info
-            orientations = {"x": False, "y": False, "z": False}
-            for property in info["properties"]:
-                if property["id"][:-1] == "orientation_":
-                    axis = property["id"][-1]
-                    orientations[axis] = True
-            for axis in ["x", "y", "z"]:
-                if not orientations[axis]:
-                    kwargs['shader'] = shaders.annotation.default
-                    super().__init__(*args, **kwargs)
-                    return
-
-            kwargs['shader'] = shaders.annotation.orientation
+            if PrecomputedDataSource.is_tracts(url):
+                kwargs['shader'] = shaders.annotation.orientation
+            else:
+                kwargs['shader'] = shaders.annotation.default
         super().__init__(*args, **kwargs)
 
 

@@ -4,6 +4,7 @@ import functools
 import json
 import logging
 import os.path as op
+import re
 import sys
 from copy import deepcopy
 from io import BytesIO
@@ -592,7 +593,7 @@ class Scene(ViewerState):
                         "Cannot load local files without a fileserver"
                     )
                 if parsed.format == "trk":
-                    short_uri = fileserver + "/trk/local/" + op.abspath(
+                    short_uri = fileserver + "/trk/file/" + op.abspath(
                         short_uri
                     )
                 else:
@@ -653,14 +654,31 @@ class Scene(ViewerState):
             Layer(s) to unload
         """
         layers = layer or [layer.name for layer in self.layers]
+        proposed_removals = []
         for name in _ensure_list(layers):
+            layer = self.layers[name]
+            for source in layer.source:
+                proposed_removals.append(source.url) 
             del self.layers[name]
-        for key in info_cache.keys():
-            del info_cache[key]
-        for key in spatial_cache.keys():
-            del spatial_cache[key]
-        for key in annotation_cache.keys():
-            del annotation_cache[key]
+        
+        for layer in self.layers:
+            try:
+                for source in layer.source:
+                    proposed_removals.remove(source.url)
+            except ValueError:
+                pass
+        
+        for removal in proposed_removals:
+            pattern = re.compile(r".*/trk/([^/]+)/(.*)")
+            match = pattern.match(removal)
+            if match:
+                parsed_removal = match.group(1) + "://" + match.group(2)
+                if parsed_removal + "/info" in info_cache.keys():
+                    del info_cache[parsed_removal + "/info"]
+                if parsed_removal in spatial_cache.keys():
+                    del spatial_cache[parsed_removal]
+                if parsed_removal in annotation_cache.keys():
+                    del annotation_cache[parsed_removal]
             
 
     @autolog
