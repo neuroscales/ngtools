@@ -107,7 +107,7 @@ class ViewerState(Wraps(ng.ViewerState)):
     show_slices : bool, default=True
         Whether to display orthogonal cross sections in the 3D window.
     wire_frame : bool, default=False
-        Whether to display mesh wire frams in the 3D window.
+        Whether to display mesh wire frames in the 3D window.
     enable_adaptive_downsampling : bool, default=True
         ???
     show_scale_bar : bool, default=True
@@ -1637,7 +1637,7 @@ class Scene(ViewerState):
             raise RuntimeError(
                 'Dimensions not known. Are you running the app in windowless '
                 'mode? If yes, you must open a neuroglancer window to access '
-                'or modifiy the cursor position')
+                'or modify the cursor position')
 
         dim = self.dimensions.to_json()
 

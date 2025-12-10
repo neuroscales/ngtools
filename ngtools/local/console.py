@@ -80,7 +80,7 @@ class Console(argparse.ArgumentParser):
         stderr : TextIO | str, default=sys.stderr
             Error stream.
         max_choices : int | None, default=None
-            Maximum numer of choices to show in usage string.
+            Maximum number of choices to show in usage string.
         """
         self._debug = kwargs.pop('debug', False)
         max_choices = kwargs.pop('max_choices', None)

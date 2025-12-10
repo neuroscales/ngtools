@@ -1,4 +1,4 @@
-"""Lists of kown protocols."""
+"""Lists of known protocols."""
 
 LAYERS = [
     'volume',           # Raster data (image or volume)
