@@ -4,6 +4,7 @@ import functools
 import json
 import logging
 import os.path as op
+import re
 import sys
 from copy import deepcopy
 from io import BytesIO
@@ -28,6 +29,7 @@ import ngtools.spaces as S
 import ngtools.transforms as T
 from ngtools.datasources import LayerDataSource
 from ngtools.layers import Layer, Layers
+from ngtools.local.handlers import annotation_cache, info_cache, spatial_cache
 from ngtools.local.iostream import StandardIO
 from ngtools.opener import exists, filesystem, open, parse_protocols
 from ngtools.shaders import colormaps, load_fs_lut, rotate_shader, shaders
@@ -567,12 +569,21 @@ class Scene(ViewerState):
                     parsed = parsed.with_format("n5")
                 elif basename.endswith((".nii", ".nii.gz")):
                     parsed = parsed.with_format("nifti")
+            if basename.endswith((".trk", ".tck", ".tracts")) and (
+                not parsed.format or parsed.format == "precomputed") and (
+                not parsed.layer == "tractsv1"):
+                parsed = parsed.with_format("trk")
 
             if parsed.stream == "dandi":
                 # neuroglancer does not understand dandi:// uris,
                 # so we use the s3 url instead.
                 short_uri = filesystem(short_uri).s3_url(short_uri)
-                parsed = parsed.with_part(stream="https", url=short_uri)
+                if parsed.format == "trk":
+                    protocol_splits = short_uri.split("://")
+                    short_uri = fileserver + "/trk/https/" + protocol_splits[-1]
+                    parsed = parsed.with_part(stream="http", url=short_uri)
+                else:
+                    parsed = parsed.with_part(stream="https", url=short_uri)
 
             elif parsed.stream == "file":
                 # neuroglancer does not understand file:// uris,
@@ -581,8 +592,20 @@ class Scene(ViewerState):
                     raise ValueError(
                         "Cannot load local files without a fileserver"
                     )
-                short_uri = fileserver + "/local/" + op.abspath(short_uri)
+                if parsed.format == "trk":
+                    short_uri = fileserver + "/trk/file/" + op.abspath(
+                        short_uri
+                    )
+                else:
+                    short_uri = fileserver + "/local/" + op.abspath(short_uri)
+
                 parsed = parsed.with_part(stream="http", url=short_uri)
+            
+            if parsed.format == "trk" or parsed.layer in ["tracts", "tractsv2"]:
+                if not transform:
+                    transform = short_uri + "/transform.lta"
+                parsed = parsed.with_format("precomputed")
+                parsed = parsed.with_layer("tracts")
 
             if fileserver:
                 # if local viewer and data is on linc
@@ -631,8 +654,32 @@ class Scene(ViewerState):
             Layer(s) to unload
         """
         layers = layer or [layer.name for layer in self.layers]
+        proposed_removals = []
         for name in _ensure_list(layers):
+            layer = self.layers[name]
+            for source in layer.source:
+                proposed_removals.append(source.url) 
             del self.layers[name]
+        
+        for layer in self.layers:
+            try:
+                for source in layer.source:
+                    proposed_removals.remove(source.url)
+            except ValueError:
+                pass
+        
+        for removal in proposed_removals:
+            pattern = re.compile(r".*/trk/([^/]+)/(.*)")
+            match = pattern.match(removal)
+            if match:
+                parsed_removal = match.group(1) + "://" + match.group(2)
+                if parsed_removal + "/info" in info_cache.keys():
+                    del info_cache[parsed_removal + "/info"]
+                if parsed_removal in spatial_cache.keys():
+                    del spatial_cache[parsed_removal]
+                if parsed_removal in annotation_cache.keys():
+                    del annotation_cache[parsed_removal]
+            
 
     @autolog
     def rename(self, src: str, dst: str) -> None:

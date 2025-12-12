@@ -21,7 +21,7 @@ from neuroglancer.server import stop as ng_stop_server
 # internals
 from ngtools.local.console import ActionHelpFormatter, Console
 from ngtools.local.fileserver import LocalFileServer, StaticFileHandler
-from ngtools.local.handlers import LincHandler, LutHandler
+from ngtools.local.handlers import LincHandler, LutHandler, TractAnnotationHandler
 from ngtools.local.termcolors import SUPPORTS_COLOR, bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
@@ -293,6 +293,7 @@ class LocalNeuroglancer(OSMixin):
                 (r"^/local/(.*)", StaticFileHandler),
                 (r"^/lut/([^/]+)/(.*)", LutHandler),
                 (r"^/linc/(.*)", LincHandler),
+                (r"^/trk/([^/]+)/(.*)", TractAnnotationHandler),
             ])
         self.fileserver = fileserver
 
