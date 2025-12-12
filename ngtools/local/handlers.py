@@ -64,7 +64,9 @@ class TractAnnotationHandler(Handler):
         
         return self.send_error(404, f"Not valid emulated path: {path}")
         
-    def _read_from_file(self, path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _read_from_file(self, path: str) -> Tuple[
+        np.ndarray, np.ndarray, np.ndarray, np.ndarray
+        ]:
         """Read annotation data from a given file. cache it as well as its segments."""
         if path in annotation_cache:
             return annotation_cache[path]
