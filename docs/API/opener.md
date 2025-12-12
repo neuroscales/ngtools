@@ -1,0 +1,3 @@
+# openers
+
+::: ngtools.openers
