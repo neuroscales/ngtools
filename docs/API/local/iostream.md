@@ -1,3 +1,0 @@
-# iostream
-
-::: ngtools.local.iostream

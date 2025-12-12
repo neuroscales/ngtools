@@ -31,6 +31,9 @@ nav = [
         "api/local/tracts.md",
         "api/local/viewer.md",
     ]}
+  ]},
+  {"Specific Cases" = [
+    "specific/tract_annotations.md",
   ]}
 ]
 

@@ -1,3 +1,0 @@
-# handlers
-
-::: ngtools.local.handlers

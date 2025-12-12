@@ -1,3 +1,0 @@
-# datasources
-
-::: ngtools.local.datasources

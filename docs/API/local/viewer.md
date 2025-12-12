@@ -1,3 +1,0 @@
-# viewer
-
-::: ngtools.local.viewer

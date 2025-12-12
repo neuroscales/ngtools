@@ -1,3 +1,0 @@
-# termcolors
-
-::: ngtools.local.termcolors

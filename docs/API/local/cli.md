@@ -1,3 +1,0 @@
-# cli
-
-::: ngtools.local.cli

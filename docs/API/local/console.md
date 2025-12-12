@@ -1,3 +1,0 @@
-# console
-
-::: ngtools.local.console

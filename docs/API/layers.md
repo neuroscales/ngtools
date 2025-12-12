@@ -1,3 +1,0 @@
-# layers
-
-::: ngtools.layers

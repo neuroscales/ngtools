@@ -1,3 +1,3 @@
-# Scene
+# scene
 
 ::: ngtools.scene

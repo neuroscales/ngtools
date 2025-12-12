@@ -1,3 +1,0 @@
-# tracts
-
-::: ngtools.local.tracts
