@@ -1,4 +1,4 @@
-# Local Python
+# Local neuroglancer - Python interface
 
 The example above can also be run entirely from python.
 

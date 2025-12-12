@@ -8,6 +8,40 @@
 
 [project]
 
+nav = [
+  {"Home" = "index.md"},
+  {"Getting started" = [
+     {"Shell interface" = "start/local_shell.md"},
+     {"Python interface" = "start/local_python.md"},
+     {"Build scenes offline" = "start/offline_scenes.md"},
+  ]},
+  {"Shell API" = [
+    {"Start" = "shell/start.md"},
+    {"Commands" = "shell/commands.md"},
+  ]},
+  {"Python API"= [
+    "api/datasources.md",
+    "api/layers.md",
+    "api/opener.md",
+    "api/scene.md",
+    "api/shader.md",
+    "api/spaces.md",
+    "api/transforms.md",
+    "api/units.md",
+    "api/utils.md",
+    {"local" = [
+        "api/local/cli.md",
+        "api/local/datasources.md",
+        "api/local/fileserver.md",
+        "api/local/handlers.md",
+        "api/local/iostream.md",
+        "api/local/termcolors.md",
+        "api/local/tracts.md",
+        "api/local/viewer.md",
+    ]}
+  ]}
+]
+
 # The site_name is shown in the page header and the browser window title
 #
 # Read more: https://zensical.org/docs/setup/basics/#site_name
@@ -22,7 +56,7 @@ site_description = "Advanced tools for neuroglancer (conversion, tracts visualiz
 # The site_author attribute. This is used in the HTML head element.
 #
 # Read more: https://zensical.org/docs/setup/basics/#site_author
-site_author = "Yael"
+site_author = "Yael Balbastre"
 
 # The site_url is the canonical URL for your site. When building online
 # documentation you should set this.
@@ -36,6 +70,12 @@ site_url = "https://neuroscales.github.io/ngtools/"
 copyright = """
 Copyright &copy; 2025 The authors
 """
+
+# In order to display a link to the repository of your project as part of
+# your documentation, set repo_url in your configuration to the public URL
+# of your repository, e.g.:
+repo_url = "https://github.com/neuroscales/ngtools"
+repo_name = "neuroscales/ngtools"
 
 # Zensical supports both implicit navigation and explicitly defined navigation.
 # If you decide not to define a navigation here then Zensical will simply
@@ -292,9 +332,9 @@ toggle.name = "Switch to light mode"
 # - https://zensical.org/docs/setup/logo-and-icons
 # - https://zensical.org/docs/authoring/icons-emojis/#search
 # ----------------------------------------------------------------------------
-#[project.theme.icon]
+[project.theme.icon]
 #logo = "lucide/smile"
-#repo = "lucide/smile"
+repo = "fontawesome/brands/github"
 
 # ----------------------------------------------------------------------------
 # The "extra" section contains miscellaneous settings.
@@ -303,4 +343,27 @@ toggle.name = "Switch to light mode"
 #icon = "fontawesome/brands/github"
 #link = "https://github.com/user/repo"
 
+# ----------------------------------------------------------------------------
+# mkdocstrings
+# ----------------------------------------------------------------------------
+[project.plugins.mkdocstrings.handlers.python]
+inventories = ["https://docs.python.org/3/objects.inv"]
+paths = [".."]
 
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "numpy"
+inherited_members = true
+show_source = false
+merge_init_into_class = true
+separate_signature = true
+members_order = "source"
+show_root_heading = true
+show_overloads = true
+overloads_only = true
+private_members = false
+filters = [
+    "!^_[^_]",
+    "!^__set",
+    "!^__get",
+    "!^__default",
+]

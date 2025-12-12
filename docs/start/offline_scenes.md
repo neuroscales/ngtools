@@ -1,4 +1,4 @@
-# Python API
+# Scene building without running a neuroglancer instance
 
 Alternatively, a scene state may be built from scratch without ever
 running a neuroglancer instance, using the `Scene` class. The syntax is

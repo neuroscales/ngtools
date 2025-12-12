@@ -1,6 +1,12 @@
-# ngtools
+# Home
 
-Advanced tools for neuroglancer (conversion, tracts visualization, ...)
+```text
+ _ __   __ _| |_ ___   ___ | |___
+| '_ \ / _` | __/ _ \ / _ \| / __|
+| | | | (_| | || (_) | (_) | \__ \
+|_| |_|\__, |\__\___/ \___/|_|___/
+       |___/
+```
 
 ## Installation
 
@@ -20,18 +26,18 @@ implements:
   visualized, and implements additional file formats
   (`.trk`, `.tck`, `.tiff`, `'.mgh`).
 
-  See: [**Local neuroglancer in python**](/in_python/)
+  See: [**Local neuroglancer in python**](/start/local_python/)
 
 - a **shell console** (`nglocal --help`) for the local app with thorough
   documentation of each command, auto-completion and history.
 
-  See: [**Local neuroglancer in the shell**](/in_shell/)
+  See: [**Local neuroglancer in the shell**](/start/local_shell/)
 
 - a **user-friendly python API** (`from ngtools.scene import Scene`) that
   simplifies the creation of neuroglancer scenes (and is used under
   the hood by `LocalNeuroglancer`).
 
-  See: [**Scene building without running an instance**](/api/)
+  See: [**Scene building without running an instance**](/start/offline_scenes/)
 
 - **smart wrappers** (`ngtools.layers`, `ngtools.datasources`) around
   the neuroglancer python API, that can compute quantities that can

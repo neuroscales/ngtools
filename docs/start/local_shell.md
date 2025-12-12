@@ -1,4 +1,4 @@
-# Local Shell
+# Local neuroglancer - Shell interface
 
 To run the app, simply type
 
