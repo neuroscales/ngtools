@@ -1,3 +1,7 @@
+---
+icon: octicons/home-24
+---
+
 # Home
 
 ```text

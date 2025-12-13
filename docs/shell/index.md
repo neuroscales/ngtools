@@ -1,4 +1,7 @@
-# nglocal
+---
+icon: octicons/terminal-24
+---
+# Shell API
 
 === ":octicons-terminal-24:"
     ```shell

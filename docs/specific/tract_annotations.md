@@ -1,28 +1,37 @@
-# Tract Annotation
+# Tractograms
 
-## precomputed as tract annotations
-In order to load a precomputed annotation folder as tracts run the follwoing
+## Tracts in precomputed annotation format
+
+In order to load a precomputed annotation folder as tracts run
 
     load "tracts://(path to precomputed annotation folder)"
 
-If we have a transform.lta file in this directory that transformation will automatically be applied assuming we did not specify a different transformation
+!!! tip
+    If a file named `transform.lta` is present in the annotation directory,
+    this transformation will be applied automatically, assuming that another
+    transformation was not specified using the `--transform` option.
 
-## precomputed annotations
-If we wish to load a precomputed annotation not as tracts run the following
+## Other types of precomputed annotations
+
+To load a precomputed annotation without assuming that it represents a
+tractogram, run
 
     load "precomputed://(path to the precomputed annotation folder)"
 
-## trk file as tract annotations
-In order to load a trk, tck, or tract file as a precomputed annotation run the followign
+## Load classic tractograms into precomputed annotations
+
+In order to load a `TRK` or `TCK` file into a virtual precomputed annotation
+file, run
 
     load "(path to .trk file)"
 
-## unknown file as tract annotations
-If we have a file that has the format of a .trk file but not one of the above extensions we will need to run the following
+If the `TRK` or `TCK` file does not end in `.trk` or `.tck`, a format hint
+can be provided as a "protocol":
 
-    load "trk://(path to file)"
+    load "trk://(path to file without extension)"
 
-## trk file as skeleton
-If we wish to load .trk file as a skeleton layer run the following
+## Load classic tractograms into precomputed skeletons
+
+Tractograms can also be loaded into virtual precomputed skeletons:
 
     load "tractsv1://(path to file)"

@@ -3,15 +3,17 @@
 nav = [
   {"Home" = "index.md"},
   {"Getting started" = [
+    "start/index.md",
      {"Shell interface" = "start/local_shell.md"},
      {"Python interface" = "start/local_python.md"},
      {"Build scenes offline" = "start/offline_scenes.md"},
   ]},
   {"Shell API" = [
-    {"Start" = "shell/start.md"},
+    "shell/index.md",
     {"Commands" = "shell/commands.md"},
   ]},
   {"Python API"= [
+    "api/index.md",
     "api/datasources.md",
     "api/layers.md",
     "api/opener.md",
@@ -33,6 +35,7 @@ nav = [
     ]}
   ]},
   {"Specific Cases" = [
+    "specific/index.md",
     "specific/tract_annotations.md",
   ]}
 ]
@@ -61,7 +64,8 @@ language = "en"
 
 features = [
   "content.code.copy",
-  "content.code.select"
+  "content.code.select",
+  "navigation.indexes",
 ]
 
 [[project.theme.palette]]
@@ -100,7 +104,7 @@ toggle.name = "Switch to light mode"
 # - https://zensical.org/docs/authoring/icons-emojis/#search
 # ----------------------------------------------------------------------------
 [project.theme.icon]
-#logo = "lucide/smile"
+logo = "lucide/brain-circuit"
 repo = "fontawesome/brands/github"
 
 # ----------------------------------------------------------------------------
