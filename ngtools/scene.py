@@ -2127,8 +2127,6 @@ class Scene(ViewerState):
             Save state to JSON file
         url : bool
             Print/load/save a JSON URL rather than a JSON object
-        open : bool
-            Open the URL in the browser.
         instance : {"ng", "linc"}
             Neuroglancer instance to use in the URL.
         print : bool
