@@ -1,6 +1,6 @@
 # Local neuroglancer - Python interface
 
-The example above can also be run entirely from python.
+The [shell example](local_shell) can be run entirely from python.
 
 Let us first instantiate a local viewer and open it in the browser:
 

@@ -1,46 +1,9 @@
 # nglocal
 
-```shell
->>> nglocal --help
-
-Run a local neuroglancer
-
-usage: nglocal [-h]
-        [--token TOKEN]
-        [--ip IP]
-        [--port PORT]
-        [--port-fileserver PORT]
-        [--no-window]
-        [--no-fileserver]
-        [--debug]
-        [--log-level {any,debug,info,warning,error,none}]
-        [--stdin STDIN]
-        [--stdout STDOUT]
-        [--stderr STDERR]
-        [filenames ...]
-
-positional arguments:
-  filenames                     Files to load
-
-options:
-  -h, --help                    show this help message and exit
-  --token TOKEN                 neuroglancer unique token
-  --ip IP                       local IP
-  --port PORT                   viewer port
-  --port-fileserver PORT        fileserver port
-  --no-window                   do not open neuroglancer window
-  --no-fileserver               do not run a local fileserver
-  --debug                       run in debug mode
-  --log-level {any,debug,info,warning,error,none}
-                                logging level
-  --stdin STDIN                 input stream (default: stdin)
-  --stdout STDOUT               output stream (default: stdout)
-  --stderr STDERR               error stream (default: stderr)
-```
-
-```shell
->>> nglocal
-```
+=== ":octicons-terminal-24:"
+    ```shell
+    nglocal
+    ```
 
 <pre><code>             _              _
  _ __   __ _| |_ ___   ___ | |___
@@ -56,3 +19,26 @@ Type <b>help</b> to list available commands, or <b>help &lt;command&gt;</b> for 
 Type <b>Ctrl+C</b> to interrupt the current command and <b>Ctrl+D</b> to exit the app.
 <b>[1]</b>
 </code></pre>
+
+### Positional arguments
+
+| Name        | Type        | Description   |
+| ----------- | ----------- | ------------- |
+| `filenames` | `list[uri]` | Files to load |
+
+### Options
+
+| Flag                  | Type      | Description                       | Default   |
+| --------------------- | --------- | --------------------------------- | --------- |
+| `-h`, `--help`        |           | Show help message and exit        |           |
+| `--token`             | `str`     | Neuroglancer unique token         | `1`       |
+| `--ip`                | `str`     | local IP                          | `127.0.0.1` |
+| `--port`              | `int`     | Viewer port                       | `9321`    |
+| `--port-fileserver`   | `int`     | Fileserver port                   | `9123`    |
+| `--no-window`         |           | Do not open neuroglancer window   |           |
+| `--no-fileserver`     |           | Do not run a local fileserver     |           |
+| `--debug`             |           | Run in debug mode                 |           |
+| `--log-level`         | `{any,debug,info,warning,error,none}` | Logging level | `debug` if `--debug` else `none` |
+| `--stdin`             | `str`     |  Input stream                     | `stdin`   |
+| `--stdout`            | `str`     |  Output stream                    | `stdout`  |
+| `--stderr`            | `str`     |  Error stream                     | `stderr`  |

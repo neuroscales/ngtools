@@ -59,7 +59,10 @@ Copyright &copy; 2025 The authors
 
 language = "en"
 
-features = []
+features = [
+  "content.code.copy",
+  "content.code.select"
+]
 
 [[project.theme.palette]]
 scheme = "default"
@@ -131,3 +134,25 @@ filters = [
     "!^__get",
     "!^__default",
 ]
+
+# ----------------------------------------------------------------------------
+# Markdown extras
+# ----------------------------------------------------------------------------
+[project.markdown_extensions.admonition]
+# [project.markdown_extensions.attr_list]
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.snippets]
+[project.markdown_extensions.pymdownx.superfences]
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+[project.markdown_extensions.pymdownx.emoji]
+emoji_generator = "zensical.extensions.emoji.to_svg"
+emoji_index = "zensical.extensions.emoji.twemoji"
+[project.markdown_extensions.tables]
+[project.markdown_extensions.toc]
+toc_depth = 3

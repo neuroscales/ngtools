@@ -1,8 +1,9 @@
 # Scene building without running a neuroglancer instance
 
-Alternatively, a scene state may be built from scratch without ever
-running a neuroglancer instance, using the `Scene` class. The syntax is
-very similar to that of the `LocalNeuroglancer` class:
+A scene state may be built from scratch without ever running a
+neuroglancer instance, using the `Scene` class. The syntax is
+very similar to that of the `LocalNeuroglancer` class demonstrated
+in the [previous section](local_python):
 
 ```python
 from ngtools.scene import Scene
