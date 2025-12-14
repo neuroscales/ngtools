@@ -1507,7 +1507,7 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
         self.nifti = None
         self._load_nifti(url, nifti)
 
-    def _load_nifti(self, url: UPath, nifti: bool | None):
+    def _load_nifti(self, url: UPath, nifti: bool | None) -> None:
         if nifti is False:
             return
 
@@ -1945,7 +1945,8 @@ class PrecomputedVolumeInfo(PrecomputedInfo):
 
 class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
     def __call__(
-            cls, arg: _LayerDataSourceFactory._DataSourceLike = None, *args, **kwargs
+            cls, arg: _LayerDataSourceFactory._DataSourceLike = None,
+            *args, **kwargs
     ) -> "PrecomputedDataSource":
         if cls is not PrecomputedDataSource:
             obj = super().__call__(arg, *args, **kwargs)
@@ -1973,8 +1974,11 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource if layer !=
-                "tracts" else PrecomputedTractsDataSource,
+            "neuroglancer_annotations_v1": (
+                PrecomputedAnnotationDataSource
+                if layer != "tracts" else
+                PrecomputedTractsDataSource
+            ),
         }
         subclass = mapping[info["@type"]]
         return super(_PrecomputedDataSourceFactory, subclass).__call__(

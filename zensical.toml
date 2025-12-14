@@ -1,0 +1,162 @@
+[project]
+
+nav = [
+  {"Home" = "index.md"},
+  {"Getting started" = [
+    "start/index.md",
+     {"Shell interface" = "start/local_shell.md"},
+     {"Python interface" = "start/local_python.md"},
+     {"Build scenes offline" = "start/offline_scenes.md"},
+  ]},
+  # {"Specific Cases" = [
+  #   "specific/index.md",
+  #   "specific/tract_annotations.md",
+  # ]},
+  {"Shell API" = [
+    "shell/index.md",
+    {"Commands" = "shell/commands.md"},
+  ]},
+  {"Python API"= [
+    "api/index.md",
+    "api/datasources.md",
+    "api/layers.md",
+    "api/opener.md",
+    "api/scene.md",
+    "api/shader.md",
+    "api/spaces.md",
+    "api/transforms.md",
+    "api/units.md",
+    "api/utils.md",
+    {"local" = [
+        "api/local/cli.md",
+        "api/local/datasources.md",
+        "api/local/fileserver.md",
+        "api/local/handlers.md",
+        "api/local/iostream.md",
+        "api/local/termcolors.md",
+        "api/local/tracts.md",
+        "api/local/viewer.md",
+    ]}
+  ]}
+]
+
+# The site_name is shown in the page header and the browser window title
+#
+# Read more: https://zensical.org/docs/setup/basics/#site_name
+site_name = "ngtools"
+
+site_description = "Advanced tools for neuroglancer"
+
+# The site_author attribute. This is used in the HTML head element.
+#
+# Read more: https://zensical.org/docs/setup/basics/#site_author
+site_author = "Yael Balbastre"
+
+site_url = "https://neuroscales.github.io/ngtools/"
+
+copyright = """
+Copyright &copy; 2025 The authors
+"""
+
+[project.theme]
+
+language = "en"
+
+features = [
+  "content.code.copy",
+  "content.code.select",
+  "navigation.indexes",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+# ----------------------------------------------------------------------------
+# In the "font" subsection you can configure the fonts used. By default, fonts
+# are loaded from Google Fonts, giving you a wide range of choices from a set
+# of suitably licensed fonts. There are options for a normal text font and for
+# a monospaced font used in code blocks.
+# ----------------------------------------------------------------------------
+#[project.theme.font]
+#text = "Inter"
+#code = "Jetbrains Mono"
+
+# ----------------------------------------------------------------------------
+# You can configure your own logo to be shown in the header using the "logo"
+# option in the "icons" subsection. The logo can be a path to a file in your
+# "docs_dir" or it can be a path to an icon.
+#
+# Likewise, you can customize the logo used for the repository section of the
+# header. Zensical derives the default logo for this from the repository URL.
+# See below...
+#
+# There are other icons you can customize. See the documentation for details.
+#
+# Read more:
+# - https://zensical.org/docs/setup/logo-and-icons
+# - https://zensical.org/docs/authoring/icons-emojis/#search
+# ----------------------------------------------------------------------------
+[project.theme.icon]
+logo = "lucide/brain-circuit"
+repo = "fontawesome/brands/github"
+
+# ----------------------------------------------------------------------------
+# The "extra" section contains miscellaneous settings.
+# ----------------------------------------------------------------------------
+#[[project.extra.social]]
+#icon = "fontawesome/brands/github"
+#link = "https://github.com/user/repo"
+
+# ----------------------------------------------------------------------------
+# mkdocstrings
+# ----------------------------------------------------------------------------
+[project.plugins.mkdocstrings.handlers.python]
+inventories = ["https://docs.python.org/3/objects.inv"]
+paths = [".."]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "numpy"
+inherited_members = true
+show_source = false
+merge_init_into_class = true
+separate_signature = true
+members_order = "source"
+show_root_heading = true
+show_overloads = true
+overloads_only = true
+private_members = false
+filters = [
+    "!^_[^_]",
+    "!^__set",
+    "!^__get",
+    "!^__default",
+]
+
+# ----------------------------------------------------------------------------
+# Markdown extras
+# ----------------------------------------------------------------------------
+[project.markdown_extensions.admonition]
+# [project.markdown_extensions.attr_list]
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.snippets]
+[project.markdown_extensions.pymdownx.superfences]
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+[project.markdown_extensions.pymdownx.emoji]
+emoji_generator = "zensical.extensions.emoji.to_svg"
+emoji_index = "zensical.extensions.emoji.twemoji"
+[project.markdown_extensions.tables]
+[project.markdown_extensions.toc]
+toc_depth = 3
