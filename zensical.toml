@@ -8,6 +8,10 @@ nav = [
      {"Python interface" = "start/local_python.md"},
      {"Build scenes offline" = "start/offline_scenes.md"},
   ]},
+  # {"Specific Cases" = [
+  #   "specific/index.md",
+  #   "specific/tract_annotations.md",
+  # ]},
   {"Shell API" = [
     "shell/index.md",
     {"Commands" = "shell/commands.md"},
@@ -33,10 +37,6 @@ nav = [
         "api/local/tracts.md",
         "api/local/viewer.md",
     ]}
-  ]},
-  {"Specific Cases" = [
-    "specific/index.md",
-    "specific/tract_annotations.md",
   ]}
 ]
 
