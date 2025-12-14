@@ -131,7 +131,6 @@ members_order = "source"
 show_root_heading = true
 show_overloads = true
 overloads_only = true
-private_members = false
 filters = [
     "!^_[^_]",
     "!^__set",
