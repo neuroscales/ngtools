@@ -1,9 +1,8 @@
 [project]
 
 nav = [
-  {"Home" = "index.md"},
   {"Getting started" = [
-    "start/index.md",
+    "index.md",
      {"Shell interface" = "start/local_shell.md"},
      {"Python interface" = "start/local_python.md"},
      {"Build scenes offline" = "start/offline_scenes.md"},

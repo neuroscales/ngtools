@@ -1,8 +1,8 @@
 ---
-icon: octicons/home-24
+icon: octicons/rocket-24
 ---
 
-# Home
+# Getting started
 
 ```text
  _ __   __ _| |_ ___   ___ | |___
