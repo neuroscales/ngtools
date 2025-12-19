@@ -1,5 +1,6 @@
 """A neuroglancer scene with a programmatic interface."""
 # stdlib
+import json
 import logging
 from os import PathLike
 from typing import Iterator
@@ -16,6 +17,7 @@ from ngtools.datasources import (
     MeshDataSource,
     PrecomputedDataSource,
     PrecomputedTractsDataSource,
+    SegmentationDataSource,
     SkeletonDataSource,
     VolumeDataSource,
 )
@@ -153,7 +155,11 @@ class LayerFactory(type):
 
         GuessedLayer = None
         if url and isinstance(url, str):
-            if url == "local://annotations":
+            if url.startswith("local://annotations"):
+                if url.startswith("local://annotations/"):
+                    kwargs["annotations"] = [json.loads(ann.replace("'", '"')) for \
+                                             ann in url[len("local://annotations/"):].split("/")]
+
                 if isinstance(arg, ng.LocalAnnotationLayer):
                     odim = arg.source[0].transform.output_dimensions
                     return LocalAnnotationLayer(odim, arg, *args, **kwargs)
@@ -218,6 +224,9 @@ class LayerFactory(type):
             elif isinstance(source, AnnotationDataSource):
                 LOG.debug("LayerFactory - guess AnnotationLayer")
                 GuessedLayer = AnnotationLayer
+            elif isinstance(source, SegmentationDataSource):
+                LOG.debug("LayerFactory - guess AnnotationLayer")
+                GuessedLayer = SegmentationLayer
             if GuessedLayer:
                 # kwargs["source"] = sources
                 return GuessedLayer(*args, **kwargs)

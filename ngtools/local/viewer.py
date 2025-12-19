@@ -21,7 +21,13 @@ from neuroglancer.server import stop as ng_stop_server
 # internals
 from ngtools.local.console import ActionHelpFormatter, Console
 from ngtools.local.fileserver import LocalFileServer, StaticFileHandler
-from ngtools.local.handlers import LincHandler, LutHandler, TractAnnotationHandler
+from ngtools.local.handlers import (
+    LincHandler,
+    LutHandler,
+    TractAnnotationHandler,
+    filter_layers,
+    filtered_layers,
+)
 from ngtools.local.termcolors import SUPPORTS_COLOR, bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
@@ -275,7 +281,8 @@ class LocalNeuroglancer(OSMixin):
         port, ip = find_available_port(port, ip)
         ng_bind_address(str(ip), str(port))
         self.viewer = ng.Viewer(token=str(token))
-        # self.viewer.shared_state.add_changed_callback(self.on_state_change)
+        self.viewer.shared_state.add_changed_callback(
+            lambda: self.viewer.defer_callback(self.update_filters))
 
         if not _IS_GOOGLE_COLAB:
             ip = self.get_viewer_url().split("://")[1].split(":")[0]
@@ -690,6 +697,18 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(dest='stderr', metavar='FILE')
 
         # --------------------------------------------------------------
+        #   LOAD
+        # --------------------------------------------------------------
+        _ = add_parser('filter', help='apply a filter')
+        _.set_defaults(func=self.filter)
+        _.add_argument(
+            dest='tract_layer', metavar='TRACT_LAYER',
+            help='Tract layer to be filtered')
+        _.add_argument(
+            dest='filter_layer', metavar='FILTER_LAYER',
+            help='Layer that contains filter data')
+
+        # --------------------------------------------------------------
         #   EXIT
         # --------------------------------------------------------------
         _ = add_parser('exit', aliases=['quit'], help='Exit neuroglancer')
@@ -719,6 +738,7 @@ class LocalNeuroglancer(OSMixin):
     layout = state_action("change_layout")
     zorder = state_action("zorder")
     state = state_action("state")
+    filter = state_action("filter")
 
     @action
     def help(self, action: str | None = None) -> None:
@@ -745,6 +765,31 @@ class LocalNeuroglancer(OSMixin):
     #                            CALLBACKS
     #
     # ==================================================================
+
+    def update_filters(self) -> None:
+        """Check if the filters need to be updated."""
+        state = self.viewer.state
+        for layer in state.layers:
+            source = layer.source
+            try:
+                source = source[0]
+            except Exception:
+                source = source
+            key = source.url.replace("/", "$").replace(".", "$")
+            if key in filtered_layers.keys():
+                update_segmentations = False
+                if filter_layers[key] != state.layers[filter_layers[key].name]:
+                    filter_layers[key] = state.layers[filter_layers[key].name]
+                    update_segmentations = True
+                if filtered_layers[key] != layer:
+                    filtered_layers[key] = layer
+                    update_segmentations = True
+                if update_segmentations:
+                    with self.viewer.txn() as editable_state:
+                        segmentation_layer = editable_state.layers[
+                            layer.linkedSegmentationLayer["filter"]]
+                        segmentation_layer.segments = [
+                            max(segmentation_layer.segments)+1]
 
     # def on_state_change(self) -> None:
     #     old_state = self.saved_state

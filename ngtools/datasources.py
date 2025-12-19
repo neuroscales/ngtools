@@ -191,7 +191,10 @@ class _LayerDataSourceFactory(type):
             return kls(arg, *args, **kwargs)
 
         # If local:// url -> local annotations
-        if parsed_url.url == "local://annotations":
+        if parsed_url.url.startswith("local://annotations"):
+            if (len(arg.to_json().get("transform", {}).get("matrix", np.array([])))
+                 > 0) or parsed_url.url.startswith("local://annotations/"):
+                return LocalFilterAnnotationDataSource(arg, *args, **kwargs) 
             return LocalAnnotationDataSource(arg, *args, **kwargs)
 
         # If format protocol provided, use it
@@ -663,6 +666,11 @@ class AnnotationDataSource(LayerDataSource):
 
     ...
 
+class SegmentationDataSource(LayerDataSource):
+    """Wrapper for segmentation source."""
+
+    ...
+
 
 class LocalDataSource(LayerDataSource):
     """Wrapper for local data sources."""
@@ -677,6 +685,34 @@ class LocalDataSource(LayerDataSource):
 
 class LocalAnnotationDataSource(AnnotationDataSource, LocalDataSource):
     """Wrapper for local annotation sources."""
+
+    ...
+
+class LocalFilterAnnotationDataSource(LocalAnnotationDataSource, LocalDataSource):
+    """Wrapper for local filter annotation sources."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.url = "local://annotations"
+        self.transform = self.transform
+
+    @property
+    def _transform(self) -> ng.CoordinateSpaceTransform:
+        dimensions = ng.CoordinateSpace(
+            names=["x", "y", "z"],
+            units="mm",
+            scales=[1, 1, 1],
+        )
+            
+
+        rank = len(dimensions.names)
+        return ng.CoordinateSpaceTransform(
+            matrix=np.eye(rank+1)[:-1],
+            input_dimensions=dimensions,
+            output_dimensions=dimensions
+        )
+
+
 
     ...
 
@@ -1964,6 +2000,9 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
                 is_tracts) else PrecomputedAnnotationDataSource,
         }
         subclass = mapping[info["@type"]]
+        if subclass == PrecomputedVolumeDataSource:
+            if info["type"] == "segmentation":
+                subclass = PrecomputedSegmentationDataSource
         return super(_PrecomputedDataSourceFactory, subclass).__call__(
             arg, *args, **kwargs)
 
@@ -1986,6 +2025,8 @@ class PrecomputedDataSource(LayerDataSource,
         """Info file is for a tracts file."""
         info = cls._load_dict(url)
         orientations = {"x": False, "y": False, "z": False}
+        if "properties" not in info:
+            return False
         for property in info["properties"]:
             if property["id"][:-1] == "orientation_":
                 axis = property["id"][-1]
@@ -2019,6 +2060,30 @@ class PrecomputedSkeletonDataSource(SkeletonDataSource, PrecomputedDataSource):
 class PrecomputedAnnotationDataSource(
     AnnotationDataSource, PrecomputedDataSource
 ):
+    """Base wrapper for precomputed annotations sources."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.transform = self.transform
+
+    @property
+    def _transform(self) -> ng.CoordinateSpaceTransform:
+        dimensions = ng.CoordinateSpace(
+            names=["x", "y", "z"],
+            units="mm",
+            scales=[1, 1, 1],
+        )
+
+        rank = len(dimensions.names)
+        return ng.CoordinateSpaceTransform(
+            matrix=np.eye(rank+1)[:-1],
+            input_dimensions=dimensions,
+            output_dimensions=dimensions
+        )
+
+    ...
+
+class PrecomputedSegmentationDataSource(SegmentationDataSource, PrecomputedDataSource):
     """Base wrapper for precomputed annotations sources."""
 
     def __init__(self, *args, **kwargs) -> None:

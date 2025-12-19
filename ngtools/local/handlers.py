@@ -9,6 +9,8 @@ from typing import Tuple
 import numpy as np
 import requests
 import trk_to_annotation.preprocessing as tap
+import trk_to_annotation.segmentation as tas
+import trk_to_annotation.tract_sharding as tats
 import trk_to_annotation.utils as tau
 
 # internals
@@ -21,7 +23,12 @@ LOG = logging.getLogger(__name__)
 
 annotation_cache = _SizedRefreshCache(max_size=20)
 spatial_cache = _SizedRefreshCache(max_size=20)
-info_cache = _SizedRefreshCache(max_size=20)
+info_cache = _SizedRefreshCache(max_size=40)
+tracts_cache = _SizedRefreshCache(max_size=20)
+
+
+filter_layers = {}
+filtered_layers = {}
 
 class TractAnnotationHandler(Handler):
     """Handler that returns annotation data."""
@@ -40,6 +47,36 @@ class TractAnnotationHandler(Handler):
             self.status = 200
             self.headers["Content-type"] = "application/json"
             self.body = json.dumps(info).encode()
+            return None
+        
+        if self._parse_segmentation_path(path):
+            try:
+                buffer = self._get_segmentation(path)
+            except Exception as e:
+                return self.send_error(404, e)
+            self.status = 200
+            self.headers["Content-type"] = "application/octet-stream"
+            self.body = buffer
+            return None
+        
+        if path.split("/")[-2] == "by_tract":
+            try:
+                buffer = self._get_tract(path)
+            except Exception as e:
+                return self.send_error(404, e)
+            self.status = 200
+            self.headers["Content-type"] = "application/octet-stream"
+            self.body = buffer
+            return None
+        
+        if path.split("/")[-2] == "filter":
+            try:
+                buffer = self._get_filter(path)
+            except Exception as e:
+                return self.send_error(404, e)
+            self.status = 200
+            self.headers["Content-type"] = "application/octet-stream"
+            self.body = buffer
             return None
         
         if self._parse_spatial_path(path) is not None:
@@ -89,6 +126,61 @@ class TractAnnotationHandler(Handler):
             return parent, a, b, c
         else:
             return None
+        
+    def _get_filter(self, path: str) -> bytes:
+        trk_path = "/".join(path.split("/")[:-2])
+        key = trk_path.split("://")[-1].replace("/", "$").replace(".", "$")
+        for full_key in filter_layers.keys():
+            if full_key.endswith(key):
+                key = full_key
+        
+        segments, _, offsets, _ = self._read_from_file(trk_path)
+        source = filtered_layers[key].source
+        if isinstance(source, dict):
+            transform = np.array(source.transform.to_json().get(
+                "matrix", np.eye(4)[:-3]))
+        else:
+            transform = np.array(source[0].transform.to_json().get(
+                "matrix", np.eye(4)[:-3]))
+        
+        transform_segments = segments.copy()
+        transform_segments["start"] = np.hstack(
+            [segments["start"], np.ones((segments["start"].shape[0], 1))])@transform.T
+        transform_segments["end"] = np.hstack(
+            [segments["end"], np.ones((segments["end"].shape[0], 1))])@transform.T
+        tract_ids = self._get_annotations_inside(transform_segments, 
+                                                 filter_layers[key].to_json())
+        tract = tats.tract_bytes(tract_ids, offsets, segments)
+
+        return tract
+    
+    def _get_tract(self, path: str) -> bytes:
+        split_path = path.split("/")
+        folder = "/".join(split_path[:-1])
+        tract_id = int(split_path[-1])
+        if folder in tracts_cache:
+            if tract_id in tracts_cache[folder]:
+                return tracts_cache[folder][tract_id]
+        else:
+            tracts_cache[folder] = _SizedRefreshCache(max_size=100_000)
+
+
+        trk_path = "/".join(path.split("/")[:-2])
+        segments, _, offsets, _ = self._read_from_file(trk_path)
+        tract = tats.tract_bytes([int(path.split("/")[-1])], offsets, segments)
+        tracts_cache[folder][tract_id] = tract
+
+        return tract
+
+    def _parse_segmentation_path(self, path_str: str) -> bool:
+        split_path = path_str.split("/")
+        if len(split_path) < 3:
+            return False
+        if split_path[-3] != "precomputed_segmentations":
+            return False
+        if len(split_path[-2].split("_")) != 3:
+            return False
+        return len(split_path[-1].split("_")) == 3
 
     def _get_spatials(self, path: str) -> bytes:
         """Get spatial data from a given path."""
@@ -108,6 +200,9 @@ class TractAnnotationHandler(Handler):
         """Get annotation info from a given path."""
         if info_cache.get(path) is not None:
             return info_cache[path]
+        
+        if path.endswith("/precomputed_segmentations/info"):
+            return self._get_segmentation_info(path)
 
         if not path.endswith("/info"):
             raise FileNotFoundError(f"Info file not found: {path}")
@@ -117,7 +212,11 @@ class TractAnnotationHandler(Handler):
 
         # Info file for Neuroglancer
         info = tau.generate_info_dict(
-            segments, bbox, offsets, self.grid_densities)
+            segments, bbox, offsets, self.grid_densities, sharding=False)
+        info["relationships"].append({
+            "id": "filter",
+            "key": "./filter"})
+
         info_cache[path] = info
 
         # Cache spatials as well so once the layer is loaded we have them
@@ -128,6 +227,28 @@ class TractAnnotationHandler(Handler):
             
         return info
     
+    def _get_segmentation_info(self, path: str) -> dict:
+        if info_cache.get(path) is not None:
+            return info_cache[path]
+        
+        if not path.endswith("/precomputed_segmentations/info"):
+            raise FileNotFoundError(f"Info file not found: {path}")
+        
+        trk_path = path[:-len("/precomputed_segmentations/info")]
+
+        _, bbox, _, _ = self._read_from_file(trk_path)
+
+        info = tas.generate_info(1, bbox, (bbox[1] - bbox[0]).tolist())
+        info_cache[path] = info
+
+        return info
+    
+    def _get_segmentation(self, path: str) -> bytes:
+        trk_path = "/".join(path.split("/")[:-3])
+        _, bbox, _, _ = self._read_from_file(trk_path)
+        dimensions = np.append((bbox[1] - bbox[0]), [1])
+        return np.asarray(np.zeros(dimensions), dtype='<u8').tobytes()
+   
     def _get_transform(self, path: str) -> np.ndarray:
         """Get affine transform from a given path."""
         if not path.endswith("/transform.lta"):
@@ -135,6 +256,47 @@ class TractAnnotationHandler(Handler):
         trk_path = path[:-14]
         _, _, _, affine = self._read_from_file(trk_path)
         return tau.lta_data(affine)
+    
+    def _get_annotations_inside(
+            self, lines: np.ndarray, filter_layer: dict
+            ) -> np.ndarray:
+        """
+        Find all streamlines in a list of annotations that intersect 
+        with the filter layer.
+        """
+        source = filter_layer["source"]
+        if isinstance(source, dict):
+            transform = np.array(source["transform"].get("matrix", np.eye(4)[:-3]))
+        else:
+            transform = np.array(source[0]["transform"].get("matrix", np.eye(4)[:-3]))
+        line_list = []
+        for annotation in filter_layer["annotations"]:
+            if annotation["type"] == "axis_aligned_bounding_box":
+                points = np.vstack([annotation["pointA"], annotation["pointB"]])
+                min_point = points.min(axis=0)
+                max_point = points.max(axis=0)
+
+                mask = (lines["start"] > min_point).all(axis=1) & (lines["start"] < 
+                                                                   max_point).all(axis=1)
+                lines_in = lines[mask]
+
+            elif annotation["type"] == "ellipsoid":
+                center = np.array(annotation["center"] + [1])@transform.T
+                radii = np.array(annotation["radii"])@transform[:, :3].T
+
+                diffs = lines["start"] - center
+                normed = diffs / radii         
+                mask = (normed**2).sum(axis=1) <= 1.0
+                lines_in = lines[mask]
+            else:
+                continue
+
+            if len(lines_in) > 0:
+                line_list.append(lines_in["streamline"].reshape((-1)))
+        
+        if len(line_list) > 0:
+            return np.unique(np.concatenate(line_list))
+        return np.array([], dtype=int)
 
 
 class LutHandler(Handler):
