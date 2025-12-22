@@ -500,11 +500,11 @@ class Handler:
         pass
 
     def prepare(self) -> None:
-        """Peform steps before the main request."""
+        """Perform steps before the main request."""
         pass
 
     def on_finish(self) -> None:
-        """Peform steps after the main request."""
+        """Perform steps after the main request."""
         pass
 
     def send_error(self, status: int | str | Status, msg: str | None) -> None:

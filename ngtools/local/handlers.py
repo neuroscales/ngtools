@@ -193,7 +193,7 @@ class LincHandler(Handler):
         "Vary",
     )
 
-    # NOTE: Connection is a hop-by-hop header and should therfore not
+    # NOTE: Connection is a hop-by-hop header and should therefore not
     # be forwarded to the next request.
     # https://0xn3va.gitbook.io/cheat-sheets/web-application/abusing-http-hop-by-hop-request-headers
 
