@@ -45,7 +45,7 @@ class RemoteDandiFileSystem(AbstractFileSystem):
     ```
 
     The 'dandi://' protocol is registered with fsspec, so the same
-    result can be achived by
+    result can be achieved by
     ```python
     import fsspec
     import json
