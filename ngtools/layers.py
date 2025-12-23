@@ -11,9 +11,11 @@ import numpy as np
 # internals
 from ngtools.datasources import (
     AnnotationDataSource,
+    LayerDataSource,
     LayerDataSources,
     MeshDataSource,
-    PrecomputedInfo,
+    PrecomputedDataSource,
+    PrecomputedTractsDataSource,
     SkeletonDataSource,
     VolumeDataSource,
 )
@@ -168,7 +170,7 @@ class LayerFactory(type):
                 "mesh": MeshLayer,
                 "surface": MeshLayer,
                 "skeleton": SkeletonLayer,
-                "tracts": TractLayer,
+                "tracts": TractAnnotationLayer,
                 "tractsv1": TractLayer,
                 "tractsv2": TractAnnotationLayer,
                 "annotation": AnnotationLayer,
@@ -210,6 +212,9 @@ class LayerFactory(type):
             elif isinstance(source, MeshDataSource):
                 LOG.debug("LayerFactory - guess MeshLayer")
                 GuessedLayer = MeshLayer
+            elif isinstance(source, PrecomputedTractsDataSource):
+                LOG.debug("LayerFactory - guess AnnotationLayer")
+                GuessedLayer = TractAnnotationLayer
             elif isinstance(source, AnnotationDataSource):
                 LOG.debug("LayerFactory - guess AnnotationLayer")
                 GuessedLayer = AnnotationLayer
@@ -732,20 +737,20 @@ class TractAnnotationLayer(AnnotationLayer):
 
     def __init__(self, *args, **kwargs) -> None:
         if 'shader' not in kwargs:
-            info = PrecomputedInfo(kwargs.get(
-                'source', args[0] if args else None))._info
-            orientations = {"x": False, "y": False, "z": False}
-            for property in info["properties"]:
-                if property["id"][:-1] == "orientation_":
-                    axis = property["id"][-1]
-                    orientations[axis] = True
-            for axis in ["x", "y", "z"]:
-                if not orientations[axis]:
-                    kwargs['shader'] = shaders.annotation.default
-                    super().__init__(*args, **kwargs)
-                    return
-
-            kwargs['shader'] = shaders.annotation.orientation
+            if kwargs.get("source", ""):
+                url = kwargs["source"]
+                if isinstance(url, (str, PathLike)):
+                    url = str(url)
+                elif isinstance(url, LayerDataSources) and len(url) >= 1:
+                    url = url[0].url
+                elif isinstance(url, LayerDataSource):
+                    url = url.url
+                else:
+                    raise ValueError("Cannot determine source URL")
+            if PrecomputedDataSource.is_tracts(url):
+                kwargs['shader'] = shaders.annotation.orientation
+            else:
+                kwargs['shader'] = shaders.annotation.default
         super().__init__(*args, **kwargs)
 
 

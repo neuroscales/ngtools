@@ -39,24 +39,9 @@ from ngtools.opener import (
     parse_protocols,
     read_json,
 )
-from ngtools.utils import Wraps
+from ngtools.utils import Wraps, _SizedCache
 
 LOG = logging.getLogger(__name__)
-
-
-class _SizedCache(dict):
-    def __init__(self, max_size: int | None = None) -> None:
-        self._max_size = max_size
-        self._keys = []
-
-    def __setitem__(self, key: object, value: object) -> None:
-        if key in self:
-            del self[key]
-        super().__setitem__(key, value)
-        if self._max_size:
-            keys = list(self.keys())
-            while len(self) > self._max_size:
-                del self[keys.pop(0)]
 
 
 _DATASOURCE_REGISTRY = {}
@@ -1969,15 +1954,17 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
         parsed = parse_protocols(url)
         layer = parsed.layer
         info = cls._load_dict(url)
+        is_tracts = cls.is_tracts(url)
         mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
             "neuroglancer_annotations_v1": (
-                PrecomputedAnnotationDataSource
-                if layer != "tracts" else
-                PrecomputedTractsDataSource
+              PrecomputedTractsDataSource 
+              if (layer == "tracts") or (
+                is_tracts) else 
+              PrecomputedAnnotationDataSource
             ),
         }
         subclass = mapping[info["@type"]]
@@ -1997,6 +1984,20 @@ class PrecomputedDataSource(LayerDataSource,
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._info = self._load_dict(self.url)
+
+    @classmethod
+    def is_tracts(cls, url: str | dict) -> bool:
+        """Info file is for a tracts file."""
+        info = cls._load_dict(url)
+        orientations = {"x": False, "y": False, "z": False}
+        for property in info["properties"]:
+            if property["id"][:-1] == "orientation_":
+                axis = property["id"][-1]
+                orientations[axis] = True
+        for axis in ["x", "y", "z"]:
+            if not orientations[axis]:
+                return False
+        return True
 
     ...
 
