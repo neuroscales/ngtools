@@ -317,8 +317,8 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
 
     def __get_transform__(self) -> ng.CoordinateSpaceTransform:
         """
-        If a transform has been explicitely set, return it,
-        else, return the transform implicitely defined by neuroglancer.
+        If a transform has been explicitly set, return it,
+        else, return the transform implicitly defined by neuroglancer.
         """
         assigned_trf = self._wrapped.transform
         if (
@@ -956,7 +956,7 @@ class NiftiVolumeInfo(VolumeInfo):
             URL to the file
         align_corner : bool
             If True, use neuroglancer's native behavior when computing
-            the transform, which is to asume that (0, 0, 0) points to
+            the transform, which is to assume that (0, 0, 0) points to
             the corner of the first voxel. If False, use NIfTI's spec,
             which is to assume the (0, 0, 0) points to the center of the
             first voxel.
@@ -1120,7 +1120,7 @@ class NiftiDataSource(VolumeDataSource):
     whereas the `intent` code must be used to choose between the `sform`
     and `qform` according to the spec (as implemented in e.g. nibabel).
     This wrapper follows the specification, unless the affine to use
-    is explictly specified with the option `affine="sform"`,
+    is explicitly specified with the option `affine="sform"`,
     `affine="qform"`, or `affine="base"`.
     """
 
@@ -1137,7 +1137,7 @@ class NiftiDataSource(VolumeDataSource):
             URL to the file
         align_corner : bool, default=False
             If True, use neuroglancer's native behavior when computing
-            the transform, which is to asume that (0, 0, 0) points to
+            the transform, which is to assume that (0, 0, 0) points to
             the corner of the first voxel. If False, use NIfTI's spec,
             which is to assume the (0, 0, 0) points to the center of the
             first voxel.
@@ -1528,7 +1528,7 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
         self.nifti = None
         self._load_nifti(url, nifti)
 
-    def _load_nifti(self, url: UPath, nifti: bool | None):
+    def _load_nifti(self, url: UPath, nifti: bool | None) -> None:
         if nifti is False:
             return
 
@@ -1966,7 +1966,8 @@ class PrecomputedVolumeInfo(PrecomputedInfo):
 
 class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
     def __call__(
-            cls, arg: _LayerDataSourceFactory._DataSourceLike = None, *args, **kwargs
+            cls, arg: _LayerDataSourceFactory._DataSourceLike = None,
+            *args, **kwargs
     ) -> "PrecomputedDataSource":
         if cls is not PrecomputedDataSource:
             obj = super().__call__(arg, *args, **kwargs)
@@ -1995,9 +1996,12 @@ class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedTractsDataSource if (
-                layer == "tracts") or (
-                is_tracts) else PrecomputedAnnotationDataSource,
+            "neuroglancer_annotations_v1": (
+              PrecomputedTractsDataSource 
+              if (layer == "tracts") or (
+                is_tracts) else 
+              PrecomputedAnnotationDataSource
+            ),
         }
         subclass = mapping[info["@type"]]
         if subclass == PrecomputedVolumeDataSource:

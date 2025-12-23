@@ -34,13 +34,13 @@ class Affine:
 
     def sform(self):
         """Alias for the compact matrix form of a Vox2World (NIfTI convention)"""
-        return self.homogenous()[..., :-1, :]
+        return self.homogeneous()[..., :-1, :]
 
     def compact(self):
         """Compact form of a homogeneous affine matrix (last row dropped)"""
-        return self.homogenous()[..., :-1, :]
+        return self.homogeneous()[..., :-1, :]
 
-    def homogenous(self):
+    def homogeneous(self):
         """Homogeneous matrix form."""
         matrix = self.compact()
         new_shape = list(matrix.shape)
@@ -52,7 +52,7 @@ class Affine:
 
     def affine(self):
         """Alias for the homogeneous matrix form (NiBabel convention)"""
-        return self.homogenous()
+        return self.homogeneous()
 
     def translation(self):
         """Translation component"""
@@ -104,7 +104,7 @@ class HomogeneousAffineMatrix(Affine):
             raise ValueError('Expected square matrix')
         self.matrix = matrix
 
-    def homogenous(self):
+    def homogeneous(self):
         return self.matrix
 
 
