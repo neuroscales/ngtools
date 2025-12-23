@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Tuple
 
+import neuroglancer as ng
+
 # externals
 import numpy as np
 import requests
@@ -136,12 +138,12 @@ class TractAnnotationHandler(Handler):
         
         segments, _, offsets, _ = self._read_from_file(trk_path)
         source = filtered_layers[key].source
-        if isinstance(source, dict):
-            transform = np.array(source.transform.to_json().get(
-                "matrix", np.eye(4)[:-3]))
-        else:
+        if isinstance(source, ng.viewer_state.LayerDataSources):
             transform = np.array(source[0].transform.to_json().get(
-                "matrix", np.eye(4)[:-3]))
+                "matrix", np.eye(4)[:-1]))
+        else:
+            transform = np.array(source.transform.to_json().get(
+                "matrix", np.eye(4)[:-1]))
         
         transform_segments = segments.copy()
         transform_segments["start"] = np.hstack(
@@ -149,7 +151,7 @@ class TractAnnotationHandler(Handler):
         transform_segments["end"] = np.hstack(
             [segments["end"], np.ones((segments["end"].shape[0], 1))])@transform.T
         tract_ids = self._get_annotations_inside(transform_segments, 
-                                                 filter_layers[key].to_json())
+                                                 filter_layers[key])
         tract = tats.tract_bytes(tract_ids, offsets, segments)
 
         return tract
@@ -258,21 +260,23 @@ class TractAnnotationHandler(Handler):
         return tau.lta_data(affine)
     
     def _get_annotations_inside(
-            self, lines: np.ndarray, filter_layer: dict
+            self, lines: np.ndarray, filter_layer: ng.Layer
             ) -> np.ndarray:
         """
         Find all streamlines in a list of annotations that intersect 
         with the filter layer.
         """
-        source = filter_layer["source"]
-        if isinstance(source, dict):
-            transform = np.array(source["transform"].get("matrix", np.eye(4)[:-3]))
+        source = filter_layer.source
+        if isinstance(source, ng.viewer_state.LayerDataSources):
+            transform = np.array(source[0].transform.to_json().get(
+                "matrix", np.eye(4)[:-1]))
         else:
-            transform = np.array(source[0]["transform"].get("matrix", np.eye(4)[:-3]))
+            transform = np.array(source.transform.to_json().get(
+                "matrix", np.eye(4)[:-1]))
         line_list = []
-        for annotation in filter_layer["annotations"]:
-            if annotation["type"] == "axis_aligned_bounding_box":
-                points = np.vstack([annotation["pointA"], annotation["pointB"]])
+        for annotation in filter_layer.annotations:
+            if annotation.type == "axis_aligned_bounding_box":
+                points = np.vstack([annotation.pointA, annotation.pointB])
                 min_point = points.min(axis=0)
                 max_point = points.max(axis=0)
 
@@ -280,14 +284,27 @@ class TractAnnotationHandler(Handler):
                                                                    max_point).all(axis=1)
                 lines_in = lines[mask]
 
-            elif annotation["type"] == "ellipsoid":
-                center = np.array(annotation["center"] + [1])@transform.T
-                radii = np.array(annotation["radii"])@transform[:, :3].T
+            elif annotation.type == "ellipsoid":
+                center = np.array(annotation.center.tolist() + [1])@transform.T
+                radii = np.array(annotation.radii)@transform[:, :3].T
 
-                diffs = lines["start"] - center
-                normed = diffs / radii         
-                mask = (normed**2).sum(axis=1) <= 1.0
+                start_transformed = (lines["start"] - center)/radii
+                end_transformed = (lines["end"] - center)/radii
+
+                zero_vectors = np.all(end_transformed == start_transformed, axis=1)
+
+                end_transformed[zero_vectors] = start_transformed[zero_vectors] + \
+                    [10**-5]*3
+
+                l2 = np.sum((start_transformed - end_transformed)**2, axis=1)
+
+                t = np.clip(np.einsum("ij, ij->i", -start_transformed, \
+                                      end_transformed-start_transformed)/l2, 0.0, 1.0)
+
+                mask = np.linalg.norm(start_transformed + np.stack((t, t, t), axis=1)*
+                                      (end_transformed-start_transformed), axis=1) <= 1
                 lines_in = lines[mask]
+
             else:
                 continue
 

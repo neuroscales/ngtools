@@ -790,6 +790,8 @@ class LocalNeuroglancer(OSMixin):
                             layer.linkedSegmentationLayer["filter"]]
                         segmentation_layer.segments = [
                             max(segmentation_layer.segments)+1]
+                        
+
 
     # def on_state_change(self) -> None:
     #     old_state = self.saved_state
