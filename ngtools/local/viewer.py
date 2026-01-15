@@ -22,10 +22,10 @@ from neuroglancer.server import stop as ng_stop_server
 from ngtools.local.console import ActionHelpFormatter, Console
 from ngtools.local.fileserver import LocalFileServer, StaticFileHandler
 from ngtools.local.handlers import LincHandler, LutHandler
-from ngtools.local.termcolors import bformat
+from ngtools.local.termcolors import SUPPORTS_COLOR, bformat
 from ngtools.scene import Scene
 from ngtools.shaders import pretty_colormap_list
-from ngtools.utils import NG_URLS, find_available_port
+from ngtools.utils import _IS_GOOGLE_COLAB, NG_URLS, find_available_port
 
 # unix-specific imports
 try:
@@ -127,6 +127,14 @@ class OSMixin:
         long = kwargs.pop("long", False)
         hidden = kwargs.pop("hidden", False)
 
+        if SUPPORTS_COLOR:
+            bold = bformat.bold
+            magenta = bformat.fg.magenta
+            blue = bformat.fg.blue
+            green = bformat.fg.green
+        else:
+            bold = magenta = blue = green = (lambda x: x)
+
         if long:
             files = os.scandir(os.path.expanduser(path))
             files = sorted(files, key=lambda x: x.name)
@@ -156,12 +164,12 @@ class OSMixin:
                 else:
                     mystat["times"].append(date.strftime("%H:%M"))
                 if entry.is_symlink():
-                    fname = bformat.bold(bformat.fg.magenta(entry.name))
+                    fname = bold(magenta(entry.name))
                     fname += " -> " + os.readlink(entry.path)
                 elif entry.is_dir():
-                    fname = bformat.bold(bformat.fg.blue(entry.name))
+                    fname = bold(blue(entry.name))
                 elif "x" in mystat["perms"][-1]:
-                    fname = bformat.bold(bformat.fg.green(entry.name))
+                    fname = bold(green(entry.name))
                 else:
                     fname = entry.name
                 mystat["names"].append(fname)
@@ -269,7 +277,8 @@ class LocalNeuroglancer(OSMixin):
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
-        ip = self.get_viewer_url().split("://")[1].split(":")[0]
+        if not _IS_GOOGLE_COLAB:
+            ip = self.get_viewer_url().split("://")[1].split(":")[0]
 
         # Add specific handlers
         if fileserver is not False:
@@ -323,17 +332,20 @@ class LocalNeuroglancer(OSMixin):
         """
         return self._scene()
 
-    def get_server_url(self) -> str:
+    def get_server_url(self, regular: bool = False) -> str:
         """URL of the neuroglancer server."""
-        return ng.server.get_server_url().rstrip("/") + "/"
+        key = "regular_server_url" if regular else "server_url"
+        url = getattr(ng.server.global_server, key)
+        return url.rstrip("/") + "/"
 
-    def get_viewer_url(self) -> str:
+    def get_viewer_url(self, regular: bool = False) -> str:
         """URL of the viewer."""
-        return self.viewer.get_viewer_url().rstrip("/") + "/"
+        server_url = self.get_server_url(regular).rstrip("/")
+        return f"{server_url}/v/{self.viewer.token}/"
 
-    def get_fileserver_url(self) -> str:
+    def get_fileserver_url(self, regular: bool = True) -> str:
         """URL of the neuroglancer server."""
-        return self.fileserver.get_url().rstrip("/") + "/"
+        return self.fileserver.get_url(regular).rstrip("/") + "/"
 
     # ==================================================================
     #
@@ -432,7 +444,7 @@ class LocalNeuroglancer(OSMixin):
         _ = add_parser('rename_axes', help='Rename axes')
         _.set_defaults(func=self.rename_axes)
         _.add_argument(
-            dest='dst', metavar='DEST', nargs="+", help='New axis names')
+            dest='dst', metavar='DEST', nargs="*", help='New axis names')
         _.add_argument(
             '--destination', '--dst', '-d', metavar='DEST', nargs="+",
             dest="dst", help='New axis names')
@@ -756,12 +768,15 @@ class LocalNeuroglancer(OSMixin):
 
 _clihelp = type('_clihelp', (object,), {})
 
-b = bformat.bold
-u = bformat.underline
-i = bformat.italic
-R = bformat.fg.red
-G = bformat.fg.green
-B = bformat.fg.blue
+if SUPPORTS_COLOR:
+    b = bformat.bold
+    u = bformat.underline
+    i = bformat.italic
+    R = bformat.fg.red
+    G = bformat.fg.green
+    B = bformat.fg.blue
+else:
+    b = u = i = R = G = B = (lambda x: x)
 
 _clihelp.header_attributes = textwrap.dedent(
     f"{b('Arguments')}\n{b('----------')}\n"

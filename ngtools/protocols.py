@@ -1,4 +1,4 @@
-"""Lists of kown protocols."""
+"""Lists of known protocols."""
 
 LAYERS = [
     'volume',           # Raster data (image or volume)
@@ -8,6 +8,8 @@ LAYERS = [
     'surface',          # Triangular mesh
     'mesh',             # Other types of mesh ???
     'tracts',           # Set of piecewise curves
+    'tractsv1',         # uses tracts as skeletons
+    'tractsv2',         # converts tracts to precomputed annotations
     'roi',              # Region of interest ???
     'points',           # Pointcloud
     'transform',        # Spatial transform

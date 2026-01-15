@@ -275,7 +275,7 @@ def filesystem(protocol: URILike | FileSystem, **opt) -> FileSystem:
         url = protocol.url
         protocol = protocol.stream
 
-    # --- LINC/DANDI authentification ---
+    # --- LINC/DANDI authentication ---
     linc_auth = opt.pop("linc_auth", None)
     if linc_auth is None:
         linc_auth = "neuroglancer.lincbrain.org" in url
@@ -288,7 +288,7 @@ def filesystem(protocol: URILike | FileSystem, **opt) -> FileSystem:
     if (protocol, linc_auth, dandi_auth) in _FILESYSTEMS_CACHE:
         return _FILESYSTEMS_CACHE[(protocol, linc_auth, dandi_auth)]
 
-    # --- LINC/DANDI authentification ---
+    # --- LINC/DANDI authentication ---
     if linc_auth:
         LOG.debug(f"linc_auth - {url}")
         opt.setdefault("client_kwargs", {})
@@ -334,9 +334,14 @@ async def async_exists(uri: URILike, **opt) -> bool:
 
 def read_json(fileobj: FileLike, *args, **kwargs) -> dict:
     """Read local or remote JSON file."""
+    if hasattr(fileobj, "open"):
+        with fileobj.open("rb") as f:
+            return read_json(f, *args, **kwargs)
+    if not hasattr(fileobj, "read"):
+        with open(fileobj, "rb") as f:
+            return read_json(f, *args, **kwargs)
     tic = time.time()
-    with open(fileobj, "rb") as f:
-        data = json.load(f, *args, **kwargs)
+    data = json.load(fileobj, *args, **kwargs)
     toc = time.time()
     LOG.debug(f"read_json({fileobj}): {toc-tic} s")
     return data
@@ -344,9 +349,14 @@ def read_json(fileobj: FileLike, *args, **kwargs) -> dict:
 
 def write_json(obj: dict, fileobj: FileLike, *args, **kwargs) -> None:
     """Write local or remote JSON file."""
+    if hasattr(fileobj, "open"):
+        with fileobj.open("w") as f:
+            return write_json(f, *args, **kwargs)
+    if not hasattr(fileobj, "write"):
+        with open(fileobj, "w") as f:
+            return write_json(f, *args, **kwargs)
     tic = time.time()
-    with open(fileobj, "w") as f:
-        json.dump(obj, f, *args, **kwargs)
+    json.dump(obj, fileobj, *args, **kwargs)
     toc = time.time()
     LOG.debug(f"write_json(..., {fileobj}): {toc-tic} s")
     return
@@ -469,7 +479,7 @@ class chain:
         raise NotImplementedError
 
     def peek(self, *a, **k) -> bytes | str:
-        """Read tge first bytes without moving the cursor."""
+        """Read the first bytes without moving the cursor."""
         head = self.read(*a, **k)
         self._files.insert(self._file_index, BytesIO(head))
         return head
@@ -516,7 +526,7 @@ class open:
             If 'infer', guess from magic number (if mode 'r') or
             filename (if mode 'w').
         auth : dict
-            Authentification options to pass to `fsspec`.
+            Authentication options to pass to `fsspec`.
 
         Returns
         -------
@@ -544,7 +554,7 @@ class open:
 
     def _close(self) -> None:
         # close all the file-like objects that we've created
-        for fileobj in reversed(self.fileobjs):
+        for fileobj in reversed(getattr(self, "fileobjs", [])):
             fileobj.close()
         self.fileobjs = []
         self._is_open = False

@@ -40,10 +40,20 @@ if not hasattr(ng.Layer, "channelDimensions"):
     ng.Layer.channel_dimensions \
         = ng.Layer.channelDimensions \
         = wrapped_property("channelDimensions", ng.CoordinateSpace)
-if not hasattr(ng.Layer, "localDimensions"):
+if (
+    hasattr(ng.Layer, "layerDimensions") and
+    not hasattr(ng.Layer, "localDimensions")
+):
     ng.Layer.local_dimensions \
         = ng.Layer.localDimensions \
         = ng.Layer.layerDimensions
+elif (
+    hasattr(ng.Layer, "localDimensions") and
+    not hasattr(ng.Layer, "layerDimensions")
+):
+    ng.Layer.layer_dimensions \
+        = ng.Layer.layerDimensions \
+        = ng.Layer.localDimensions
 
 
 LOG = logging.getLogger(__name__)
@@ -98,7 +108,7 @@ class ViewerState(Wraps(ng.ViewerState)):
     show_slices : bool, default=True
         Whether to display orthogonal cross sections in the 3D window.
     wire_frame : bool, default=False
-        Whether to display mesh wire frams in the 3D window.
+        Whether to display mesh wire frames in the 3D window.
     enable_adaptive_downsampling : bool, default=True
         ???
     show_scale_bar : bool, default=True
@@ -259,7 +269,7 @@ class ViewerState(Wraps(ng.ViewerState)):
         })
         return value
 
-    __default__relativeDisplayScales__ = __default_relative_display_scales__
+    __default_relativeDisplayScales__ = __default_relative_display_scales__
     __set_relativeDisplayScales__ = __set_relative_display_scales__
 
     # --- display_dimensions -------------------------------------------
@@ -1729,7 +1739,7 @@ class Scene(ViewerState):
             raise RuntimeError(
                 'Dimensions not known. Are you running the app in windowless '
                 'mode? If yes, you must open a neuroglancer window to access '
-                'or modifiy the cursor position')
+                'or modify the cursor position')
 
         dim = self.dimensions.to_json()
 
@@ -2219,8 +2229,6 @@ class Scene(ViewerState):
             Save state to JSON file
         url : bool
             Print/load/save a JSON URL rather than a JSON object
-        open : bool
-            Open the URL in the browser.
         instance : {"ng", "linc"}
             Neuroglancer instance to use in the URL.
         print : bool

@@ -58,7 +58,7 @@ class TractSkeleton(ngsk.SkeletonSource):
     volumetric segmentations, with a relatively small number of
     individual objects. Since tractography (especially high-resolution
     tractography) can generate millions of streamlines, saving each
-    streamline as an individual skeleton is very ineficient -- both for
+    streamline as an individual skeleton is very inefficient -- both for
     querying and rendering.
 
     Instead, we combine all streamlines into a single skeleton. Still,
@@ -350,7 +350,7 @@ class TractSkeleton(ngsk.SkeletonSource):
         """
         Return precomputed format's "skeleton data" bytes (combined).
 
-        `id` should alway be `1` (since there is only one skeleton)
+        `id` should always be `1` (since there is only one skeleton)
 
         TODO: combine tracts per segment if a tractogram segmentation
         is available

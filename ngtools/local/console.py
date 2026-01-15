@@ -14,12 +14,13 @@ import readline  # autocomplete/history in user input
 import shlex  # parse user input as if a shell commandline
 import sys
 import traceback
+import warnings
 from functools import partial
 from gettext import gettext  # to fix usage string
 
 # internals
 from ngtools.local.iostream import StandardIO
-from ngtools.local.termcolors import bformat, iformat
+from ngtools.local.termcolors import SUPPORTS_COLOR, bformat, iformat
 
 LOG = logging.getLogger(__name__)
 
@@ -30,8 +31,10 @@ class Console(argparse.ArgumentParser):
     It handles history and autocomplete.
     """
 
-    DEFAULT_HISTFILE = '~/.neuroglancer_history'
-    DEFAULT_HISTSIZE = 1000
+    DEFAULT_HISTFILE = os.path.expanduser(
+        os.environ.get("NGTOOLS_HISTFILE", '~/.neuroglancer_history')
+    )
+    DEFAULT_HISTSIZE = int(os.environ.get("NGTOOLS_HISTSIZE", 1000))
 
     def __init__(self, *args: tuple, **kwargs: dict) -> None:
         """
@@ -77,7 +80,7 @@ class Console(argparse.ArgumentParser):
         stderr : TextIO | str, default=sys.stderr
             Error stream.
         max_choices : int | None, default=None
-            Maximum numer of choices to show in usage string.
+            Maximum number of choices to show in usage string.
         """
         self._debug = kwargs.pop('debug', False)
         max_choices = kwargs.pop('max_choices', None)
@@ -164,7 +167,12 @@ class Console(argparse.ArgumentParser):
             if not os.path.exists(self.history_file):
                 with open(self.history_file, 'wt'):
                     pass
-            readline.read_history_file(self.history_file)
+            try:
+                readline.read_history_file(self.history_file)
+            except OSError:
+                # https://github.com/neuroscales/ngtools/issues/16
+                # -> Let's raise a warning -- better than crashing
+                warnings.warn("Could not read command line history")
             readline.set_history_length(self.history_size)
 
     def exit_console(self) -> None:
@@ -177,13 +185,17 @@ class Console(argparse.ArgumentParser):
         """Wait for next user input."""
         self.enter_console()
 
+        if SUPPORTS_COLOR:
+            bold = bformat.bold
+            green = iformat.fg.green
+        else:
+            bold = green = (lambda x: x)
+
         self.print(
-            f'\nType {bformat.bold("help")} to list available '
-            f'commands, or {bformat.bold("help <command>")} '
-            f'for specific help.\n'
-            f'Type {bformat.bold("Ctrl+C")} to interrupt the '
-            f'current command and {bformat.bold("Ctrl+D")} to '
-            f'exit the app.'
+            f'\nType {bold("help")} to list available commands, or '
+            f'{bold("help <command>")} for specific help.\n'
+            f'Type {bold("Ctrl+C")} to interrupt the current command '
+            f'and {bold("Ctrl+D")} to exit the app.'
         )
 
         def are_you_sure() -> bool:
@@ -204,7 +216,7 @@ class Console(argparse.ArgumentParser):
             while True:
                 try:
                     # Query input
-                    args = self.input(iformat.fg.green(f'[{count}] '))
+                    args = self.input(green(f'[{count}] '))
                     args = args.strip()
                     if not args:
                         continue

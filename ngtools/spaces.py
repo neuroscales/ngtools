@@ -34,7 +34,7 @@ neurospaces : dict[str, ng.CoordinateSpace]
 neurotransforms : dict[tuple[str, str], ng.CoordinateSpaceTransform]
     Mapping to transforms between neuroimaging spaces.
     The keys are either pairs of `str`, or pairs of `ng.CoordinateSpace`
-    instances from the `neurospaces` dictionnary.
+    instances from the `neurospaces` dictionary.
 
 """
 # stdlib

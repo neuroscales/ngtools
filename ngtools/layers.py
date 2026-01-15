@@ -10,8 +10,10 @@ import numpy as np
 
 # internals
 from ngtools.datasources import (
+    AnnotationDataSource,
     LayerDataSources,
     MeshDataSource,
+    PrecomputedInfo,
     SkeletonDataSource,
     VolumeDataSource,
 )
@@ -167,6 +169,8 @@ class LayerFactory(type):
                 "surface": MeshLayer,
                 "skeleton": SkeletonLayer,
                 "tracts": TractLayer,
+                "tractsv1": TractLayer,
+                "tractsv2": TractAnnotationLayer,
                 "annotation": AnnotationLayer,
             }.get(layer_type, None)
             if GuessedLayer:
@@ -206,6 +210,9 @@ class LayerFactory(type):
             elif isinstance(source, MeshDataSource):
                 LOG.debug("LayerFactory - guess MeshLayer")
                 GuessedLayer = MeshLayer
+            elif isinstance(source, AnnotationDataSource):
+                LOG.debug("LayerFactory - guess AnnotationLayer")
+                GuessedLayer = AnnotationLayer
             if GuessedLayer:
                 # kwargs["source"] = sources
                 return GuessedLayer(*args, **kwargs)
@@ -718,6 +725,28 @@ class AnnotationLayer(_SourceMixin, Wraps(ng.AnnotationLayer), Layer):
     """  # noqa: E501
 
     ...
+
+
+class TractAnnotationLayer(AnnotationLayer):
+    """Tract annotation layer."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        if 'shader' not in kwargs:
+            info = PrecomputedInfo(kwargs.get(
+                'source', args[0] if args else None))._info
+            orientations = {"x": False, "y": False, "z": False}
+            for property in info["properties"]:
+                if property["id"][:-1] == "orientation_":
+                    axis = property["id"][-1]
+                    orientations[axis] = True
+            for axis in ["x", "y", "z"]:
+                if not orientations[axis]:
+                    kwargs['shader'] = shaders.annotation.default
+                    super().__init__(*args, **kwargs)
+                    return
+
+            kwargs['shader'] = shaders.annotation.orientation
+        super().__init__(*args, **kwargs)
 
 
 class LocalAnnotationLayer(Wraps(ng.LocalAnnotationLayer), AnnotationLayer):

@@ -299,11 +299,11 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
             f"`{name}` not implemented for this format ({cls.__name__})."
         )
 
-    def __set__url__(self, value: str) -> str:
+    def __set_url__(self, value: str) -> str:
         LocalObject = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
         if not isinstance(value, LocalObject):
-            format = parse_protocols(value)[1]
-            if format not in self.PROTOCOLS:
+            format = parse_protocols(value).format
+            if format is not None and format not in self.PROTOCOLS:
                 raise ValueError(
                     "Cannot assign uri with protocol", format, "in "
                     "data source of type:", type(self)
@@ -329,8 +329,8 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
 
     def __get_transform__(self) -> ng.CoordinateSpaceTransform:
         """
-        If a transform has been explicitely set, return it,
-        else, return the transform implicitely defined by neuroglancer.
+        If a transform has been explicitly set, return it,
+        else, return the transform implicitly defined by neuroglancer.
         """
         assigned_trf = self._wrapped.transform
         if (
@@ -935,7 +935,7 @@ class NiftiVolumeInfo(VolumeInfo):
             URL to the file
         align_corner : bool
             If True, use neuroglancer's native behavior when computing
-            the transform, which is to asume that (0, 0, 0) points to
+            the transform, which is to assume that (0, 0, 0) points to
             the corner of the first voxel. If False, use NIfTI's spec,
             which is to assume the (0, 0, 0) points to the center of the
             first voxel.
@@ -1099,7 +1099,7 @@ class NiftiDataSource(VolumeDataSource):
     whereas the `intent` code must be used to choose between the `sform`
     and `qform` according to the spec (as implemented in e.g. nibabel).
     This wrapper follows the specification, unless the affine to use
-    is explictly specified with the option `affine="sform"`,
+    is explicitly specified with the option `affine="sform"`,
     `affine="qform"`, or `affine="base"`.
     """
 
@@ -1116,7 +1116,7 @@ class NiftiDataSource(VolumeDataSource):
             URL to the file
         align_corner : bool, default=False
             If True, use neuroglancer's native behavior when computing
-            the transform, which is to asume that (0, 0, 0) points to
+            the transform, which is to assume that (0, 0, 0) points to
             the corner of the first voxel. If False, use NIfTI's spec,
             which is to assume the (0, 0, 0) points to the center of the
             first voxel.
@@ -1383,7 +1383,19 @@ class ZarrVolumeInfo(VolumeInfo):
         oriented according to the nifti metadata.
         """
         return T.compose(
-            self.getNiftiTransform(),
+            # zarr output voxel size
+            ng.CoordinateSpaceTransform(
+                input_dimensions=self.getOutputDimensions(),
+                output_dimensions=self.getOutputDimensions(),
+            ),
+            # nifti transform, but mapping from (x,y,z,t,c) to (x,y,z,t,c)
+            # instead of (i,j,k,m,c) to (x,y,z,t,c)
+            ng.CoordinateSpaceTransform(
+                matrix=self.getNiftiMatrix(),
+                input_dimensions=self.getNiftiOutputDimensions(),
+                output_dimensions=self.getNiftiOutputDimensions(),
+            ),
+            # zarr input voxel size
             ng.CoordinateSpaceTransform(
                 input_dimensions=self.getInputDimensions(),
                 output_dimensions=self.getInputDimensions(),
@@ -1460,7 +1472,7 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
     """Volume info for Zarr v3."""
 
     def __init__(self, url: str, nifti: bool | None = None) -> None:
-        super().__init__(self)
+        super().__init__(url)
         url = UPath(parse_protocols(self.url).url)
 
         if not exists(url / "zarr.json"):
@@ -1493,14 +1505,36 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
                 raise ValueError("Missing or invalid OME metadata.")
 
         self.nifti = None
-        if nifti is not False:
-            if exists(url / "nifti" / "zarr.json"):
-                url = url / "nifti" / "c0"
-                self.nifti = NiftiVolumeInfo(
-                    url, affine="best", align_corner=True
-                )
-            elif nifti is True:
+        self._load_nifti(url, nifti)
+
+    def _load_nifti(self, url: UPath, nifti: bool | None) -> None:
+        if nifti is False:
+            return
+
+        nifti_json = url / "nifti" / "zarr.json"
+
+        if not nifti_json.exists():
+            if nifti is True:
                 raise FileNotFoundError("Cannot find nifti group in zarr.")
+            return
+
+        try:
+            content = json.loads(nifti_json.read_text())
+            sep = content["chunk_key_encoding"]["configuration"]["separator"]
+        except (KeyError, json.JSONDecodeError):
+            raise ValueError(
+                "Failed to read dimension separator from NIfTI zarr metadata."
+            )
+
+        nifti_group = url / "nifti" / f"c{sep}0"
+        if not nifti_group.exists():
+            raise FileNotFoundError("Cannot find nifti group in zarr.")
+
+        self.nifti = NiftiVolumeInfo(
+            nifti_group,
+            affine="best",
+            align_corner=True
+        )
 
     def getDataType(self) -> np.dtype:
         """Array shape at a given level."""
@@ -1783,13 +1817,14 @@ class N5DataSource(VolumeDataSource):
 class _PrecomputedInfoFactory(type):
     def __call__(cls, url: str | dict) -> "PrecomputedInfo":
         info = cls._load_dict(url)
-        return {
+        subclass = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeInfo,
             "neuroglancer_multilod_draco": PrecomputedMeshInfo,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshInfo,
             "neuroglancer_skeletons": PrecomputedSkeletonInfo,
             "neuroglancer_annotations_v1": PrecomputedAnnotationInfo,
-        }[info["@type"]](info)
+        }[info["@type"]]
+        return super(_PrecomputedInfoFactory, subclass).__call__(info)
 
 
 class PrecomputedInfo(metaclass=_PrecomputedInfoFactory):
@@ -1801,8 +1836,10 @@ class PrecomputedInfo(metaclass=_PrecomputedInfoFactory):
     @classmethod
     def _load_dict(cls, url: str | dict) -> dict:
         if not isinstance(url, dict):
-            if url.startswith("precomputed://"):
-                url = url[14:]
+            url = url.rstrip('/')
+            url = parse_protocols(url).url
+            if not url.endswith("/info"):
+                url += "/info"
             with open(url, "rb") as f:
                 info = json.load(f)
         else:
@@ -1907,21 +1944,59 @@ class PrecomputedVolumeInfo(PrecomputedInfo):
 
 
 class _PrecomputedDataSourceFactory(_LayerDataSourceFactory):
-    def __call__(cls, url: str | dict) -> "PrecomputedDataSource":
+    def __call__(
+            cls, arg: _LayerDataSourceFactory._DataSourceLike = None,
+            *args, **kwargs
+    ) -> "PrecomputedDataSource":
+        if cls is not PrecomputedDataSource:
+            obj = super().__call__(arg, *args, **kwargs)
+            return obj
+
+        if kwargs.get("url", ""):
+            url = kwargs["url"]
+            if isinstance(url, (str, PathLike)):
+                url = kwargs["url"] = str(url)
+        elif isinstance(args, (str, PathLike)):
+            url = arg = str(arg)
+        elif hasattr(arg, "url"):
+            url = arg.url
+        elif isinstance(arg, dict) and "url" in arg:
+            url = arg["url"]
+        elif not isinstance(arg, cls._LocalSource):
+            raise ValueError("Missing data source url")
+        if not arg:
+            kwargs["url"] = url
+        parsed = parse_protocols(url)
+        layer = parsed.layer
         info = cls._load_dict(url)
-        return {
+        mapping = {
             "neuroglancer_multiscale_volume": PrecomputedVolumeDataSource,
             "neuroglancer_multilod_draco": PrecomputedMeshDataSource,
             "neuroglancer_legacy_mesh": PrecomputedLegacyMeshDataSource,
             "neuroglancer_skeletons": PrecomputedSkeletonDataSource,
-            "neuroglancer_annotations_v1": PrecomputedAnnotationDataSource,
-        }[info["@type"]](info)
+            "neuroglancer_annotations_v1": (
+                PrecomputedAnnotationDataSource
+                if layer != "tracts" else
+                PrecomputedTractsDataSource
+            ),
+        }
+        subclass = mapping[info["@type"]]
+        return super(_PrecomputedDataSourceFactory, subclass).__call__(
+            arg, *args, **kwargs)
 
 
 @datasource("precomputed")
 class PrecomputedDataSource(LayerDataSource,
                             metaclass=_PrecomputedDataSourceFactory):
     """Base wrapper for precomputed data sources."""
+
+    @classmethod
+    def _load_dict(cls, url: str | dict) -> dict:
+        return PrecomputedInfo(url)._info
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._info = self._load_dict(self.url)
 
     ...
 
@@ -1949,6 +2024,32 @@ class PrecomputedAnnotationDataSource(
 ):
     """Base wrapper for precomputed annotations sources."""
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.transform = self.transform
+
+    @property
+    def _transform(self) -> ng.CoordinateSpaceTransform:
+        dimensions = ng.CoordinateSpace(
+            names=["x", "y", "z"],
+            units="mm",
+            scales=[1, 1, 1],
+        )
+
+        rank = len(dimensions.names)
+        return ng.CoordinateSpaceTransform(
+            matrix=np.eye(rank+1)[:-1],
+            input_dimensions=dimensions,
+            output_dimensions=dimensions
+        )
+    ...
+
+
+class PrecomputedTractsDataSource(PrecomputedAnnotationDataSource):
+    """Base wrapper for track precomputed annotations sources."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
     ...
 
 

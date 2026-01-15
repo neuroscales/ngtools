@@ -1,4 +1,70 @@
 """Color tags that can be used in a terminal prompt."""
+import os
+import sys
+
+try:
+    import colorama
+
+    # Avoid initializing colorama in non-Windows platforms.
+    colorama.just_fix_windows_console()
+except (
+    AttributeError,     # colorama <= 0.4.6.
+    ImportError,        # colorama is not installed.
+    # If just_fix_windows_console() accesses sys.stdout with
+    # WSGIRestrictedStdout.
+    OSError,
+):
+    HAS_COLORAMA = False
+else:
+    HAS_COLORAMA = True
+
+
+def supports_color() -> bool:
+    """
+    Return True if the running system's terminal supports color,
+    and False otherwise.
+    """
+    # Copied from Django - BSD-3
+    # https://github.com/django/django/blob/main/django/core/management/color.py
+    # https://github.com/django/django/blob/main/LICENSE
+
+    def vt_codes_enabled_in_windows_registry() -> bool:
+        """
+        Check the Windows Registry to see if VT code handling has been enabled
+        by default, see https://superuser.com/a/1300251/447564.
+        """
+        try:
+            # winreg is only available on Windows.
+            import winreg
+        except ImportError:
+            return False
+        else:
+            try:
+                reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Console")
+                value, _ = winreg.QueryValueEx(reg_key, "VirtualTerminalLevel")
+            except FileNotFoundError:
+                return False
+            else:
+                return value == 1
+
+    # isatty is not always implemented, #6223.
+    is_a_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+    return is_a_tty and (
+        sys.platform != "win32"
+        or (HAS_COLORAMA and getattr(colorama, "fixed_windows_console", False))
+        or "ANSICON" in os.environ
+        or
+        # Windows Terminal supports VT codes.
+        "WT_SESSION" in os.environ
+        or
+        # Microsoft Visual Studio Code's built-in terminal supports colors.
+        os.environ.get("TERM_PROGRAM") == "vscode"
+        or vt_codes_enabled_in_windows_registry()
+    )
+
+
+SUPPORTS_COLOR = supports_color()
 
 
 def rgb_to_ansi256(r: int, g: int, b: int) -> int:
