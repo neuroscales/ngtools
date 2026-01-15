@@ -444,7 +444,7 @@ class LocalNeuroglancer(OSMixin):
         _ = add_parser('rename_axes', help='Rename axes')
         _.set_defaults(func=self.rename_axes)
         _.add_argument(
-            dest='dst', metavar='DEST', nargs="+", help='New axis names')
+            dest='dst', metavar='DEST', nargs="*", help='New axis names')
         _.add_argument(
             '--destination', '--dst', '-d', metavar='DEST', nargs="+",
             dest="dst", help='New axis names')
