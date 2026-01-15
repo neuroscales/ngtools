@@ -8,7 +8,6 @@ import sys
 from copy import deepcopy
 from io import BytesIO
 from os import PathLike
-from textwrap import dedent
 from typing import Literal, Sequence
 from urllib.parse import quote as urlquote
 from urllib.parse import unquote as urlunquote
@@ -136,38 +135,51 @@ class ViewerState(Wraps(ng.ViewerState)):
         With fields
         * `layer : str, default=layers[0].name`
             Selected layer
-        * `visible : bool, default=False`
-            Whether the right panel is visible.
-        * `size : int`
-            Width of the right panel, in voxels.
     statistics : StatisticsDisplayState
-        With fields
-        * `visible : bool, default=False`
-            Whether the statistics panel is visible.
-        * `size : int`
-            Height of the panel, in voxels.
+        Statistics panel.
     help_panel : HelpPanelState
-        With fields
-        * `visible : bool, default=False`
-            Whether the help panel is visible.
-        * `size : int`
-            Width of the panel, in voxels.
-        * `flex : float, default=1.0`
-            Relative height of the panel.
+        Help panel.
     layer_list_panel : LayerListPanelState
-        With fields
-        * `visible : bool, default=False`
-            Whether the layer list panel is visible.
-        * `size : int`
-            Width of the panel, in voxels.
-        * `flex : float, default=1.0`
-            Relative height of the panel.
+        Layer list panel.
     partial_viewport : vector[float], default=[0, 0, 1, 1]
         Top-left and bottom-right corner of the visible portion of the
         viewer, where `[0, 0, 1, 1]` corresponds to the entire viewer.
     tool_bindings : dict[str, Tool | str]
         User-specific key bindings.
+    tool_palettes : dict[str, ToolPalette]
+        Displayed tool palettes, with fields
+        * `tools : list[Tool], optional`
+            List of tools to display, with fields
+            * `type : str` : tool type
+            * `layer : str` : layer name, if a `LayerTool`
+            * `control : str` : control name, if `type == "shaderControl"`
+        * `query : bool, default=False`
+            A query that selects existing tools to display:
+            * `+` : all tools
+            * `control:{tool}` : all tools that control a given type of layer
+            * `dimension:{dim}` : all tools that operate on a given dimension
+            * `layer:{layer}` : all tools that operate on a given layer
+            * `layerType:{type}` : all tools that operate on a given layer type
+            * `type:{tool}` : all tools of a given type
 
+    Note
+    ----
+    All "panel" attributes
+    (selected_layer, statistics, help_panel, layer_list_panel, tool_palettes)
+    have the additional fields:
+    * `side : {"left", "right", "top", "bottom"}, default="right"`
+        Side on which the help panel is displayed.
+    * `visible : bool, default=False`
+        Whether the help panel is visible.
+    * `size : int`
+        Width (if left/right) or height (if top/bottom) of the panel,
+        in voxels.
+    * `flex : float, default=1.0`
+        Relative height of the panel.
+    * `row : int, default=0`
+        Row in which the panel is displayed.
+    * `col : int, default=0`
+        Column in which the panel is displayed.
     """
 
     # --- non-ng attributes --------------------------------------------
@@ -1066,6 +1078,7 @@ class Scene(ViewerState):
         *,
         mov: str = None,
         fix: str = None,
+        **kwargs,
     ) -> None:
         """
         Apply an affine transform.
@@ -1074,8 +1087,10 @@ class Scene(ViewerState):
         ----------
         transform : list[float] or np.ndarray or fileobj
             Affine transform (RAS+)
-        layer : str or list[str]
-            Layer(s) to transform
+        layer : str | list[str] | None
+            Layer(s) to transform.
+            If `None`, all layers are transformed.
+            If `"::selected"`, only the selected layer is transformed.
         inv : bool
             Invert the transform
         reset : bool
@@ -1107,8 +1122,8 @@ class Scene(ViewerState):
         self.world_axes(world_axes)
         self.display(display_dimensions)
 
-        if interactive:
-            self._interactive_transform(layer)
+        if interactive or kwargs:
+            self._interactive_transform(layer, **kwargs)
 
     def _apply_transform(
         self,
@@ -1130,6 +1145,12 @@ class Scene(ViewerState):
         layer_names = layer
         if isinstance(layer_names, str):
             layer_names = [layer_names]
+
+        layer_names = [
+            self.selected_layer.layer
+            if layer_name == "::selected" else layer_name
+            for layer_name in layer_names
+        ]
 
         for layer in self.layers:
             layer: ng.ManagedLayer
@@ -1218,73 +1239,87 @@ class Scene(ViewerState):
             transform = T.inverse(transform)
         return transform
 
-    def _interactive_transform(self, layer: str) -> None:
-        def make_local_annot() -> ng.AnnotationLayer:
-            coord = self.spatial_dimensions
-            return ng.AnnotationLayer(ng.LocalAnnotationLayer(coord).to_json())
+    DEFAULT_CONTROL_TRL = \
+        "#uicontrol float translation_scale slider(min=-5, max=5, default=0, step=0.01)"  # noqa: E501
+    DEFAULT_CONTROL_ROT = \
+        "#uicontrol float rotation_scale slider(min=0, max=90, default=1, step=0.1)"  # noqa: E501
 
-        layer_name, layer = layer, self.layers[layer]
-        ilayer_name = "__interactive_transform__:" + layer_name
+    def _interactive_transform(
+        self,
+        axis: str = "x",
+        value: float = 0,
+        type: str = "translation",
+        layer: str | list[str] = "::selected",
+    ) -> None:
 
-        if ilayer_name not in self.layers:
-            self.layers[ilayer_name] = make_local_annot()
-        ilayer = self.layers[ilayer_name]
+        layer_names = layer
+        if layer_names is None:
+            layer_names = "::selected"
+        if isinstance(layer_names, str):
+            layer_names = [layer_names]
+        layer_names = [
+            self.selected_layer.layer
+            if layer_name == "::selected" else layer_name
+            for layer_name in layer_names
+        ]
+        to_rot_center = np.eye(len(self.dimensions.names) + 1)
+        to_rot_center[:-1, -1] = -np.array(self.position)
 
-        # save original transform
-        if layer.source and ilayer.source[0].transform is not None:
-            ilayer.source[0].transform = ng.CoordinateSpaceTransform(
-                matrix=layer.source[0].transform.matrix,
-                output_dimensions=layer.source[0].transform.output_dimensions,
-            )
+        from_rot_center = np.eye(len(self.dimensions.names) + 1)
+        from_rot_center[:-1, -1] = np.array(self.position)
 
-        if False:
-            # compute current ras2ras transform
-            matrix = self.save_transform(layer=layer_name, print=False)
+        for layer_name in layer_names:
+            if layer_name not in self.layers:
+                continue
+            layer = self.layers[layer_name]
+            shader = None
+            controls = {}
+            if hasattr(layer, "shader"):
+                shader = layer.shader
+                controls = layer.shader_controls.to_json()
+            elif hasattr(layer, "skeleton_rendering"):
+                shader = layer.skeleton_rendering.shader
+                controls = layer.skeleton_rendering.shader_controls.to_json()
+            if shader == "None":
+                shader = shaders.default
+            if shader:
+                if "#uicontrol float translation_scale" not in shader:
+                    shader += f"\n{self.DEFAULT_CONTROL_TRL}"
+                if "#uicontrol float rotation_scale" not in shader:
+                    shader += f"\n{self.DEFAULT_CONTROL_ROT}"
+                if hasattr(layer, "shader"):
+                    layer.shader = shader
+                elif hasattr(layer, "skeleton_rendering"):
+                    layer.skeleton_rendering.shader = shader
+                controls.setdefault("translation_scale", 0.0)
+                controls.setdefault("rotation_scale", 1.0)
 
-            if matrix is None:
-                matrix = np.eye(4)
-
-            elif layer.source:
-                # shift to center of FOV
-                center = layer.source[0].output_center
-                if center:
-                    matrix[:3, -1] -= matrix[:3, :3] @ center
-                    matrix[:3, -1] += center
-
-            # convert to parameters
-            t, r, z, s = T.get_affine_parameters(matrix)
-            z = np.log2(z)
-
-        ilayer.shader = dedent(
-            """
-            #uicontrol float shear_xy(min=-1, max=1, default=0, step=0.1)
-            #uicontrol float shear_xz(min=-1, max=1, default=0, step=0.1)
-            #uicontrol float shear_yz(min=-1, max=1, default=0, step=0.1)
-            #uicontrol float zoom_x(min=-2, max=2, default=0, step=0.1)
-            #uicontrol float zoom_y(min=-2, max=2, default=0, step=0.1)
-            #uicontrol float zoom_z(min=-2, max=2, default=0, step=0.1)
-            #uicontrol float pitch_x(min=-180, max=180, default=0, step=1)
-            #uicontrol float roll_y(min=-180, max=180, default=0, step=1)
-            #uicontrol float yaw_z(min=-180, max=180, default=0, step=1)
-            #uicontrol float translate_x(min=-1, max=1, default=0, step=0.1)
-            #uicontrol float translate_y(min=-1, max=1, default=0, step=0.1)
-            #uicontrol float translate_z(min=-1, max=1, default=0, step=0.1)
-            """
-        )
-        ilayer.shader_controls = {
-            "shear_xy": 0,
-            "shear_xz": 0,
-            "shear_yz": 0,
-            "zoom_x": 0,
-            "zoom_y": 0,
-            "zoom_z": 0,
-            "pitch_x": 0,
-            "roll_y": 0,
-            "yaw_z": 0,
-            "translate_x": 0,
-            "translate_y": 0,
-            "translate_z": 0,
-        }
+            if value:
+                mat = np.eye(len(self.dimensions.names) + 1)
+                if type[:1].upper() == "T":
+                    shift = value * 2**controls.get("translation_scale", 0.0)
+                    mat[self.dimensions.names.index(axis), -1] = shift
+                elif type[:1].upper() == "R":
+                    angle = np.deg2rad(
+                        value * controls.get("rotation_scale", 1.0)
+                    )
+                    c = np.cos(angle)
+                    s = np.sin(angle)
+                    i = self.dimensions.names.index(axis)
+                    j = (i + 1) % 3
+                    k = (i + 2) % 3
+                    mat[i, i] = 1.0
+                    mat[j, j] = c
+                    mat[j, k] = -s
+                    mat[k, j] = s
+                    mat[k, k] = c
+                    mat = from_rot_center @ mat @ to_rot_center
+                transform = ng.CoordinateSpaceTransform(
+                    matrix=mat[:-1],
+                    input_dimensions=self.dimensions,
+                    output_dimensions=self.dimensions,
+                )
+                self._apply_transform(transform, layer=layer_name)
 
     @autolog
     def save_transform(

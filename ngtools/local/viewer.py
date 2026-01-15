@@ -10,7 +10,7 @@ import stat
 import sys
 import textwrap
 from functools import partial, wraps
-from typing import Generator
+from typing import Callable, Generator
 
 # externals
 import neuroglancer as ng
@@ -277,6 +277,8 @@ class LocalNeuroglancer(OSMixin):
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
+        self._setup_keybindings()
+
         if not _IS_GOOGLE_COLAB:
             ip = self.get_viewer_url().split("://")[1].split(":")[0]
 
@@ -349,7 +351,112 @@ class LocalNeuroglancer(OSMixin):
 
     # ==================================================================
     #
-    #                   COMMANDLINE APPLICATION
+    #                          KEY BINDINGS
+    #
+    # ==================================================================
+
+    def _keybind_action(
+        self, _, action: Callable[[Scene], None], status: str = ""
+    ) -> None:
+        with self.viewer.config_state.txn() as s:
+            s.status_messages["status"] = status
+        with self.scene() as scene:
+            action(scene)
+        with self.viewer.config_state.txn() as s:
+            s.status_messages.pop("status", None)
+
+    def _setup_keybindings(self) -> None:
+
+        self.viewer.actions.add(
+            'rotate-layer-z+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=1, type="R"), status="Rotating +Z"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-y+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=1, type="R"), status="Rotating +Y"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-x+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=1, type="R"), status="Rotating +X"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-z-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=-1, type="R"), status="Rotating -Z"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-y-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=-1, type="R"), status="Rotating -Y"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-x-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=-1, type="R"), status="Rotating -X"
+            ))
+
+        self.viewer.actions.add(
+            'translate-layer-z+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=1, type="T"), status="Translating +Z"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-y+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=1, type="T"), status="Translating +Y"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-x+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=1, type="T"), status="Translating +X"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-z-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=-1, type="T"), status="Translating -Z"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-y-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=-1, type="T"), status="Translating -Y"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-x-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=-1, type="T"), status="Translating -X"
+            ))
+
+        with self.viewer.config_state.txn() as s:
+            s.input_event_bindings.viewer['control+keyi'] = 'rotate-layer-x+'
+            s.input_event_bindings.viewer['control+keyj'] = 'rotate-layer-y+'
+            s.input_event_bindings.viewer['control+keyk'] = 'rotate-layer-z+'
+            s.input_event_bindings.viewer['control+alt+keyi'] = 'rotate-layer-x-'
+            s.input_event_bindings.viewer['control+alt+keyj'] = 'rotate-layer-y-'
+            s.input_event_bindings.viewer['control+alt+keyk'] = 'rotate-layer-z-'
+            s.input_event_bindings.viewer['keyi'] = 'translate-layer-x+'
+            s.input_event_bindings.viewer['keyj'] = 'translate-layer-y+'
+            s.input_event_bindings.viewer['keyk'] = 'translate-layer-z+'
+            s.input_event_bindings.viewer['alt+keyi'] = 'translate-layer-x-'
+            s.input_event_bindings.viewer['alt+keyj'] = 'translate-layer-y-'
+            s.input_event_bindings.viewer['alt+keyk'] = 'translate-layer-z-'
+    # ==================================================================
+    #
+    #                      COMMANDLINE APPLICATION
     #
     # ==================================================================
 
