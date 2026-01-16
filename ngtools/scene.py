@@ -1510,6 +1510,8 @@ class Scene(ViewerState):
         "#uicontrol float translation_scale slider(min=-5, max=5, default=0, step=0.01)"  # noqa: E501
     DEFAULT_CONTROL_ROT = \
         "#uicontrol float rotation_scale slider(min=0, max=90, default=1, step=0.1)"  # noqa: E501
+    DEFAULT_CONTROL_SCL = \
+        "#uicontrol float zoom_scale slider(min=-5, max=5, default=0, step=0.01)"  # noqa: E501
 
     def _interactive_transform(
         self,
@@ -1528,7 +1530,7 @@ class Scene(ViewerState):
         value : float
             Value of the transform, in degrees (if `type="rotation"`) or
             model space units (if `type="translation"`).
-        type : {"translation", "rotation"}
+        type : {"translation", "rotation", "scaling"}
             Type of transform to apply.
         layer : str | list[str]
             Layer(s) to transform. The value `"::selected"` can be used
@@ -1544,11 +1546,11 @@ class Scene(ViewerState):
             if layer_name == "::selected" else layer_name
             for layer_name in layer_names
         ]
-        to_rot_center = np.eye(len(self.dimensions.names) + 1)
-        to_rot_center[:-1, -1] = -np.array(self.position)
+        to_center = np.eye(len(self.dimensions.names) + 1)
+        to_center[:-1, -1] = -np.array(self.position)
 
-        from_rot_center = np.eye(len(self.dimensions.names) + 1)
-        from_rot_center[:-1, -1] = np.array(self.position)
+        from_center = np.eye(len(self.dimensions.names) + 1)
+        from_center[:-1, -1] = np.array(self.position)
 
         for layer_name in layer_names:
             if layer_name not in self.layers:
@@ -1569,13 +1571,15 @@ class Scene(ViewerState):
                     shader += f"\n{self.DEFAULT_CONTROL_TRL}"
                 if "#uicontrol float rotation_scale" not in shader:
                     shader += f"\n{self.DEFAULT_CONTROL_ROT}"
+                if "#uicontrol float zoom_scale" not in shader:
+                    shader += f"\n{self.DEFAULT_CONTROL_SCL}"
                 if hasattr(layer, "shader"):
                     layer.shader = shader
                 elif hasattr(layer, "skeleton_rendering"):
                     layer.skeleton_rendering.shader = shader
                 controls.setdefault("translation_scale", 0.0)
                 controls.setdefault("rotation_scale", 1.0)
-
+                controls.setdefault("zoom_scale", 0.0)
             if value:
                 mat = np.eye(len(self.dimensions.names) + 1)
                 if type[:1].upper() == "T":
@@ -1595,7 +1599,17 @@ class Scene(ViewerState):
                     mat[j, k] = -s
                     mat[k, j] = s
                     mat[k, k] = c
-                    mat = from_rot_center @ mat @ to_rot_center
+                    mat = from_center @ mat @ to_center
+                elif type[:1].upper() in ("S", "Z"):
+                    value = value * (2.0 ** controls.get("zoom_scale", 0.0))
+                    scale = 2.0 ** value
+                    if axis == "::all":
+                        for i in range(3):
+                            mat[i, i] = scale
+                    else:
+                        i = self.dimensions.names.index(axis)
+                        mat[i, i] = scale
+                    mat = from_center @ mat @ to_center
                 transform = ng.CoordinateSpaceTransform(
                     matrix=mat[:-1],
                     input_dimensions=self.dimensions,

@@ -481,6 +481,55 @@ class LocalNeuroglancer(OSMixin):
             ))
 
         self.viewer.actions.add(
+            'zoom-layer-all+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="::all", value=1, type="Z"), status="zoom-layer-all+"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-z+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=1, type="Z"), status="zoom-layer-z+"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-y+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=1, type="Z"), status="zoom-layer-y+"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-x+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=1, type="Z"), status="zoom-layer-x+"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-all-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="::all", value=-1, type="Z"), status="zoom-layer-all-"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-z-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=-1, type="Z"), status="zoom-layer-z-"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-y-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=-1, type="Z"), status="zoom-layer-y-"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-x-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=-1, type="Z"), status="zoom-layer-x-"
+            ))
+
+        self.viewer.actions.add(
             'translate-layer-mouse-to-crosshair',
             partial(
                 self._keybind_action2,
@@ -573,6 +622,14 @@ class LocalNeuroglancer(OSMixin):
             v['alt+keyi'] = 'translate-layer-x-'
             v['alt+keyj'] = 'translate-layer-y-'
             v['alt+keyk'] = 'translate-layer-z-'
+            v['control+shift+keyl'] = 'zoom-layer-all+'
+            v['control+shift+keyi'] = 'zoom-layer-x+'
+            v['control+shift+keyj'] = 'zoom-layer-y+'
+            v['control+shift+keyk'] = 'zoom-layer-z+'
+            v['alt+shift+keyl'] = 'zoom-layer-all-'
+            v['alt+shift+keyi'] = 'zoom-layer-x-'
+            v['alt+shift+keyj'] = 'zoom-layer-y-'
+            v['alt+shift+keyk'] = 'zoom-layer-z-'
 
         with self.viewer.config_state.txn() as s:
             v = s.input_event_bindings.viewer
