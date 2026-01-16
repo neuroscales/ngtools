@@ -534,10 +534,20 @@ def compose(
 
     # ------------------------------------------------------------------
     # Get parts
-    li_dims = left.input_dimensions.to_json()
-    lo_dims = left.output_dimensions.to_json()
-    ri_dims = right.input_dimensions.to_json()
-    ro_dims = right.output_dimensions.to_json()
+    li_dims = left.input_dimensions or left.output_dimensions
+    lo_dims = left.output_dimensions or left.input_dimensions
+    ri_dims = right.input_dimensions or right.output_dimensions
+    ro_dims = right.output_dimensions or right.input_dimensions
+
+    if not li_dims:
+        raise RuntimeError("Left transform has no input/output dimensions.")
+    if not ri_dims:
+        raise RuntimeError("Right transform has no input/output dimensions.")
+
+    li_dims = li_dims.to_json()
+    lo_dims = lo_dims.to_json()
+    ri_dims = ri_dims.to_json()
+    ro_dims = ro_dims.to_json()
 
     l_matrix = get_matrix(left, square=True)
     r_matrix = get_matrix(right, square=True)
