@@ -1500,9 +1500,10 @@ class Scene(ViewerState):
                         f"Could not save transform for layer {layer_name}: {e}"
                     )
                     ras2ras = None
+                    raise e
 
                 finally:
-                    matrices[layer.name] = ras2ras
+                    matrices.setdefault(layer.name, ras2ras)
 
         return matrices
 

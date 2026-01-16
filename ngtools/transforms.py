@@ -1010,8 +1010,8 @@ def subtransform(
     if unit is not None:
         unit = _ensure_list(unit)
         kind = [U.split_unit(u)[1] for u in unit]
-    input_names = _ensure_list(input_names or names)
-    output_names = _ensure_list(output_names or names)
+    input_names = _ensure_list(input_names or names or [])
+    output_names = _ensure_list(output_names or names or [])
 
     idim: ng.CoordinateSpace = transform.input_dimensions
     odim: ng.CoordinateSpace = transform.output_dimensions
