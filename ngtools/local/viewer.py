@@ -10,13 +10,14 @@ import stat
 import sys
 import textwrap
 from functools import partial, wraps
-from typing import Generator
+from typing import Callable, Generator
 
 # externals
 import neuroglancer as ng
 import numpy as np
 from neuroglancer.server import set_server_bind_address as ng_bind_address
 from neuroglancer.server import stop as ng_stop_server
+from neuroglancer.viewer_config_state import ActionState
 
 # internals
 from ngtools.local.console import ActionHelpFormatter, Console
@@ -78,7 +79,7 @@ def action(needstate: bool = False) -> callable:
     return decorator
 
 
-def state_action(name: str) -> callable:
+def state_action(name: str, preproc: Callable | None = None) -> callable:
     """Generate a state action that wraps a scene action."""
 
     @action(needstate=True)
@@ -86,6 +87,8 @@ def state_action(name: str) -> callable:
     def func(
         self: "LocalNeuroglancer", *args, state: ng.ViewerState, **kwargs
     ) -> object | None:
+        if preproc:
+            args, kwargs = preproc(args, kwargs)
         # build scene
         scene = Scene(state.to_json(), stdio=self.console.stdio)
         # if loader, pass fileserver
@@ -96,8 +99,9 @@ def state_action(name: str) -> callable:
         out = scene_fn(*args, **kwargs)
         # save state
         for key in scene.to_json().keys():
-            val = getattr(scene, key)
-            setattr(state, key, val)
+            if hasattr(scene, key):
+                val = getattr(scene, key)
+                setattr(state, key, val)
         return out
 
     return func
@@ -182,13 +186,13 @@ class OSMixin:
                         else ""
                     )
                     fmt = "{:" + align + str(colsize) + "s}"
-                    print(fmt.format(str(value)), end=" ")
-                print("")
+                    self.console.print(fmt.format(str(value)), end=" ")
+                self.console.print("")
         else:
             files = os.listdir(os.path.expanduser(path))
             if not hidden:
                 files = [file for file in files if file[:1] != "."]
-            print(*files)
+            self.console.print(*files)
         return files
 
     @action
@@ -277,6 +281,8 @@ class LocalNeuroglancer(OSMixin):
         self.viewer = ng.Viewer(token=str(token))
         # self.viewer.shared_state.add_changed_callback(self.on_state_change)
 
+        self._setup_keybindings()
+
         if not _IS_GOOGLE_COLAB:
             ip = self.get_viewer_url().split("://")[1].split(":")[0]
 
@@ -349,7 +355,298 @@ class LocalNeuroglancer(OSMixin):
 
     # ==================================================================
     #
-    #                   COMMANDLINE APPLICATION
+    #                          KEY BINDINGS
+    #
+    # ==================================================================
+
+    def _keybind_action(
+        self, _: ActionState, action: Callable[[Scene], None], status: str = ""
+    ) -> None:
+        self.console.print(status)
+        with self.viewer.config_state.txn() as s:
+            s.status_messages["status"] = status
+        with self.scene() as scene:
+            action(scene)
+        with self.viewer.config_state.txn() as s:
+            s.status_messages.pop("status", None)
+
+    def _keybind_action2(
+        self,
+        state: ActionState,
+        action: Callable[[ActionState, Scene], None],
+        status: str = ""
+    ) -> None:
+        self.console.print(status)
+        with self.viewer.config_state.txn() as s:
+            s.status_messages["status"] = status
+        with self.scene() as scene:
+            action(state, scene)
+        with self.viewer.config_state.txn() as s:
+            s.status_messages.pop("status", None)
+
+    def _translate_layer_mouse2center(
+        self, action_state: ActionState, scene: Scene
+    ) -> None:
+        """
+        Translate active layer such that the voxel pointed by the mouse
+        gets aligned with the center of the cross-section view.
+        """
+        viewer_state = action_state.viewer_state
+        if action_state.mouse_position is None:
+            return
+
+        matrix = np.eye(4)
+        matrix[:3, 3] = viewer_state.position - action_state.mouse_position
+        transform = ng.CoordinateSpaceTransform(
+            matrix=matrix[:3],
+            input_dimensions=viewer_state.dimensions,
+            output_dimensions=viewer_state.dimensions,
+        )
+        scene.transform(transform, layer="::selected")
+
+    def _setup_keybindings(self) -> None:
+
+        self.viewer.actions.add(
+            'rotate-layer-z+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=1, type="R"), status="rotate-layer-z+"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-y+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=1, type="R"), status="rotate-layer-y+"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-x+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=1, type="R"), status="rotate-layer-x+"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-z-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=-1, type="R"), status="rotate-layer-z-"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-y-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=-1, type="R"), status="rotate-layer-y-"
+            ))
+        self.viewer.actions.add(
+            'rotate-layer-x-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=-1, type="R"), status="rotate-layer-x-"
+            ))
+
+        self.viewer.actions.add(
+            'translate-layer-z+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=1, type="T"), status="translate-layer-z+"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-y+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=1, type="T"), status="translate-layer-y+"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-x+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=1, type="T"), status="translate-layer-x+"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-z-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=-1, type="T"), status="translate-layer-z-"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-y-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=-1, type="T"), status="translate-layer-y-"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-x-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=-1, type="T"), status="translate-layer-x-"
+            ))
+
+        self.viewer.actions.add(
+            'zoom-layer-all+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="::all", value=1, type="Z"), status="zoom-layer-all+"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-z+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=1, type="Z"), status="zoom-layer-z+"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-y+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=1, type="Z"), status="zoom-layer-y+"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-x+',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=1, type="Z"), status="zoom-layer-x+"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-all-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="::all", value=-1, type="Z"), status="zoom-layer-all-"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-z-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=-1, type="Z"), status="zoom-layer-z-"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-y-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=-1, type="Z"), status="zoom-layer-y-"
+            ))
+        self.viewer.actions.add(
+            'zoom-layer-x-',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=-1, type="Z"), status="zoom-layer-x-"
+            ))
+
+        self.viewer.actions.add(
+            'translate-layer-mouse-to-crosshair',
+            partial(
+                self._keybind_action2,
+                action=self._translate_layer_mouse2center,
+                status="translate-layer-mouse-to-crosshair"
+            ))
+
+        self.viewer.actions.add(
+            'add-moving-landmark',
+            partial(
+                self._keybind_action2,
+                action=lambda st, sc: sc.landmarks(
+                    st.mouse_position[:3],
+                    layer="::landmarks::moving",
+                    color="#ffff00",
+                ),
+                status="add-moving-landmark"
+            ))
+        self.viewer.actions.add(
+            'add-fixed-landmark',
+            partial(
+                self._keybind_action2,
+                action=lambda st, sc: sc.landmarks(
+                    st.mouse_position[:3],
+                    layer="::landmarks::fixed",
+                    color="#ff0000",
+                ),
+                status="add-fixed-landmark"
+            ))
+        self.viewer.actions.add(
+            'pop-moving-landmark',
+            partial(
+                self._keybind_action2,
+                action=lambda st, sc: sc.landmarks(
+                    layer="::landmarks::moving",
+                    pop=True
+                ),
+                status="pop-moving-landmark"
+            ))
+        self.viewer.actions.add(
+            'pop-fixed-landmark',
+            partial(
+                self._keybind_action2,
+                action=lambda st, sc: sc.landmarks(
+                    layer="::landmarks::fixed",
+                    pop=True
+                ),
+                status="pop-fixed-landmark"
+            ))
+        self.viewer.actions.add(
+            'translate-layer-landmarks',
+            partial(self._keybind_action, action=partial(
+                Scene.transform,
+                transform="::landmarks", group="T", layer="::selected"),
+                status="translate-layer-landmarks"
+            ))
+        self.viewer.actions.add(
+            'rigid-transform-layer-landmarks',
+            partial(self._keybind_action, action=partial(
+                Scene.transform,
+                transform="::landmarks", group="R", layer="::selected"),
+                status="rigid-transform-layer-landmarks"
+            ))
+        self.viewer.actions.add(
+            'similitude-transform-layer-landmarks',
+            partial(self._keybind_action, action=partial(
+                Scene.transform,
+                transform="::landmarks", group="S", layer="::selected"),
+                status="similitude-transform-layer-landmarks"
+            ))
+        self.viewer.actions.add(
+            'affine-transform-layer-landmarks',
+            partial(self._keybind_action, action=partial(
+                Scene.transform,
+                transform="::landmarks", group="A", layer="::selected"),
+                status="affine-transform-layer-landmarks"
+            ))
+
+        with self.viewer.config_state.txn() as s:
+            v = s.input_event_bindings.viewer
+            v['control+keyi'] = 'rotate-layer-x+'
+            v['control+keyj'] = 'rotate-layer-y+'
+            v['control+keyk'] = 'rotate-layer-z+'
+            v['control+alt+keyi'] = 'rotate-layer-x-'
+            v['control+alt+keyj'] = 'rotate-layer-y-'
+            v['control+alt+keyk'] = 'rotate-layer-z-'
+            v['keyi'] = 'translate-layer-x+'
+            v['keyj'] = 'translate-layer-y+'
+            v['keyk'] = 'translate-layer-z+'
+            v['alt+keyi'] = 'translate-layer-x-'
+            v['alt+keyj'] = 'translate-layer-y-'
+            v['alt+keyk'] = 'translate-layer-z-'
+            v['control+shift+keyl'] = 'zoom-layer-all+'
+            v['control+shift+keyi'] = 'zoom-layer-x+'
+            v['control+shift+keyj'] = 'zoom-layer-y+'
+            v['control+shift+keyk'] = 'zoom-layer-z+'
+            v['alt+shift+keyl'] = 'zoom-layer-all-'
+            v['alt+shift+keyi'] = 'zoom-layer-x-'
+            v['alt+shift+keyj'] = 'zoom-layer-y-'
+            v['alt+shift+keyk'] = 'zoom-layer-z-'
+
+        with self.viewer.config_state.txn() as s:
+            v = s.input_event_bindings.viewer
+            c = s.input_event_bindings.slice_view
+            c['control+keyt'] = 'translate-layer-mouse-to-crosshair'
+            c['control+keym'] = 'add-moving-landmark'
+            c['control+keyf'] = 'add-fixed-landmark'
+            v['alt+keym'] = 'pop-moving-landmark'
+            v['alt+keyf'] = 'pop-fixed-landmark'
+            v['alt+keyt'] = 'translate-layer-landmarks'
+            v['alt+keyr'] = 'rigid-transform-layer-landmarks'
+            v['alt+keys'] = 'similitude-transform-layer-landmarks'
+            v['alt+keya'] = 'affine-transform-layer-landmarks'
+
+    # ==================================================================
+    #
+    #                      COMMANDLINE APPLICATION
     #
     # ==================================================================
 
@@ -500,6 +797,25 @@ class LocalNeuroglancer(OSMixin):
             '--layer', '-l', nargs='+', help='Name(s) of layer(s) to save')
         _.add_argument(
             '--format', '-f', help='Format to save into')
+
+        # Place registration landmarks
+        _ = add_parser('landmarks', help='Place landmarks')
+        _.set_defaults(func=self.landmarks)
+        _.add_argument(
+            dest='landmarks', nargs='*', help='Landmarks to add.', type=float)
+        _.add_argument(
+            '--layer', '-l', default="::landmarks",
+            help='Name of landmark layer')
+        _.add_argument(
+            '--clear', '-c', action='store_true',
+            help='Clear existing landmarks')
+        _.add_argument(
+            '--pop', '-p', nargs="*", default=False,
+            help='Pop landmarks. If used as a flag, pop the last landmark.'
+        )
+        _.add_argument(
+            '--delete', '-d', action='store_true',
+            help='Delete landmarks layer')
 
         # --------------------------------------------------------------
         #   AXIS MODE
@@ -701,6 +1017,15 @@ class LocalNeuroglancer(OSMixin):
     #
     # ==================================================================
 
+    @staticmethod
+    def _preproc_landmarks(args: tuple, kwargs: dict) -> tuple[tuple, dict]:
+        # if pop == [], it means the CLI was called with --pop but no
+        # arguments, which we interpret as pop=True
+        if "pop" in kwargs:
+            if kwargs["pop"] == []:
+                kwargs["pop"] = True
+        return args, kwargs
+
     load = state_action("load")
     unload = state_action("unload")
     rename = state_action("rename")
@@ -710,6 +1035,7 @@ class LocalNeuroglancer(OSMixin):
     display = state_action("display")
     transform = state_action("transform")
     save_transform = state_action("save_transform")
+    landmarks = state_action("landmarks", _preproc_landmarks)
     channel_mode = state_action("channel_mode")
     move = state_action("move")
     zoom = state_action("zoom")

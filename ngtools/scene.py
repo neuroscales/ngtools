@@ -135,38 +135,51 @@ class ViewerState(Wraps(ng.ViewerState)):
         With fields
         * `layer : str, default=layers[0].name`
             Selected layer
-        * `visible : bool, default=False`
-            Whether the right panel is visible.
-        * `size : int`
-            Width of the right panel, in voxels.
     statistics : StatisticsDisplayState
-        With fields
-        * `visible : bool, default=False`
-            Whether the statistics panel is visible.
-        * `size : int`
-            Height of the panel, in voxels.
+        Statistics panel.
     help_panel : HelpPanelState
-        With fields
-        * `visible : bool, default=False`
-            Whether the help panel is visible.
-        * `size : int`
-            Width of the panel, in voxels.
-        * `flex : float, default=1.0`
-            Relative height of the panel.
+        Help panel.
     layer_list_panel : LayerListPanelState
-        With fields
-        * `visible : bool, default=False`
-            Whether the layer list panel is visible.
-        * `size : int`
-            Width of the panel, in voxels.
-        * `flex : float, default=1.0`
-            Relative height of the panel.
+        Layer list panel.
     partial_viewport : vector[float], default=[0, 0, 1, 1]
         Top-left and bottom-right corner of the visible portion of the
         viewer, where `[0, 0, 1, 1]` corresponds to the entire viewer.
     tool_bindings : dict[str, Tool | str]
         User-specific key bindings.
+    tool_palettes : dict[str, ToolPalette]
+        Displayed tool palettes, with fields
+        * `tools : list[Tool], optional`
+            List of tools to display, with fields
+            * `type : str` : tool type
+            * `layer : str` : layer name, if a `LayerTool`
+            * `control : str` : control name, if `type == "shaderControl"`
+        * `query : bool, default=False`
+            A query that selects existing tools to display:
+            * `+` : all tools
+            * `control:{tool}` : all tools that control a given type of layer
+            * `dimension:{dim}` : all tools that operate on a given dimension
+            * `layer:{layer}` : all tools that operate on a given layer
+            * `layerType:{type}` : all tools that operate on a given layer type
+            * `type:{tool}` : all tools of a given type
 
+    Note
+    ----
+    All "panel" attributes
+    (selected_layer, statistics, help_panel, layer_list_panel, tool_palettes)
+    have the additional fields:
+    * `side : {"left", "right", "top", "bottom"}, default="right"`
+        Side on which the help panel is displayed.
+    * `visible : bool, default=False`
+        Whether the help panel is visible.
+    * `size : int`
+        Width (if left/right) or height (if top/bottom) of the panel,
+        in voxels.
+    * `flex : float, default=1.0`
+        Relative height of the panel.
+    * `row : int, default=0`
+        Row in which the panel is displayed.
+    * `col : int, default=0`
+        Column in which the panel is displayed.
     """
 
     # --- non-ng attributes --------------------------------------------
@@ -1064,16 +1077,24 @@ class Scene(ViewerState):
         *,
         mov: str = None,
         fix: str = None,
+        group: str = "rigid",
+        **kwargs,
     ) -> None:
         """
         Apply an affine transform.
 
         Parameters
         ----------
-        transform : list[float] or np.ndarray or fileobj
-            Affine transform (RAS+)
-        layer : str or list[str]
-            Layer(s) to transform
+        transform : ng.CoordinateSpaceTransform | array-like | file-like
+            Affine transform (RAS+). Can be provided as:
+            * A `neuroglancer.CoordinateSpaceTransform` object
+            * A 3x4 or 4x4 array-like object
+            * A vector of 12 or 16 floats, representing a 3x4 or 4x4 matrix
+            * A filename or file-like object containing a transform
+        layer : str | list[str] | None
+            Layer(s) to transform.
+            If `None`, all layers are transformed.
+            If `"::selected"`, only the selected layer is transformed.
         inv : bool
             Invert the transform
         reset : bool
@@ -1085,7 +1106,15 @@ class Scene(ViewerState):
             Moving/Floating image (required by some affine formats)
         fix : str
             Fixed/Reference image (required by some affine formats)
+        group : {"translation", "rigid", "similitude", "affine"}
+            Type of landmark-based transform to compute if `transform`
+            is a landmark layer prefix.
         """
+        # save landmark layer if any
+        landmark_layer = None
+        if isinstance(transform, str) and transform.startswith("::"):
+            landmark_layer = transform
+
         # save current axes
         display_dimensions = self.display_dimensions
 
@@ -1094,10 +1123,15 @@ class Scene(ViewerState):
         self.world_axes({"x": "x", "y": "y", "z": "z"})
 
         # prepare transformation matrix
-        transform = self._load_transform(transform, inv, mov=mov, fix=fix)
+        transform = self._load_transform(
+            transform, inv, mov=mov, fix=fix, group=group
+        )
 
         # apply transform
-        self._apply_transform(transform, layer, reset=reset)
+        self._apply_transform(
+            transform, layer, reset=reset,
+            landmarks=landmark_layer
+        )
 
         # go back to original axis names
         self.world_axes(world_axes)
@@ -1109,6 +1143,7 @@ class Scene(ViewerState):
         layer: str | list[str] | None = None,
         adapt: bool = False,
         reset: bool = False,
+        landmarks: str | None = None,
     ) -> None:
         """
         Apply a transform to one or more layers.
@@ -1121,16 +1156,26 @@ class Scene(ViewerState):
             transform = self._load_transform(transform)
 
         layer_names = layer
+        if layer_names is None:
+            layer_names = "::all"
         if isinstance(layer_names, str):
             layer_names = [layer_names]
+
+        layer_names = [
+            self.selected_layer.layer
+            if layer_name == "::selected" else layer_name
+            for layer_name in layer_names
+        ]
 
         for layer in self.layers:
             layer: ng.ManagedLayer
             layer_name = layer.name
-            if layer_names and layer_name not in layer_names:
+            if "::all" not in layer_names and layer_name not in layer_names:
                 continue
             if layer_name.startswith('__'):
                 continue
+
+            LOG.debug(f"Transform layer: {layer_name}")
 
             if reset:
                 reset_trf = self.save_transform(layer=layer)
@@ -1168,8 +1213,19 @@ class Scene(ViewerState):
                     full_trf, source.transform, adapt=adapt
                 )
 
-    @staticmethod
+        if landmarks:
+            LOG.debug(f"Transform moving landmarks: {landmarks}")
+            moving_layer = self.layers[landmarks + "::moving"]
+            points = np.asarray([a.point for a in moving_layer.annotations])
+            points = points @ transform.matrix[:, :-1].T
+            points += transform.matrix[:, -1]
+            moving_layer.annotations = [ng.PointAnnotation(
+                id=str(i),
+                point=point.tolist()
+            ) for i, point in enumerate(points)]
+
     def _load_transform(
+        self,
         transform: (
             ng.CoordinateSpaceTransform | ArrayLike | str | PathLike | BytesIO
         ),
@@ -1177,9 +1233,101 @@ class Scene(ViewerState):
         *,
         mov: str = None,
         fix: str = None,
+        group: str = "rigid"
     ) -> ng.CoordinateSpaceTransform:
+        """
+        Load a transform from various formats.
+
+        Parameters
+        ----------
+        transform : ng.CoordinateSpaceTransform | array-like | file-like
+            Affine transform (RAS+). Can be provided as:
+            * A `neuroglancer.CoordinateSpaceTransform` object
+            * A 3x4 or 4x4 array-like object
+            * A vector of 12 or 16 floats, representing a 3x4 or 4x4 matrix
+            * A landmark layer prefix. E.g.: `"::landmarks"`
+            * A filename or file-like object containing a transform
+        inv : bool
+            Invert the transform
+
+        Other Parameters
+        ----------------
+        mov : str
+            Moving/Floating image (required by some affine formats)
+        fix : str
+            Fixed/Reference image (required by some affine formats)
+        group : {"translation", "rigid", "similitude", "affine"}
+            Type of landmark-based transform to compute if `transform`
+            is a landmark layer prefix.
+
+        Returns
+        -------
+        transform : ng.CoordinateSpaceTransform
+            The loaded transform.
+        """
         if isinstance(transform, ng.CoordinateSpaceTransform):
             return transform
+
+        if isinstance(transform, str) and transform.startswith("::"):
+            group = group[:1].upper()
+            matrix = np.eye(4)
+            dimensions = ng.CoordinateSpace(
+                names=self.dimensions.names[:3],
+                scales=self.dimensions.scales[:3],
+                units=self.dimensions.units[:3],
+            )  # FIXME: use landmarks source dimensions instead?
+            # landmark-based transform
+            fixed = self.landmarks(layer=transform + "::fixed")[:, :3]
+            moving = self.landmarks(layer=transform + "::moving")[:, :3]
+            fixed = fixed[:min(len(fixed), len(moving))]
+            moving = moving[:min(len(fixed), len(moving))]
+            if group[:1].upper() == "A" and len(fixed) < 3:
+                group = "S"
+            if group[:1] != "T" and len(fixed) < 2:
+                group = "T"
+            # Affine
+            if group == "A":
+                A = np.zeros((len(moving), 4))
+                A[:, :-1] = moving
+                A[:, -1] = 1
+                B = fixed
+                X, *_ = np.linalg.lstsq(A, B)
+                matrix[:-1, :-1] = X[:-1, :].T
+                matrix[:-1, -1] = X[-1, :]
+                return ng.CoordinateSpaceTransform(
+                    matrix=matrix[:-1],
+                    input_dimensions=dimensions,
+                    output_dimensions=dimensions,
+                )
+            # Translation
+            fixed_centroid = np.mean(fixed, axis=0)
+            moving_centroid = np.mean(moving, axis=0)
+            if group == "T":
+                matrix[:-1, -1] = fixed_centroid - moving_centroid
+                return ng.CoordinateSpaceTransform(
+                    matrix=matrix[:-1],
+                    input_dimensions=dimensions,
+                    output_dimensions=dimensions,
+                )
+            # Rigid/Similitude
+            cfixed = fixed - fixed_centroid
+            cmoving = moving - moving_centroid
+            xvar = (cmoving.T @ cfixed)
+            u, s, vh = np.linalg.svd(xvar)
+            if np.linalg.det(u @ vh) < 0:
+                vh[-1, :] *= -1
+            R = (u @ vh).T
+            if group == "S":
+                S = np.sum(s) / np.sum(cmoving**2)
+                R *= S
+            T = fixed_centroid - R @ moving_centroid
+            matrix[:-1, :-1] = R
+            matrix[:-1, -1] = T
+            return ng.CoordinateSpaceTransform(
+                matrix=matrix[:-1],
+                input_dimensions=dimensions,
+                output_dimensions=dimensions,
+            )
 
         transform = _ensure_list(transform)
         if len(transform) == 1:
@@ -1217,6 +1365,7 @@ class Scene(ViewerState):
         output: str | list[str] | None = None,
         layer: str | list[str] | None = None,
         format: str | None = None,
+        print: bool | None = None,
     ) -> ng.CoordinateSpaceTransform:
         """
         Save transform from default space to current space.
@@ -1229,6 +1378,9 @@ class Scene(ViewerState):
             Layer(s) for which to save the transform(s).
         format : str | None
             Format hint.
+        print : bool | None
+            If True, print the transform(s) to the standard output.
+            If None, print only if an output file is provided.
 
         Returns
         -------
@@ -1242,17 +1394,53 @@ class Scene(ViewerState):
         world_axes = self.world_axes(print=False)
         self.world_axes({"x": "x", "y": "y", "z": "z"})
 
-        layer_names = layer
+        # format layers and output paths
+        layer = layer
         return_list = True
-        if isinstance(layer_names, str):
-            layer_names = [layer_names]
+        if isinstance(layer, str):
+            layer = [layer]
             return_list = False
-        layer_names = _ensure_list(layer_names or [])
+        layer = _ensure_list(layer or [])
 
+        if isinstance(output, str):
+            output = [output]
+        output = _ensure_list(output)
+
+        # compute matrices
+        matrices = self._save_transform(output, layer, format)
+
+        # go back to original axis names
+        self.world_axes(world_axes)
+        self.display(display_dimensions)
+
+        if print is None:
+            print = bool(output)
+        if print:
+            for layer, matrix in matrices.items():
+                self.stdio.print(f"{layer}:")
+                self.stdio.print(matrix)
+
+        matrices = list(matrices.values())
+        return matrices[0] if return_list else matrices
+
+    def _save_transform(
+        self,
+        output: list[str] | str | None = None,
+        layer: list[str] | str | None = None,
+        format: str | None = None
+    ) -> dict:
+
+        if layer is None:
+            layer = []
+        elif isinstance(layer, str):
+            layer = [layer]
+        if output is None:
+            output = []
+        elif isinstance(output, str):
+            output = [output]
+
+        layer_names = layer
         outputs = output
-        if isinstance(outputs, str):
-            outputs = [outputs]
-        outputs = _ensure_list(outputs)
 
         def _compute_trf(source: LayerDataSource) -> np.ndarray:
             mm = [1, "mm"]
@@ -1312,21 +1500,214 @@ class Scene(ViewerState):
                         f"Could not save transform for layer {layer_name}: {e}"
                     )
                     ras2ras = None
+                    raise e
 
                 finally:
-                    matrices[layer.name] = ras2ras
+                    matrices.setdefault(layer.name, ras2ras)
 
-        # go back to original axis names
-        self.world_axes(world_axes)
-        self.display(display_dimensions)
+        return matrices
 
-        if not outputs:
-            for layer, matrix in matrices.items():
-                self.stdio.print(f"{layer}:")
-                self.stdio.print(matrix)
+    DEFAULT_CONTROL_TRL = \
+        "#uicontrol float translation_scale slider(min=-5, max=5, default=0, step=0.01)"  # noqa: E501
+    DEFAULT_CONTROL_ROT = \
+        "#uicontrol float rotation_scale slider(min=0, max=90, default=1, step=0.1)"  # noqa: E501
+    DEFAULT_CONTROL_SCL = \
+        "#uicontrol float zoom_scale slider(min=-5, max=5, default=0, step=0.01)"  # noqa: E501
 
-        matrices = list(matrices.values())
-        return matrices[0] if return_list else matrices
+    def _interactive_transform(
+        self,
+        axis: str = "x",
+        value: float = 0,
+        type: str = "translation",
+        layer: str | list[str] = "::selected",
+    ) -> None:
+        """
+        Apply a simple user-defined transform and setup interactive sliders.
+
+        Parameters
+        ----------
+        axis : str
+            Axis along which to apply the transform.
+        value : float
+            Value of the transform, in degrees (if `type="rotation"`) or
+            model space units (if `type="translation"`).
+        type : {"translation", "rotation", "scaling"}
+            Type of transform to apply.
+        layer : str | list[str]
+            Layer(s) to transform. The value `"::selected"` can be used
+            to refer to the currently selected layer.
+        """
+        layer_names = layer
+        if layer_names is None:
+            layer_names = "::selected"
+        if isinstance(layer_names, str):
+            layer_names = [layer_names]
+        layer_names = [
+            self.selected_layer.layer
+            if layer_name == "::selected" else layer_name
+            for layer_name in layer_names
+        ]
+        to_center = np.eye(len(self.dimensions.names) + 1)
+        to_center[:-1, -1] = -np.array(self.position)
+
+        from_center = np.eye(len(self.dimensions.names) + 1)
+        from_center[:-1, -1] = np.array(self.position)
+
+        for layer_name in layer_names:
+            if layer_name not in self.layers:
+                continue
+            layer = self.layers[layer_name]
+            shader = None
+            controls = {}
+            if hasattr(layer, "shader"):
+                shader = layer.shader
+                controls = layer.shader_controls.to_json()
+            elif hasattr(layer, "skeleton_rendering"):
+                shader = layer.skeleton_rendering.shader
+                controls = layer.skeleton_rendering.shader_controls.to_json()
+            if shader == "None":
+                shader = shaders.default
+            if shader:
+                if "#uicontrol float translation_scale" not in shader:
+                    shader += f"\n{self.DEFAULT_CONTROL_TRL}"
+                if "#uicontrol float rotation_scale" not in shader:
+                    shader += f"\n{self.DEFAULT_CONTROL_ROT}"
+                if "#uicontrol float zoom_scale" not in shader:
+                    shader += f"\n{self.DEFAULT_CONTROL_SCL}"
+                if hasattr(layer, "shader"):
+                    layer.shader = shader
+                elif hasattr(layer, "skeleton_rendering"):
+                    layer.skeleton_rendering.shader = shader
+                controls.setdefault("translation_scale", 0.0)
+                controls.setdefault("rotation_scale", 1.0)
+                controls.setdefault("zoom_scale", 0.0)
+            if value:
+                mat = np.eye(len(self.dimensions.names) + 1)
+                if type[:1].upper() == "T":
+                    shift = value * 2**controls.get("translation_scale", 0.0)
+                    mat[self.dimensions.names.index(axis), -1] = shift
+                elif type[:1].upper() == "R":
+                    angle = np.deg2rad(
+                        value * controls.get("rotation_scale", 1.0)
+                    )
+                    c = np.cos(angle)
+                    s = np.sin(angle)
+                    i = self.dimensions.names.index(axis)
+                    j = (i + 1) % 3
+                    k = (i + 2) % 3
+                    mat[i, i] = 1.0
+                    mat[j, j] = c
+                    mat[j, k] = -s
+                    mat[k, j] = s
+                    mat[k, k] = c
+                    mat = from_center @ mat @ to_center
+                elif type[:1].upper() in ("S", "Z"):
+                    value = value * (2.0 ** controls.get("zoom_scale", 0.0))
+                    scale = 2.0 ** value
+                    if axis == "::all":
+                        for i in range(3):
+                            mat[i, i] = scale
+                    else:
+                        i = self.dimensions.names.index(axis)
+                        mat[i, i] = scale
+                    mat = from_center @ mat @ to_center
+                transform = ng.CoordinateSpaceTransform(
+                    matrix=mat[:-1],
+                    input_dimensions=self.dimensions,
+                    output_dimensions=self.dimensions,
+                )
+                self._apply_transform(transform, layer=layer_name)
+
+    @autolog
+    def landmarks(
+        self,
+        landmarks: list[float] | list[list[float]] | np.ndarray | None = None,
+        layer: str = "::landmarks",
+        clear: bool = False,
+        pop: bool | int | list[int] = False,
+        delete: bool = False,
+        color: str | None = None,
+        **kwargs,
+    ) -> None:
+        """
+        Add or remove landmarks from local annotation layer.
+
+        Parameters
+        ----------
+        landmarks : list[float] | list[list[float]] | np.ndarray | None
+            Landmark(s) to add. Each landmark should be a list of
+            coordinates in model space. If `None`, no landmarks are added.
+        layer : str
+            Name of the annotation layer to use.
+        clear : bool
+            If True, remove all existing landmarks from the layer
+            prior to adding new ones.
+        pop : bool | int | list[int]
+            If True, remove the last landmark from the layer.
+            If an integer or list of integers, remove the landmark(s)
+            at the specified index/indices.
+        delete : bool
+            If True, delete the entire layer.
+        color : str | None
+            Color to use for the landmarks. If `None`, keep existing.
+
+        Returns
+        -------
+        landmarks : (N, 3) np.ndarray
+            If `pop` is used, the removed landmark(s).
+            Otherwise, the current landmarks in the layer.
+        """
+        dimensions = ng.CoordinateSpace(
+            names=self.dimensions.names[:3],
+            scales=self.dimensions.scales[:3],
+            units=self.dimensions.units[:3],
+        )
+
+        if delete:
+            if layer in self.layers:
+                del self.layers[layer]
+            return
+
+        if layer not in self.layers:
+            self.layers[layer] = ng.AnnotationLayer(
+                ng.LocalAnnotationLayer(dimensions).to_json(),
+                annotation_color=color or "#ff0000",
+            )
+        if clear:
+            self.layers[layer].annotations = []
+
+        if landmarks is not None:
+            landmarks = np.asarray(landmarks, dtype='float64')
+            landmarks = landmarks.reshape(-1, 3)
+            for landmark in landmarks:
+                annotation = ng.PointAnnotation(
+                    id=str(len(self.layers[layer].annotations) + 1),
+                    point=landmark.tolist()
+                )
+                self.layers[layer].annotations.append(annotation)
+
+        if pop is not False:
+            nb_landmarks = len(self.layers[layer].annotations)
+            if pop is True:
+                pop = -1
+            if isinstance(pop, int):
+                pop = [pop]
+            pop = [nb_landmarks + i if i < 0 else i for i in pop]
+            popped_landmarks = []
+            for index in sorted(pop, reverse=True):
+                if 0 <= index < len(self.layers[layer].annotations):
+                    annotation = self.layers[layer].annotations.pop(index)
+                    popped_landmarks.append(annotation.point)
+            popped_landmarks = np.asarray(popped_landmarks, dtype='float64')
+            self.stdio.print(popped_landmarks)
+            return popped_landmarks
+
+        current_landmarks = []
+        for annotation in self.layers[layer].annotations:
+            annotation: ng.PointAnnotation
+            current_landmarks.append(annotation.point)
+        current_landmarks = np.asarray(current_landmarks, dtype='float64')
+        return current_landmarks
 
     @autolog
     def channel_mode(

@@ -189,6 +189,7 @@ class _LayerDataSourceFactory(type):
             return LocalSkeletonDataSource(arg, *args, **kwargs)
 
         parsed_url = parse_protocols(url)
+        LOG.debug(f"LayerDataSource - parsed url: {parsed_url}")
 
         # If python:// url -> local object, but retrieved from the viewer.
         if parsed_url.stream == "python":

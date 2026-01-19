@@ -534,10 +534,20 @@ def compose(
 
     # ------------------------------------------------------------------
     # Get parts
-    li_dims = left.input_dimensions.to_json()
-    lo_dims = left.output_dimensions.to_json()
-    ri_dims = right.input_dimensions.to_json()
-    ro_dims = right.output_dimensions.to_json()
+    li_dims = left.input_dimensions or left.output_dimensions
+    lo_dims = left.output_dimensions or left.input_dimensions
+    ri_dims = right.input_dimensions or right.output_dimensions
+    ro_dims = right.output_dimensions or right.input_dimensions
+
+    if not li_dims:
+        raise RuntimeError("Left transform has no input/output dimensions.")
+    if not ri_dims:
+        raise RuntimeError("Right transform has no input/output dimensions.")
+
+    li_dims = li_dims.to_json()
+    lo_dims = lo_dims.to_json()
+    ri_dims = ri_dims.to_json()
+    ro_dims = ro_dims.to_json()
 
     l_matrix = get_matrix(left, square=True)
     r_matrix = get_matrix(right, square=True)
@@ -1000,8 +1010,8 @@ def subtransform(
     if unit is not None:
         unit = _ensure_list(unit)
         kind = [U.split_unit(u)[1] for u in unit]
-    input_names = _ensure_list(input_names or names)
-    output_names = _ensure_list(output_names or names)
+    input_names = _ensure_list(input_names or names or [])
+    output_names = _ensure_list(output_names or names or [])
 
     idim: ng.CoordinateSpace = transform.input_dimensions
     odim: ng.CoordinateSpace = transform.output_dimensions
@@ -1042,6 +1052,169 @@ def subtransform(
         input_dimensions=idim,
         output_dimensions=odim,
     )
+
+
+def make_affine_matrix(
+    translations: float | list[float] = 0,
+    rotations: float | list[float] = 0,
+    zooms: float | list[float] = 0,
+    shears: float | list[float] = 0,
+) -> np.ndarray:
+    """Build an affine matrix from "classic" parameters.
+
+    Parameters can either be provided already concatenated in the last
+    dimension (`prm=...`) or as individual components (`translations=...`)
+
+    Parameters
+    ----------
+    translations : float | list[float]
+        Translation parameters (along X, Y, Z).
+    rotations : float | list[float]
+        Rotation parameters, in degrees (about X, Y, Z)
+    zooms : float | list[float]
+        Zoom parameters (along X, Y, Z).
+    shears : float | list[float]
+        Shear parameters (about XY, XZ, YZ).
+
+    Returns
+    -------
+    mat : (dim+1, dim+1) tensor
+        Reconstructed affine matrix `mat = T @ Rx @ Ry @ Rz @ Z @ S`
+
+    """
+    t = np.asarray(_ensure_list(np.asarray(translations).tolist(), 3))
+    r = np.asarray(_ensure_list(np.asarray(rotations).tolist(), 3))
+    z = np.asarray(_ensure_list(np.asarray(zooms).tolist(), 3))
+    sh = np.asarray(_ensure_list(np.asarray(shears).tolist(), 3))
+
+    r *= (np.pi / 180)
+    c = np.cos(r)
+    s = np.sin(r)
+
+    # translations
+    T = np.eye(4)
+    T[:-1, -1] = t
+
+    # rotations
+    Rx = np.eye(4)
+    Rx[1, 1], Rx[2, 2], Rx[1, 2], Rx[2, 1] = c[0], c[0], s[0], -s[0]
+    Ry = np.eye(4)
+    Ry[0, 0], Ry[2, 2], Ry[0, 2], Ry[2, 0] = c[1], c[1], s[1], -s[1]
+    Rz = np.eye(4)
+    Rz[0, 0], Rz[1, 1], Rz[0, 1], Rz[1, 0] = c[2], c[2], s[2], -s[2]
+    R = Rx @ Ry @ Rz
+
+    # zooms
+    Z = np.eye(4)
+    Z[range(3), range(3)] = z
+
+    # shears
+    S = np.eye(4)
+    S[0, 1], S[0, 2], S[1, 2] = sh[0], sh[1], sh[2]
+
+    return T @ R @ Z @ S
+
+
+_Float3 = tuple[float, float, float]
+_AffPrm = tuple[_Float3, _Float3, _Float3, _Float3]
+
+
+def get_affine_parameters(mat: np.ndarray) -> _AffPrm:
+    """Compute the parameters of an affine matrix.
+
+    This functions decomposes the input matrix into a product of
+    simpler matrices (translation, rotation, ...) and extracts their
+    parameters, so that the input matrix can be (approximately)
+    reconstructed by `mat = T @ Rx @ Ry @ Rz @ Z @ S`
+
+    Parameters
+    ----------
+    mat : (dim+1, dim+1) array
+        Affine matrix
+
+    Returns
+    -------
+    translations : float | list[float]
+        Translation parameters (along X, Y, Z).
+    rotations : float | list[float]
+        Rotation parameters, in degrees (about X, Y, Z)
+    zooms : float | list[float]
+        Zoom parameters (along X, Y, Z).
+    shears : float | list[float]
+        Shear parameters (about XY, XZ, YZ).
+    """
+    # Authors
+    # -------
+    # .. John Ashburner <j.ashburner@ucl.ac.uk> : original code (SPM12)
+    # .. Stefan Kiebel <stefan.kiebel@tu-dresden.de> : original code (SPM12)
+    # .. Mikael Brudfors <brudfors@gmail.com> : Python port
+
+    mat = np.asarray(mat)
+
+    def clip(x: np.ndarray) -> np.ndarray:
+        return np.clip(x, -1, 1)
+
+    # extract linear part + cholesky decomposition
+    # (note that matlab's chol is upper-triangular by default while
+    #  pytorch's is lower-triangular by default).
+    #
+    # > the idea is that M = R @ Z @ S and
+    #   M.T @ M = (S.T @ Z.T @ R.T) @ (R @ Z @ S)
+    #   M.T @ M = (S.T @ Z.T) @ (Z @ S)
+    #           = U.T @ U
+    #  where U is upper-triangular, such that the diagonal of U contains
+    #  zooms and the off-diagonal elements of Z\U are the shears.
+    L = mat[:3, :3]
+    C = np.linalg.cholesky(L.T @ L, upper=True)
+    D = C[range(3), range(3)]
+    C = C / D[:, None]
+
+    # Translations
+    t = mat[:3, -1].tolist()
+
+    # Zooms (with fix for negative determinants)
+    # > diagonal of the cholesky factor
+    z = D
+    if np.linalg.det(L) < 0:
+        z[0] *= -1
+    z = z.tolist()
+
+    # Shears
+    # > off-diagonal of the normalized cholesky factor
+    s = C[[0, 0, 1], [1, 2, 2]]
+    s = s.tolist()
+
+    # Rotations
+    # > we know the zooms and shears and therefore `Z @ S`.
+    #   If the problem is well conditioned, we can recover the pure
+    #   rotation (orthogonal) matrix as `R = M / (Z @ S)`.
+    L0 = make_affine_matrix(zooms=z, shears=s)[:3, :3]
+    R = L @ np.linalg.inv(L0)               # `R = M / (Z @ S)`
+    R = clip(R)                             # correct rounding errors
+
+    Rxz = R[0, 2]
+    Rxy = R[0, 1]
+    Ryx = R[1, 0]
+    Ryz = R[1, 2]
+    Rxx = R[0, 0]
+    Rzz = R[2, 2]
+    Rzx = R[2, 0]
+
+    # find matrices for which the first rotation is 90 deg
+    # (we cannot divide by its cos in that case)
+    ry = np.asin(Rxz, -1, 1)
+    cy = np.cos(ry)
+    cos_zero = (np.abs(ry) - np.pi/2)**2 < 1e-9
+    if cos_zero:
+        rx = 0
+        rz = np.atan2(-clip(Ryx), clip(-Rzx/Rxz))
+    else:
+        rx = np.atan2(clip(Ryz/cy), clip(Rzz/cy,))
+        rz = np.atan2(clip(Rxy/cy), clip(Rxx/cy))
+    r = np.asarray([rx, ry, rz]).tolist()
+    r *= (180 / np.pi)
+
+    return t, r, z, s
 
 
 def _ensure_list(x: object, n: int | None = None, **kwargs) -> list:
