@@ -1316,13 +1316,13 @@ class Scene(ViewerState):
             u, s, vh = np.linalg.svd(xvar)
             if np.linalg.det(u @ vh) < 0:
                 vh[-1, :] *= -1
-            R = (u @ vh).T
+            rotation = (u @ vh).T
             if group == "S":
-                S = np.sum(s) / np.sum(cmoving**2)
-                R *= S
-            T = fixed_centroid - R @ moving_centroid
-            matrix[:-1, :-1] = R
-            matrix[:-1, -1] = T
+                scale = np.sum(s) / np.sum(cmoving**2)
+                rotation *= scale
+            translation = fixed_centroid - rotation @ moving_centroid
+            matrix[:-1, :-1] = rotation
+            matrix[:-1, -1] = translation
             return ng.CoordinateSpaceTransform(
                 matrix=matrix[:-1],
                 input_dimensions=dimensions,
