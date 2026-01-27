@@ -530,6 +530,25 @@ class LocalNeuroglancer(OSMixin):
             ))
 
         self.viewer.actions.add(
+            'flip-layer-z',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="z", value=-1, type="F"), status="flip-layer-z"
+            ))
+        self.viewer.actions.add(
+            'flip-layer-y',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="y", value=-1, type="F"), status="flip-layer-y"
+            ))
+        self.viewer.actions.add(
+            'flip-layer-x',
+            partial(self._keybind_action, action=partial(
+                Scene._interactive_transform,
+                axis="x", value=-1, type="F"), status="flip-layer-x"
+            ))
+
+        self.viewer.actions.add(
             'translate-layer-mouse-to-crosshair',
             partial(
                 self._keybind_action2,
@@ -630,6 +649,9 @@ class LocalNeuroglancer(OSMixin):
             v['alt+shift+keyi'] = 'zoom-layer-x-'
             v['alt+shift+keyj'] = 'zoom-layer-y-'
             v['alt+shift+keyk'] = 'zoom-layer-z-'
+            v['alt+keyx'] = 'flip-layer-x'
+            v['alt+keyy'] = 'flip-layer-y'
+            v['alt+keyz'] = 'flip-layer-z'
 
         with self.viewer.config_state.txn() as s:
             v = s.input_event_bindings.viewer

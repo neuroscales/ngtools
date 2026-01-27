@@ -1531,7 +1531,7 @@ class Scene(ViewerState):
         value : float
             Value of the transform, in degrees (if `type="rotation"`) or
             model space units (if `type="translation"`).
-        type : {"translation", "rotation", "scaling"}
+        type : {"translation", "rotation", "scaling", "flip"}
             Type of transform to apply.
         layer : str | list[str]
             Layer(s) to transform. The value `"::selected"` can be used
@@ -1601,9 +1601,12 @@ class Scene(ViewerState):
                     mat[k, j] = s
                     mat[k, k] = c
                     mat = from_center @ mat @ to_center
-                elif type[:1].upper() in ("S", "Z"):
+                elif type[:1].upper() in ("S", "Z", "F"):
                     value = value * (2.0 ** controls.get("zoom_scale", 0.0))
-                    scale = 2.0 ** value
+                    if type[:1].upper() == "F":
+                        scale = value
+                    else:
+                        scale = 2.0 ** value
                     if axis == "::all":
                         for i in range(3):
                             mat[i, i] = scale
