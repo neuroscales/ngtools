@@ -3,6 +3,7 @@
 import functools
 import json
 import logging
+import os
 import os.path as op
 import re
 import sys
@@ -34,7 +35,9 @@ from ngtools.local.handlers import (
     filter_layers,
     filtered_layers,
     info_cache,
+    spatial_annotations_cache,
     spatial_cache,
+    tracts_cache,
 )
 from ngtools.local.iostream import StandardIO
 from ngtools.opener import exists, filesystem, open, parse_protocols
@@ -629,7 +632,7 @@ class Scene(ViewerState):
                     "precomputed://"+
                     parsed.url+
                     "/precomputed_segmentations")), **kwargs)
-                self.layers.append(name=name+"_seg", layer=seg_layer)
+                self.layers.append(name=name+"_seg", layer=seg_layer, visible=False)
                 layer.linkedSegmentationLayer = {"filter": name+"_seg"}
                 layer.filterBySegmentation = ["filter"]
                 onames.append(name+"_seg")
@@ -656,10 +659,64 @@ class Scene(ViewerState):
             self.shader(shader, layer=onames)
 
     @autolog
+    def export(
+        self,
+        tract_layer: str | None = None,
+        output_path: str | None = None,
+        **kwargs
+    ) -> None:
+        """
+        Export current filter layers attached to a tract layer.
+
+        Parameters
+        ----------
+        tract_layer : str
+            The name of the tract layer with attached filters.
+        output_path : str
+            Destenation of file to export to.
+        """
+        if kwargs.get("tract_layer", False):
+            if tract_layer is not None:
+                raise ValueError("set the name of the filtered layer in only one place")
+        if kwargs.get("output_path", False):
+            if output_path is not None:
+                raise ValueError("set the name of the filtered layer in only one place")
+            
+        output_path = kwargs.pop("output_path", output_path)
+            
+        tract_layer_name = kwargs.pop("tract_layer", tract_layer)
+        layer = self.layers[tract_layer_name]
+        key = layer.source[0].url.replace("/", "$").replace(".", "$")
+        export = self.export_helper(filter_layers[key], tract_layer_name)
+
+        with open(output_path, 'w') as json_file:
+            json.dump(export, json_file, indent=4)
+    
+    def export_helper(
+            self, 
+            filter_layer: dict | ng.AnnotationLayer, 
+            tract_layer_name: str
+            ) -> dict:
+        """Recursivly generate the json that will be exported."""
+        if isinstance(filter_layer, dict):
+            sub_layers = []
+            filter_layer_list = filter_layer["layer"] if \
+                isinstance(filter_layer["layer"], list) \
+                else [filter_layer["layer"]]
+            for layer in filter_layer_list:
+                updated_layer = self.export_helper(layer, tract_layer_name)
+                sub_layers.append(updated_layer)
+            return {**({"operation": filter_layer["operation"]} 
+                    if "operation" in filter_layer else {}),
+                        "layer": sub_layers if len(sub_layers) > 1 
+                        else sub_layers[0]}
+        return {"type": filter_layer.type, **(filter_layer.annotations[0].to_json()), "name": filter_layer.name[len(tract_layer_name):], "transform": filter_layer.source[0].transform.matrix.tolist()}
+    
+    @autolog
     def filter(
         self,
-        filtered_layer_input: str = None,
-        filter_layer_input: str = None,
+        tract_layer_name: str | None = None,
+        filter_layer_name: str | None = None,
         **kwargs
     ) -> None:
         """
@@ -667,36 +724,76 @@ class Scene(ViewerState):
 
         Parameters
         ----------
-        filtered_layer_input : str
+        tract_layer_name : str
             the name of the layer to be filtered
-        filter_layer_input : str
+        filter_layer_name : str
             the name of the layer that will act as the filter
         """
         if kwargs.get("tract_layer", False):
-            if filtered_layer_input is not None:
+            if tract_layer_name is not None:
                 raise ValueError("set the name of the filtered layer in only one place")
             
         if kwargs.get("filter_layer", False):
-            if filter_layer_input is not None:
+            if filter_layer_name is not None:
                 raise ValueError("set the name of the filter layer in only one place")
         
-        filtered_layer_name = kwargs.pop("tract_layer", filtered_layer_input)
-        filter_layer_name = kwargs.pop("filter_layer", filter_layer_input)
+        tract_layer_name = kwargs.pop("tract_layer", tract_layer_name)
+        filter_layer_name = kwargs.pop("filter_layer", filter_layer_name)
 
-        if filtered_layer_name not in [layer.name for layer in self.layers]:
+        if isinstance(filter_layer_name, str):
+            if os.path.exists(filter_layer_name):
+                with open(filter_layer_name, 'r') as f:
+                    filter_layer = f.read()
+            filter_layer = json.loads(filter_layer.replace("'", '"'))
+
+
+        layer_names = [layer.name for layer in self.layers]
+
+        if tract_layer_name not in layer_names:
             raise ValueError("filtered layer name does not exist")
-        if filter_layer_name not in [layer.name for layer in self.layers]:
-            raise ValueError("filter layer name does not exist")
 
-        filtered_layer = self.layers[filtered_layer_name]
-        filter_layer = self.layers[filter_layer_name]
+        filtered_layer = self.layers[tract_layer_name]
         key = filtered_layer.source[0].url.replace("/", "$").replace(".", "$")
-        filter_layers[key] = filter_layer
+        if key in filter_layers:
+            self.unload_filter(filter_layers[key])
+        filter_layers[key] = self.filter_helper(filter_layer, tract_layer_name)
         filtered_layers[key] = filtered_layer
         filtered_layer.filterBySegmentation = ["filter"]
-        segmentation_layer = self.layers[filtered_layer.linkedSegmentationLayer["filter"]]
+        segmentation_layer = self.layers[
+            filtered_layer.linkedSegmentationLayer["filter"]]
         segmentation_layer.segments = [0 if len(segmentation_layer.segments) == 0 \
                                         else (max(segmentation_layer.segments) + 1)]
+
+    
+    def filter_helper(
+            self, 
+            filter_layer: dict | str, 
+            tract_layer_name: str
+            ) -> dict | ng.AnnotationLayer:
+        """Recursivly create filter layers."""
+        if isinstance(filter_layer, dict):
+            if "layer" in filter_layer:
+                sub_layers = []
+                filter_layer_list = filter_layer["layer"] if \
+                    isinstance(filter_layer["layer"], list) \
+                    else [filter_layer["layer"]]
+                for layer in filter_layer_list:
+                    updated_layer = self.filter_helper(layer, tract_layer_name)
+                    sub_layers.append(updated_layer)
+                return {**({"operation": filter_layer["operation"]} 
+                        if "operation" in filter_layer else {}),
+                            "layer": sub_layers if len(sub_layers) > 1 
+                            else sub_layers[0]}
+            else:
+                name = filter_layer.pop("name")
+                transform = filter_layer.pop("transform", None)
+                self.load("local://annotations/"+str(filter_layer), 
+                          name=tract_layer_name+name)
+                if transform is not None:
+                    self.layers[tract_layer_name+name].source[0].transform.matrix = np.asarray(transform, dtype="float64")
+                return self.layers[tract_layer_name+name]
+        
+        return self.layers[filter_layer]
 
     @autolog
     def unload(
@@ -718,6 +815,13 @@ class Scene(ViewerState):
             for source in layer.source:
                 proposed_removals.append(source.url) 
             del self.layers[name]
+            for key in filtered_layers.keys():
+                if filtered_layers[key].name == name:
+                    self.unload_filter(filter_layers[key])
+            try:
+                del self.layers[name + "_seg"]
+            except Exception:
+                pass
         
         for layer in self.layers:
             try:
@@ -730,13 +834,32 @@ class Scene(ViewerState):
             pattern = re.compile(r".*/trk/([^/]+)/(.*)")
             match = pattern.match(removal)
             if match:
+                key = removal.replace("/", "$").replace(".", "$")
+                if key in filtered_layers:
+                    del filtered_layers[key]
+                    del filter_layers[key]
                 parsed_removal = match.group(1) + "://" + match.group(2)
                 if parsed_removal + "/info" in info_cache.keys():
                     del info_cache[parsed_removal + "/info"]
+                if (parsed_removal + "/precomputed_segmentations/info"
+                    in info_cache.keys()):
+                    del info_cache[parsed_removal + "/precomputed_segmentations/info"]
                 if parsed_removal in spatial_cache.keys():
                     del spatial_cache[parsed_removal]
                 if parsed_removal in annotation_cache.keys():
                     del annotation_cache[parsed_removal]
+                if parsed_removal in spatial_annotations_cache.keys():
+                    del spatial_annotations_cache[parsed_removal]
+                if parsed_removal + "/by_tract" in tracts_cache: 
+                    del tracts_cache[parsed_removal + "/by_tract"]
+
+    def unload_filter(self, filter_layer: dict | ng.AnnotationLayer) -> None:
+        """Recursive function to unload filters layers."""
+        if isinstance(filter_layer, dict):
+            for filter in _ensure_list(filter_layer["layer"]):
+                self.unload_filter(filter)
+        else:
+            self.unload(filter_layer.name)
             
 
     @autolog

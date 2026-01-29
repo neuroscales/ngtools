@@ -703,8 +703,7 @@ class LocalFilterAnnotationDataSource(LocalAnnotationDataSource, LocalDataSource
             units="mm",
             scales=[1, 1, 1],
         )
-            
-
+        
         rank = len(dimensions.names)
         return ng.CoordinateSpaceTransform(
             matrix=np.eye(rank+1)[:-1],

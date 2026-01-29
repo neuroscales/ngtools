@@ -707,6 +707,18 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             dest='filter_layer', metavar='FILTER_LAYER',
             help='Layer that contains filter data')
+        
+        # --------------------------------------------------------------
+        #   EXPORT
+        # --------------------------------------------------------------
+        _ = add_parser('export', help='export filters')
+        _.set_defaults(func=self.export)
+        _.add_argument(
+            dest='tract_layer', metavar='TRACT_LAYER',
+            help='Tract layer to be filtered')
+        _.add_argument(
+            dest='output_path', metavar='OUTPUT_PATH',
+            help='file to export to')
 
         # --------------------------------------------------------------
         #   EXIT
@@ -739,6 +751,7 @@ class LocalNeuroglancer(OSMixin):
     zorder = state_action("zorder")
     state = state_action("state")
     filter = state_action("filter")
+    export = state_action("export")
 
     @action
     def help(self, action: str | None = None) -> None:
@@ -777,19 +790,40 @@ class LocalNeuroglancer(OSMixin):
                 source = source
             key = source.url.replace("/", "$").replace(".", "$")
             if key in filtered_layers.keys():
-                update_segmentations = False
-                if filter_layers[key] != state.layers[filter_layers[key].name]:
-                    filter_layers[key] = state.layers[filter_layers[key].name]
-                    update_segmentations = True
+                #update_segmentations = False
+                filter_layers[key], tmp_updated = self.update_filters_helper(
+                    filter_layers[key], state)
+                #update_segmentations = update_segmentations or tmp_updated
                 if filtered_layers[key] != layer:
                     filtered_layers[key] = layer
-                    update_segmentations = True
-                if update_segmentations:
-                    with self.viewer.txn() as editable_state:
-                        segmentation_layer = editable_state.layers[
-                            layer.linkedSegmentationLayer["filter"]]
-                        segmentation_layer.segments = [
-                            max(segmentation_layer.segments)+1]
+                #    update_segmentations = True
+                #if update_segmentations:
+                #    with self.viewer.txn() as editable_state:
+                #        segmentation_layer = editable_state.layers[
+                #            layer.linkedSegmentationLayer["filter"]]
+                #        segmentation_layer.segments = [
+                #            max(segmentation_layer.segments)+1]
+
+    def update_filters_helper(self, filter_layer: dict | ng.AnnotationLayer, 
+                              state: ng.trackable_state.TrackableState) -> \
+                                tuple[dict | ng.AnnotationLayer, bool]:
+        """Recursivly go through boolean operations to see if filters are unchanged."""
+        has_updated = False
+        if isinstance(filter_layer, dict):
+            sub_layers = []
+            for layer in ensure_list(filter_layer["layer"]):
+                updated_layer, tmp_updated = self.update_filters_helper(layer, state)
+                has_updated = tmp_updated or has_updated
+                sub_layers.append(updated_layer)
+            return {**({"operation": filter_layer["operation"]} 
+                       if "operation" in filter_layer else {}),
+                        "layer": sub_layers if len(sub_layers) > 1 
+                        else sub_layers[0]}, has_updated
+        
+        if filter_layer != state.layers[
+                filter_layer.name]:
+            return state.layers[filter_layer.name], True
+        return filter_layer, False
                         
 
 

@@ -2,6 +2,7 @@
 # stdlib
 import json
 import logging
+from functools import reduce
 from pathlib import Path
 from typing import Tuple
 
@@ -27,6 +28,7 @@ annotation_cache = _SizedRefreshCache(max_size=20)
 spatial_cache = _SizedRefreshCache(max_size=20)
 info_cache = _SizedRefreshCache(max_size=40)
 tracts_cache = _SizedRefreshCache(max_size=20)
+spatial_annotations_cache = _SizedRefreshCache(max_size=20)
 
 
 filter_layers = {}
@@ -130,13 +132,14 @@ class TractAnnotationHandler(Handler):
             return None
         
     def _get_filter(self, path: str) -> bytes:
+        """Get bytes from filtered trk file based on relationship format."""
         trk_path = "/".join(path.split("/")[:-2])
         key = trk_path.split("://")[-1].replace("/", "$").replace(".", "$")
-        for full_key in filter_layers.keys():
+        for full_key in filtered_layers.keys():
             if full_key.endswith(key):
                 key = full_key
         
-        segments, _, offsets, _ = self._read_from_file(trk_path)
+        segments, bbox, offsets, _ = self._read_from_file(trk_path)
         source = filtered_layers[key].source
         if isinstance(source, ng.viewer_state.LayerDataSources):
             transform = np.array(source[0].transform.to_json().get(
@@ -150,8 +153,13 @@ class TractAnnotationHandler(Handler):
             [segments["start"], np.ones((segments["start"].shape[0], 1))])@transform.T
         transform_segments["end"] = np.hstack(
             [segments["end"], np.ones((segments["end"].shape[0], 1))])@transform.T
-        tract_ids = self._get_annotations_inside(transform_segments, 
-                                                 filter_layers[key])
+        transform_bbox = np.hstack(
+            [bbox, np.ones((bbox.shape[0], 1))])@transform.T
+        transform_bbox = np.vstack([np.minimum(transform_bbox[0], transform_bbox[1]), 
+                                    np.maximum(transform_bbox[0], transform_bbox[1])])
+
+        tract_ids = self._get_annotations_inside(
+            transform_segments, filter_layers[key], transform_bbox, trk_path)
         tract = tats.tract_bytes(tract_ids, offsets, segments)
 
         return tract
@@ -259,61 +267,263 @@ class TractAnnotationHandler(Handler):
         _, _, _, affine = self._read_from_file(trk_path)
         return tau.lta_data(affine)
     
-    def _get_annotations_inside(
-            self, lines: np.ndarray, filter_layer: ng.Layer
-            ) -> np.ndarray:
-        """
-        Find all streamlines in a list of annotations that intersect 
-        with the filter layer.
-        """
+    def _get_bbox_locations(
+            self,
+            min_grid: np.ndarray,
+            max_grid: np.ndarray,
+            spatial: np.ndarray
+    ) -> np.ndarray:
+        """Find what segments are in the locations that collide with bbox."""
+        min_grid = np.clip(min_grid, 0, self.grid_densities[-1])
+        max_grid = np.clip(max_grid, -1, self.grid_densities[-1]-1)
+
+        grid_list = []
+        for i in range(min_grid[0], max_grid[0] + 1):
+            for j in range(min_grid[1], max_grid[1] + 1):
+                for k in range(min_grid[2], max_grid[2] + 1):
+                    if len(spatial[f"{i}_{j}_{k}"]) > 0:
+                        grid_list.append(spatial[f"{i}_{j}_{k}"])
+
+        seg_in_grid = np.array([])
+        if len(grid_list) > 0:
+            seg_in_grid = np.concatenate(grid_list)
+        return seg_in_grid
+        
+    def _annotations_inside_helper(
+            self, 
+            segments: np.ndarray, 
+            filter_layers: dict | ng.AnnotationLayer, 
+            bbox: np.ndarray, 
+            spatial: dict
+        ) -> np.ndarray:
+        """Recursive function parses nested filters with boolean operators."""
+        if isinstance(filter_layers, dict):
+            if isinstance(filter_layers["layer"], list):
+                streamlines_list = []
+                for filter_layer in filter_layers["layer"]:
+                    streamlines_list.append(self._annotations_inside_helper(segments, 
+                                                filter_layer, bbox, spatial))
+                if filter_layers["operation"] == "and":
+                    if len(streamlines_list) > 0:
+                        return reduce(np.intersect1d, streamlines_list)
+                    return np.asarray([], dtype=int)
+                elif filter_layers["operation"] == "or":
+                    return np.unique(np.concatenate(streamlines_list))
+                elif filter_layers["operation"] == "xor":
+                    and_vals = reduce(np.intersect1d, streamlines_list)
+                    or_vals = np.unique(np.concatenate(streamlines_list))
+                    return or_vals[~np.isin(or_vals, and_vals)]
+    
+            streamlines = self._annotations_inside_helper(segments, 
+                                    filter_layers["layer"], bbox, spatial)
+            if "operation" in filter_layers and filter_layers["operation"] == "not":
+                all_streamlines = np.array(range(1, np.max(segments["streamline"])), 
+                                        dtype=int)
+                return all_streamlines[~np.isin(all_streamlines, streamlines)]
+            return streamlines
+        
+        filter_layer = filter_layers
+
+        dimensions = bbox[1] - bbox[0]
+
         source = filter_layer.source
+
         if isinstance(source, ng.viewer_state.LayerDataSources):
             transform = np.array(source[0].transform.to_json().get(
                 "matrix", np.eye(4)[:-1]))
         else:
             transform = np.array(source.transform.to_json().get(
                 "matrix", np.eye(4)[:-1]))
-        line_list = []
-        for annotation in filter_layer.annotations:
+        if len(filter_layer.annotations) > 0:
+            annotation = filter_layer.annotations[0]
             if annotation.type == "axis_aligned_bounding_box":
-                points = np.vstack([annotation.pointA, annotation.pointB])
-                min_point = points.min(axis=0)
-                max_point = points.max(axis=0)
+                # I have decided to treat each line segment as a bounding box.
+                # This makes collision a lot easier to detect.
+                # And because line segments are so small 
+                # it will rarly lead to false positives
+                box_points = np.vstack([
+                    (annotation.pointA.tolist() + [1])@transform.T,
+                    (annotation.pointB.tolist() + [1])@transform.T])
+                min_box_point = box_points.min(axis=0)
+                max_box_point = box_points.max(axis=0)
 
-                mask = (lines["start"] > min_point).all(axis=1) & (lines["start"] < 
-                                                                   max_point).all(axis=1)
-                lines_in = lines[mask]
+                min_grid = np.asarray(((min_box_point - bbox[0])*
+                                        self.grid_densities[-1]
+                                        )//dimensions, dtype=int)
+                max_grid = np.asarray(((max_box_point - bbox[0])*
+                                        self.grid_densities[-1]
+                                        )//dimensions, dtype=int)
+                
+                seg_in_grid = self._get_bbox_locations(min_grid, max_grid, spatial)
+
+                if len(seg_in_grid) > 0:
+                    line_min = np.minimum(seg_in_grid["start"], seg_in_grid["end"])
+                    line_max = np.maximum(seg_in_grid["start"], seg_in_grid["end"])
+
+                    mask = np.all(line_min <= max_box_point, axis=1) & \
+                        np.all(line_max >= min_box_point, axis=1)
+
+                    return np.unique(segments[mask]["streamline"].reshape(-1))
 
             elif annotation.type == "ellipsoid":
                 center = np.array(annotation.center.tolist() + [1])@transform.T
-                radii = np.array(annotation.radii)@transform[:, :3].T
+                radii = np.abs(np.array(annotation.radii)@transform[:, :3].T)
 
-                start_transformed = (lines["start"] - center)/radii
-                end_transformed = (lines["end"] - center)/radii
+                min_grid = np.asarray((((center - radii) - bbox[0])*
+                            self.grid_densities[-1])//dimensions, dtype=int)
+                max_grid = np.asarray((((center + radii) - bbox[0])*
+                            self.grid_densities[-1])//dimensions, dtype=int)
+                
+                seg_in_grid = self._get_bbox_locations(min_grid, max_grid, spatial)
 
-                zero_vectors = np.all(end_transformed == start_transformed, axis=1)
+                if len(seg_in_grid) > 0:
+                    start_transformed = (segments["start"] - center)/radii
+                    end_transformed = (segments["end"] - center)/radii
 
-                end_transformed[zero_vectors] = start_transformed[zero_vectors] + \
-                    [10**-5]*3
+                    zero_vectors = np.all(end_transformed == start_transformed, 
+                                            axis=1)
 
-                l2 = np.sum((start_transformed - end_transformed)**2, axis=1)
+                    end_transformed[zero_vectors] = start_transformed[
+                        zero_vectors] + [10**-5]*3
 
-                t = np.clip(np.einsum("ij, ij->i", -start_transformed, \
-                                      end_transformed-start_transformed)/l2, 0.0, 1.0)
+                    l2 = np.sum((start_transformed - end_transformed)**2, axis=1)
 
-                mask = np.linalg.norm(start_transformed + np.stack((t, t, t), axis=1)*
-                                      (end_transformed-start_transformed), axis=1) <= 1
-                lines_in = lines[mask]
+                    t = np.clip(np.einsum("ij, ij->i", -start_transformed, 
+                                        end_transformed-start_transformed)/l2,
+                                        0.0, 1.0)
 
-            else:
-                continue
+                    mask = np.linalg.norm(start_transformed + 
+                                        np.stack((t, t, t), axis=1)*
+                                        (end_transformed-start_transformed),
+                                        axis=1) <= 1
+                    return np.unique(segments[mask]["streamline"].reshape(-1))
 
-            if len(lines_in) > 0:
-                line_list.append(lines_in["streamline"].reshape((-1)))
-        
-        if len(line_list) > 0:
-            return np.unique(np.concatenate(line_list))
+            elif annotation.type == "polyline":
+                points = annotation.points
+                points = np.hstack([points, np.ones((points.shape[0], 1))]
+                                    )@transform.T
+                plane_transform = self._plane_to_xy_transform(points[:, :3])
+                if plane_transform:
+                    points = points@plane_transform.T
+                    start_points = np.hstack([segments["start"], np.ones((
+                        segments["start"].shape[0], 1))])@plane_transform.T
+                    end_points = np.hstack([segments["end"], np.ones((
+                        segments["end"].shape[0], 1))])@plane_transform.T
+                    z1 = start_points[:, 2]
+                    z2 = end_points[:, 2]
+
+                    plane_col = (z1 * z2 < 0)
+
+                    t = z1 / (z1 - z2)
+
+                    plane_point = start_points[:, :2] + t[:, None] * (
+                        end_points[:, :2] - start_points[:, :2])
+
+                    poly = points[:, :2]
+
+                    mask = self._points_in_poly(plane_point, poly) & plane_col
+                    return np.unique(segments[mask]["streamline"].reshape(-1))
+            
         return np.array([], dtype=int)
+        
+
+
+    def _get_annotations_inside(
+            self, 
+            segments: np.ndarray, 
+            filter_layers: list[dict], 
+            bbox: np.ndarray,
+            path: str
+            ) -> np.ndarray:
+        """
+        Find all streamlines in a list of annotations that intersect 
+        with the filter layer.
+        """      
+        if path in spatial_annotations_cache and spatial_annotations_cache[path][
+            "first_seg"] == segments[0]:
+            spatial = spatial_annotations_cache[path]["spatical"]
+        else:
+            spatial = tau.get_spaticals_dict(segments, bbox, self.grid_densities[-1])
+            spatial_annotations_cache[path] = {"spatical": spatial, 
+                                               "first_seg": segments[0]}
+            
+        return self._annotations_inside_helper(segments, 
+                                               filter_layers, 
+                                                bbox, 
+                                                spatial)
+
+    def _plane_to_xy_transform(self, points: np.ndarray) -> np.ndarray:
+        """
+        Given Nx3 points, determine if they lie on a plane.
+        If so, return a 4x4 transformation matrix that maps that plane to the XY plane.
+        Otherwise return False.
+        """
+        pts = np.asarray(points)
+        if pts.shape[0] < 3:
+            return False
+
+        # Step 1: compute plane normal using SVD
+        centroid = pts.mean(axis=0)
+        centered = pts - centroid
+        _, _, vh = np.linalg.svd(centered)
+        normal = vh[-1]
+
+        # Step 2: check coplanarity
+        distances = centered @ normal
+        if not np.allclose(distances, 0, atol=1e-6):
+            return False  # not coplanar
+
+        # Step 3: build rotation that aligns plane normal to +Z
+        z_axis = np.array([0.0, 0.0, 1.0])
+        n = normal / np.linalg.norm(normal)
+
+        # If already aligned, rotation is identity
+        if np.allclose(n, z_axis):
+            R = np.eye(3)
+        else:
+            v = np.cross(n, z_axis)
+            c = np.dot(n, z_axis)
+            s = np.linalg.norm(v)
+
+            # Rodrigues' rotation formula
+            vx = np.array([
+                [0, -v[2], v[1]],
+                [v[2], 0, -v[0]],
+                [-v[1], v[0], 0]
+            ])
+            R = np.eye(3) + vx + vx @ vx * ((1 - c) / (s**2))
+
+        # Step 4: build full 4×4 transform (rotate then translate)
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = -R @ centroid
+
+        return T
+    
+    def _points_in_poly(self, points: np.ndarray, poly: np.ndarray) -> np.ndarray:
+        """Create a mask of what points are in the polygon."""
+        x = points[:, 0]
+        y = points[:, 1]
+
+        if poly[0] != poly[-1]:
+            poly = np.vstack([poly, poly[0]])
+
+        xp = poly[:, 0]
+        yp = poly[:, 1]
+
+        inside = np.zeros(len(points), dtype=bool)
+
+        for i in range(len(poly)):
+            j = (i - 1) % len(poly)
+            xi, yi = xp[i], yp[i]
+            xj, yj = xp[j], yp[j]
+
+            intersect = ((yi > y) != (yj > y)) & \
+                        (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi)
+            inside ^= intersect
+
+        return inside
+
 
 
 class LutHandler(Handler):
