@@ -7,10 +7,11 @@ nav = [
      {"Python interface" = "start/local_python.md"},
      {"Build scenes offline" = "start/offline_scenes.md"},
   ]},
-  # {"Specific Cases" = [
-  #   "specific/index.md",
-  #   "specific/tract_annotations.md",
-  # ]},
+  {"Specific Cases" = [
+    "specific/index.md",
+    "specific/interactive_registration.md",
+    # "specific/tract_annotations.md",
+  ]},
   {"Shell API" = [
     "shell/index.md",
     {"Commands" = "shell/commands.md"},
@@ -155,6 +156,7 @@ alternate_style = true
 [project.markdown_extensions.pymdownx.emoji]
 emoji_generator = "zensical.extensions.emoji.to_svg"
 emoji_index = "zensical.extensions.emoji.twemoji"
+[project.markdown_extensions.pymdownx.keys]
 [project.markdown_extensions.tables]
 [project.markdown_extensions.toc]
 toc_depth = 3

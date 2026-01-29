@@ -96,7 +96,12 @@ class parse_protocols(parsed_protocols):
         args = list(args)
         if args:
             url = str(args.pop(-1))
+            # parse protocols
             *parts, url = str(url).split("://")
+            # parse pipes
+            url, *pipes = url.split("|")
+            pipes = [p.strip().rstrip(":") for p in pipes]
+            parts.extend(pipes)
             for part in parts:
 
                 if part in PROTOCOLS:
@@ -300,6 +305,12 @@ def filesystem(protocol: URILike | FileSystem, **opt) -> FileSystem:
         opt["client_kwargs"].update(dandi_auth_opt(instance=instance))
     # -----------------------------------
 
+    # ---------- Google Cloud -----------
+    if protocol in ("gs", "gcs"):
+        opt.setdefault("token", "anon")        # much faster for public data
+        opt.setdefault("access", "read_only")  # default is "full_control"
+    # -----------------------------------
+
     fs = fsspec.filesystem(protocol, **opt)
     _FILESYSTEMS_CACHE[(protocol, linc_auth, dandi_auth)] = fs
     return fs
@@ -311,9 +322,12 @@ def exists(uri: URILike, **opt) -> bool:
     uri0 = uri
     uri = parse_protocols(uri).url
     fs = filesystem(uri, **opt)
+    tac = time.time()
     exists = fs.exists(uri)
     toc = time.time()
-    LOG.debug(f"exists({uri0}): {exists} | {toc-tic} s")
+    LOG.debug(
+        f"exists({uri0}): {exists} | {toc-tic} s ({tac-tic} s + {toc-tac} s)"
+    )
     return exists
 
 
