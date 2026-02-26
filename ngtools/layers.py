@@ -14,6 +14,7 @@ from ngtools.datasources import (
     AnnotationDataSource,
     LayerDataSource,
     LayerDataSources,
+    LocalFilterAnnotationDataSource,
     MeshDataSource,
     PrecomputedDataSource,
     PrecomputedTractsDataSource,
@@ -164,6 +165,7 @@ class LayerFactory(type):
                     odim = arg.source[0].transform.output_dimensions
                     return LocalAnnotationLayer(odim, arg, *args, **kwargs)
                 else:
+                    kwargs['shader'] = shaders.annotation.default
                     return AnnotationLayer(arg, *args, **kwargs)
 
             layer_type = parse_protocols(url).layer
@@ -221,6 +223,9 @@ class LayerFactory(type):
             elif isinstance(source, PrecomputedTractsDataSource):
                 LOG.debug("LayerFactory - guess AnnotationLayer")
                 GuessedLayer = TractAnnotationLayer
+            elif isinstance(source, LocalFilterAnnotationDataSource):
+                LOG.debug("LayerFactory - guess LocalAnnotationLayer")
+                GuessedLayer = LocalAnnotationLayer
             elif isinstance(source, AnnotationDataSource):
                 LOG.debug("LayerFactory - guess AnnotationLayer")
                 GuessedLayer = AnnotationLayer
@@ -764,6 +769,10 @@ class TractAnnotationLayer(AnnotationLayer):
 
 
 class LocalAnnotationLayer(Wraps(ng.LocalAnnotationLayer), AnnotationLayer):
+    def __init__(self, *args, **kwargs) -> None:
+        if 'shader' not in kwargs:
+            kwargs['shader'] = shaders.annotation.default
+        super().__init__(*args, **kwargs)
     """TODO."""
 
     ...

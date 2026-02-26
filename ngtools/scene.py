@@ -3,9 +3,10 @@
 import functools
 import json
 import logging
-import os
 import os.path as op
+import random
 import re
+import string
 import sys
 from copy import deepcopy
 from io import BytesIO
@@ -29,10 +30,9 @@ import ngtools.local.tracts  # noqa: F401
 import ngtools.spaces as S
 import ngtools.transforms as T
 from ngtools.datasources import LayerDataSource
-from ngtools.layers import Layer, Layers, TractAnnotationLayer
+from ngtools.layers import Layer, Layers
 from ngtools.local.handlers import (
     annotation_cache,
-    filter_layers,
     filtered_layers,
     info_cache,
     spatial_annotations_cache,
@@ -640,15 +640,6 @@ class Scene(ViewerState):
 
             uri = str(parsed).rstrip("/")
             layer = Layer(str(parsed), **kwargs)
-            if isinstance(layer, TractAnnotationLayer):
-                seg_layer = Layer(str(parse_protocols(
-                    "precomputed://"+
-                    parsed.url+
-                    "/precomputed_segmentations")), **kwargs)
-                self.layers.append(name=name+"_seg", layer=seg_layer, visible=False)
-                layer.linkedSegmentationLayer = {"filter": name+"_seg"}
-                layer.filterBySegmentation = ["filter"]
-                onames.append(name+"_seg")
             self.layers.append(name=name, layer=layer)
             self.stdio.info(f"Loaded: {self.layers[name].to_json()}")
             onames.append(name)
@@ -671,142 +662,23 @@ class Scene(ViewerState):
         if shader is not None:
             self.shader(shader, layer=onames)
 
-    @autolog
-    def export(
-        self,
-        tract_layer: str | None = None,
-        output_path: str | None = None,
-        **kwargs
-    ) -> None:
-        """
-        Export current filter layers attached to a tract layer.
+    def filter(self, pos:np.ndarray, addition:bool) -> None:
+        """Create filter local annotation."""
+        tag = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        name = "::filter::"+ ("addition" if addition else "subtraction") + "::" + tag
 
-        Parameters
-        ----------
-        tract_layer : str
-            The name of the tract layer with attached filters.
-        output_path : str
-            Destenation of file to export to.
-        """
-        if kwargs.get("tract_layer", False):
-            if tract_layer is not None:
-                raise ValueError("set the name of the filtered layer in only one place")
-        if kwargs.get("output_path", False):
-            if output_path is not None:
-                raise ValueError("set the name of the filtered layer in only one place")
-            
-        output_path = kwargs.pop("output_path", output_path)
-            
-        tract_layer_name = kwargs.pop("tract_layer", tract_layer)
-        layer = self.layers[tract_layer_name]
-        key = layer.source[0].url.replace("/", "$").replace(".", "$")
-        export = self.export_helper(filter_layers[key], tract_layer_name)
-
-        with open(output_path, 'w') as json_file:
-            json.dump(export, json_file, indent=4)
-    
-    def export_helper(
-            self, 
-            filter_layer: dict | ng.AnnotationLayer, 
-            tract_layer_name: str
-            ) -> dict:
-        """Recursivly generate the json that will be exported."""
-        if isinstance(filter_layer, dict):
-            sub_layers = []
-            filter_layer_list = filter_layer["layer"] if \
-                isinstance(filter_layer["layer"], list) \
-                else [filter_layer["layer"]]
-            for layer in filter_layer_list:
-                updated_layer = self.export_helper(layer, tract_layer_name)
-                sub_layers.append(updated_layer)
-            return {**({"operation": filter_layer["operation"]} 
-                    if "operation" in filter_layer else {}),
-                        "layer": sub_layers if len(sub_layers) > 1 
-                        else sub_layers[0]}
-        return {"type": filter_layer.type, **(filter_layer.annotations[0].to_json()), "name": filter_layer.name[len(tract_layer_name):], "transform": filter_layer.source[0].transform.matrix.tolist()}
-    
-    @autolog
-    def filter(
-        self,
-        tract_layer_name: str | None = None,
-        filter_layer_name: str | None = None,
-        **kwargs
-    ) -> None:
-        """
-        Links tract layer to filter layer.
-
-        Parameters
-        ----------
-        tract_layer_name : str
-            the name of the layer to be filtered
-        filter_layer_name : str
-            the name of the layer that will act as the filter
-        """
-        if kwargs.get("tract_layer", False):
-            if tract_layer_name is not None:
-                raise ValueError("set the name of the filtered layer in only one place")
-            
-        if kwargs.get("filter_layer", False):
-            if filter_layer_name is not None:
-                raise ValueError("set the name of the filter layer in only one place")
-        
-        tract_layer_name = kwargs.pop("tract_layer", tract_layer_name)
-        filter_layer_name = kwargs.pop("filter_layer", filter_layer_name)
-
-        if isinstance(filter_layer_name, str):
-            if os.path.exists(filter_layer_name):
-                with open(filter_layer_name, 'r') as f:
-                    filter_layer = f.read()
-            filter_layer = json.loads(filter_layer.replace("'", '"'))
-
-
-        layer_names = [layer.name for layer in self.layers]
-
-        if tract_layer_name not in layer_names:
-            raise ValueError("filtered layer name does not exist")
-
-        filtered_layer = self.layers[tract_layer_name]
-        key = filtered_layer.source[0].url.replace("/", "$").replace(".", "$")
-        if key in filter_layers:
-            self.unload_filter(filter_layers[key])
-        filter_layers[key] = self.filter_helper(filter_layer, tract_layer_name)
-        filtered_layers[key] = filtered_layer
-        filtered_layer.filterBySegmentation = ["filter"]
-        segmentation_layer = self.layers[
-            filtered_layer.linkedSegmentationLayer["filter"]]
-        segmentation_layer.segments = [0 if len(segmentation_layer.segments) == 0 \
-                                        else (max(segmentation_layer.segments) + 1)]
-
-    
-    def filter_helper(
-            self, 
-            filter_layer: dict | str, 
-            tract_layer_name: str
-            ) -> dict | ng.AnnotationLayer:
-        """Recursivly create filter layers."""
-        if isinstance(filter_layer, dict):
-            if "layer" in filter_layer:
-                sub_layers = []
-                filter_layer_list = filter_layer["layer"] if \
-                    isinstance(filter_layer["layer"], list) \
-                    else [filter_layer["layer"]]
-                for layer in filter_layer_list:
-                    updated_layer = self.filter_helper(layer, tract_layer_name)
-                    sub_layers.append(updated_layer)
-                return {**({"operation": filter_layer["operation"]} 
-                        if "operation" in filter_layer else {}),
-                            "layer": sub_layers if len(sub_layers) > 1 
-                            else sub_layers[0]}
-            else:
-                name = filter_layer.pop("name")
-                transform = filter_layer.pop("transform", None)
-                self.load("local://annotations/"+str(filter_layer), 
-                          name=tract_layer_name+name)
-                if transform is not None:
-                    self.layers[tract_layer_name+name].source[0].transform.matrix = np.asarray(transform, dtype="float64")
-                return self.layers[tract_layer_name+name]
-        
-        return self.layers[filter_layer]
+        self.load("local://annotations/"+str({
+            "type": "ellipsoid", 
+            "id": "100001", 
+            "center": [0.0, 0.0, 0.0], 
+            "radii": [2.0, 2.0, 2.0], 
+            "segments": []}), 
+            name=name)
+        self.layers[name].source[0].transform.matrix = np.asarray(
+            [[1, 0, 0, pos[0].item()], 
+             [0, 1, 0, pos[1].item()], 
+             [0, 0, 1, pos[2].item()]], 
+             dtype="float64")
 
     @autolog
     def unload(
@@ -828,13 +700,6 @@ class Scene(ViewerState):
             for source in layer.source:
                 proposed_removals.append(source.url) 
             del self.layers[name]
-            for key in filtered_layers.keys():
-                if filtered_layers[key].name == name:
-                    self.unload_filter(filter_layers[key])
-            try:
-                del self.layers[name + "_seg"]
-            except Exception:
-                pass
         
         for layer in self.layers:
             try:
@@ -850,7 +715,6 @@ class Scene(ViewerState):
                 key = removal.replace("/", "$").replace(".", "$")
                 if key in filtered_layers:
                     del filtered_layers[key]
-                    del filter_layers[key]
                 parsed_removal = match.group(1) + "://" + match.group(2)
                 if parsed_removal + "/info" in info_cache.keys():
                     del info_cache[parsed_removal + "/info"]
@@ -866,13 +730,6 @@ class Scene(ViewerState):
                 if parsed_removal + "/by_tract" in tracts_cache: 
                     del tracts_cache[parsed_removal + "/by_tract"]
 
-    def unload_filter(self, filter_layer: dict | ng.AnnotationLayer) -> None:
-        """Recursive function to unload filters layers."""
-        if isinstance(filter_layer, dict):
-            for filter in _ensure_list(filter_layer["layer"]):
-                self.unload_filter(filter)
-        else:
-            self.unload(filter_layer.name)
             
 
     @autolog
@@ -1736,7 +1593,7 @@ class Scene(ViewerState):
         return matrices
 
     DEFAULT_CONTROL_TRL = \
-        "#uicontrol float translation_scale slider(min=-5, max=5, default=0, step=0.01)"  # noqa: E501
+        "#uicontrol float translat_scale slider(min=-5, max=5, default=0, step=0.01)"  # noqa: E501
     DEFAULT_CONTROL_ROT = \
         "#uicontrol float rotation_scale slider(min=0, max=90, default=1, step=0.1)"  # noqa: E501
     DEFAULT_CONTROL_SCL = \
@@ -1796,7 +1653,7 @@ class Scene(ViewerState):
             if shader == "None":
                 shader = shaders.default
             if shader:
-                if "#uicontrol float translation_scale" not in shader:
+                if "#uicontrol float translat_scale" not in shader:
                     shader += f"\n{self.DEFAULT_CONTROL_TRL}"
                 if "#uicontrol float rotation_scale" not in shader:
                     shader += f"\n{self.DEFAULT_CONTROL_ROT}"

@@ -576,6 +576,20 @@ class LocalNeuroglancer(OSMixin):
                 status="add-moving-landmark"
             ))
         self.viewer.actions.add(
+            'add-addition-filter',
+            partial(
+                self._keybind_action2,
+                action=lambda st, sc: sc.filter(st.mouse_position[:3], True),
+                status="add-addition-filter"
+            ))
+        self.viewer.actions.add(
+            'add-subtraction-filter',
+            partial(
+                self._keybind_action2,
+                action=lambda st, sc: sc.filter(st.mouse_position[:3], False),
+                status="add-subtraction-filter"
+            ))
+        self.viewer.actions.add(
             'add-fixed-landmark',
             partial(
                 self._keybind_action2,
@@ -667,12 +681,15 @@ class LocalNeuroglancer(OSMixin):
             c['control+keyt'] = 'translate-layer-mouse-to-crosshair'
             c['control+keym'] = 'add-moving-landmark'
             c['control+keyf'] = 'add-fixed-landmark'
+            c['control+keyp'] = 'add-addition-filter'
+            c['control+keyo'] = 'add-subtraction-filter'
             v['alt+keym'] = 'pop-moving-landmark'
             v['alt+keyf'] = 'pop-fixed-landmark'
             v['alt+keyt'] = 'translate-layer-landmarks'
             v['alt+keyr'] = 'rigid-transform-layer-landmarks'
             v['alt+keys'] = 'similitude-transform-layer-landmarks'
             v['alt+keya'] = 'affine-transform-layer-landmarks'
+
 
     # ==================================================================
     #
@@ -1035,30 +1052,6 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(dest='stderr', metavar='FILE')
 
         # --------------------------------------------------------------
-        #   LOAD
-        # --------------------------------------------------------------
-        _ = add_parser('filter', help='apply a filter')
-        _.set_defaults(func=self.filter)
-        _.add_argument(
-            dest='tract_layer', metavar='TRACT_LAYER',
-            help='Tract layer to be filtered')
-        _.add_argument(
-            dest='filter_layer', metavar='FILTER_LAYER',
-            help='Layer that contains filter data')
-        
-        # --------------------------------------------------------------
-        #   EXPORT
-        # --------------------------------------------------------------
-        _ = add_parser('export', help='export filters')
-        _.set_defaults(func=self.export)
-        _.add_argument(
-            dest='tract_layer', metavar='TRACT_LAYER',
-            help='Tract layer to be filtered')
-        _.add_argument(
-            dest='output_path', metavar='OUTPUT_PATH',
-            help='file to export to')
-
-        # --------------------------------------------------------------
         #   EXIT
         # --------------------------------------------------------------
         _ = add_parser('exit', aliases=['quit'], help='Exit neuroglancer')
@@ -1098,8 +1091,6 @@ class LocalNeuroglancer(OSMixin):
     layout = state_action("change_layout")
     zorder = state_action("zorder")
     state = state_action("state")
-    filter = state_action("filter")
-    export = state_action("export")
 
     @action
     def help(self, action: str | None = None) -> None:
@@ -1129,49 +1120,26 @@ class LocalNeuroglancer(OSMixin):
 
     def update_filters(self) -> None:
         """Check if the filters need to be updated."""
+        #global filter_layers2
+        filter_layers.clear()
         state = self.viewer.state
         for layer in state.layers:
+            if layer.name[:8] == "::filter" and (not hasattr(layer, "visible") or layer.visible):
+                filter_layers.append(layer)
+            else:
+                source = layer.source
+                try:
+                    source = source[0]
+                except Exception:
+                    source = source
+                key = source.url.replace("/", "$").replace(".", "$")
+                filtered_layers[key] = layer
             source = layer.source
             try:
                 source = source[0]
             except Exception:
                 source = source
             key = source.url.replace("/", "$").replace(".", "$")
-            if key in filtered_layers.keys():
-                #update_segmentations = False
-                filter_layers[key], tmp_updated = self.update_filters_helper(
-                    filter_layers[key], state)
-                #update_segmentations = update_segmentations or tmp_updated
-                if filtered_layers[key] != layer:
-                    filtered_layers[key] = layer
-                #    update_segmentations = True
-                #if update_segmentations:
-                #    with self.viewer.txn() as editable_state:
-                #        segmentation_layer = editable_state.layers[
-                #            layer.linkedSegmentationLayer["filter"]]
-                #        segmentation_layer.segments = [
-                #            max(segmentation_layer.segments)+1]
-
-    def update_filters_helper(self, filter_layer: dict | ng.AnnotationLayer, 
-                              state: ng.trackable_state.TrackableState) -> \
-                                tuple[dict | ng.AnnotationLayer, bool]:
-        """Recursivly go through boolean operations to see if filters are unchanged."""
-        has_updated = False
-        if isinstance(filter_layer, dict):
-            sub_layers = []
-            for layer in ensure_list(filter_layer["layer"]):
-                updated_layer, tmp_updated = self.update_filters_helper(layer, state)
-                has_updated = tmp_updated or has_updated
-                sub_layers.append(updated_layer)
-            return {**({"operation": filter_layer["operation"]} 
-                       if "operation" in filter_layer else {}),
-                        "layer": sub_layers if len(sub_layers) > 1 
-                        else sub_layers[0]}, has_updated
-        
-        if filter_layer != state.layers[
-                filter_layer.name]:
-            return state.layers[filter_layer.name], True
-        return filter_layer, False
                         
 
 
