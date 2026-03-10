@@ -9,6 +9,7 @@ from urllib.parse import quote
 # externals
 import neuroglancer as ng
 
+# optionals
 try:
     import google.colab
     _IS_GOOGLE_COLAB = True
@@ -199,6 +200,7 @@ def get_server_url(bind_address: str, port: int) -> str:
 
 
 def get_regular_server_url(bind_address: str, port: int) -> str:
+    """Get server URL for a regular server."""
     if bind_address == "0.0.0.0" or bind_address == "::":
         hostname = socket.getfqdn()
     else:
@@ -207,6 +209,7 @@ def get_regular_server_url(bind_address: str, port: int) -> str:
 
 
 def get_colab_server_url(port: int) -> str:
+    """Get server URL for a server running in a colab notebook."""
     from google.colab.output import eval_js
 
     return eval_js(f"google.colab.kernel.proxyPort({port})")

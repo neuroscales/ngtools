@@ -33,7 +33,6 @@ import json
 import logging
 import time
 from bz2 import BZ2File
-from collections import namedtuple
 from inspect import isawaitable
 from io import BufferedReader, BytesIO
 from os import PathLike, environ
@@ -50,7 +49,7 @@ from indexed_gzip import IndexedGzipFile
 from typing_extensions import Buffer
 
 # internals
-from ngtools.protocols import FORMATS, LAYERS, PROTOCOLS
+from ngtools.protocols import PROTOCOLS, parse_protocols
 
 LOG = logging.getLogger(__name__)
 
@@ -79,121 +78,6 @@ def stringify_path(filename: FileLike) -> IO | str:
     if isinstance(filename, Path):
         return str(filename)
     return filename
-
-
-parsed_protocols = namedtuple(
-    "parsed_protocols",
-    ["layer", "format", "stream", "url"]
-)
-
-
-class parse_protocols(parsed_protocols):
-    """Parse ngtools uri."""
-
-    def __new__(cls, *args, **kwargs) -> "parse_protocols":  # noqa: D102
-        layer = format = stream = url = None
-
-        args = list(args)
-        if args:
-            url = str(args.pop(-1))
-            # parse protocols
-            *parts, url = str(url).split("://")
-            # parse pipes
-            url, *pipes = url.split("|")
-            pipes = [p.strip().rstrip(":") for p in pipes]
-            parts.extend(pipes)
-            for part in parts:
-
-                if part in PROTOCOLS:
-                    if stream is not None:
-                        raise ValueError("Too many streaming protocols:",
-                                         stream, part)
-                    stream = part
-
-                elif part in LAYERS:
-                    if layer is not None:
-                        raise ValueError("Too many layer protocols:",
-                                         layer, part)
-                    layer = part
-
-                elif part in FORMATS:
-                    if format is not None:
-                        raise ValueError("Too many format protocols:",
-                                         format, part)
-                    format = part
-
-                else:
-                    raise ValueError("Unknown protocol:", part)
-
-        for i, arg in enumerate(reversed(args)):
-            if i == 0:
-                stream = arg
-            elif i == 1:
-                format = arg
-            elif i == 2:
-                layer = arg
-            else:
-                raise ValueError("Too many inputs")
-        layer = kwargs.get("layer", layer)
-        format = kwargs.get("format", format)
-        stream = kwargs.get("stream", stream)
-        url = kwargs.get("url", url)
-
-        stream = stream or "file"
-        if stream != "file":
-            url = stream + "://" + url
-        return super().__new__(cls, layer, format, stream, url)
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__()
-
-    @property
-    def path(self) -> str:
-        """Alias for url."""
-        return self.url
-
-    def __str__(self) -> str:
-        out = self.url
-        if self.stream and not self.url.startswith(self.stream):
-            out = self.stream + "://" + out
-        if self.format:
-            out = self.format + "://" + out
-        if self.layer:
-            out = self.layer + "://" + out
-        return out
-
-    def with_part(self, **kwargs) -> "parse_protocols":
-        """Replace parts."""
-        if "stream" not in kwargs:
-            url = kwargs.get("url", self.url)
-            if "://" in url:
-                kwargs["stream"] = url.split("://")[0]
-        return parse_protocols(
-            kwargs.get("layer", self.layer),
-            kwargs.get("format", self.format),
-            kwargs.get("stream", self.stream),
-            kwargs.get("url", self.url),
-        )
-
-    def with_layer(self, layer: str | None) -> "parse_protocols":
-        """Replace layer."""
-        return self.with_part(layer=layer)
-
-    def with_format(self, format: str | None) -> "parse_protocols":
-        """Replace format."""
-        return self.with_part(format=format)
-
-    def with_stream(self, stream: str | None) -> "parse_protocols":
-        """Replace stream."""
-        return self.with_part(stream=stream)
-
-    def with_url(self, url: str | None) -> "parse_protocols":
-        """Replace url."""
-        return self.with_part(url=url)
-
-    def with_path(self, path: str | None) -> "parse_protocols":
-        """Replace path."""
-        return self.with_part(url=path)
 
 
 def linc_auth_opt(token: str | None = None) -> dict:
@@ -323,7 +207,11 @@ def exists(uri: URILike, **opt) -> bool:
     uri = parse_protocols(uri).url
     fs = filesystem(uri, **opt)
     tac = time.time()
-    exists = fs.exists(uri)
+    try:
+        exists = fs.exists(uri)
+    except Exception as e:
+        LOG.warning(f"Error checking existence of {uri}: {e}")
+        exists = False
     toc = time.time()
     LOG.debug(
         f"exists({uri0}): {exists} | {toc-tic} s ({tac-tic} s + {toc-tac} s)"

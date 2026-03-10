@@ -39,6 +39,7 @@ from ngtools.opener import (
     parse_protocols,
     read_json,
 )
+from ngtools.url_adapter import get_datasource_url
 from ngtools.utils import Wraps
 
 LOG = logging.getLogger(__name__)
@@ -169,18 +170,7 @@ class _LayerDataSourceFactory(type):
             return obj
 
         # Get url
-        if kwargs.get("url", ""):
-            url = kwargs["url"]
-            if isinstance(url, (str, PathLike)):
-                url = kwargs["url"] = str(url)
-        elif isinstance(arg, (str, PathLike)):
-            url = arg = str(arg)
-        elif hasattr(arg, "url"):
-            url = arg.url
-        elif isinstance(arg, dict) and "url" in arg:
-            url = arg["url"]
-        elif not isinstance(arg, cls._LocalSource):
-            raise ValueError("Missing data source url")
+        url, arg, kwargs = get_datasource_url(arg, cls._LocalSource, **kwargs)
 
         # If local object -> delegate
         if isinstance(url, ng.LocalVolume):
@@ -255,7 +245,12 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
 
     PROTOCOLS: list[str] = []
 
+    _LocalSource = (ng.local_volume.LocalVolume, ng.skeleton.SkeletonSource)
+
     def __init__(self, *args, **kwargs) -> None:
+        # # Get url
+        # url, arg, kwargs = get_datasource_url(arg, self._LocalSource, **kwargs)
+
         super().__init__(*args, **kwargs)
 
         # ensure that the url has the right format
@@ -287,8 +282,11 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
                 LOG.debug("Recompute info")
                 try:
                     _DATASOURCE_INFO_CACHE[key] = self._compute_info()
-                except Exception:
+                except Exception as e:
+                    import traceback
                     LOG.warning(f"Could not compute info for: {key}")
+                    LOG.warning(f"Error: {e}")
+                    LOG.warning(traceback.print_tb(e.__traceback__))
             else:
                 LOG.debug("Use cached info")
             self._info = _DATASOURCE_INFO_CACHE.get(key, None)
@@ -1514,13 +1512,13 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
 
         nifti_json = url / "nifti" / "zarr.json"
 
-        if not nifti_json.exists():
+        if not exists(nifti_json):
             if nifti is True:
                 raise FileNotFoundError("Cannot find nifti group in zarr.")
             return
 
         try:
-            content = json.loads(nifti_json.read_text())
+            content = read_json(nifti_json)
             sep = content["chunk_key_encoding"]["configuration"]["separator"]
         except (KeyError, json.JSONDecodeError):
             raise ValueError(
@@ -1528,7 +1526,7 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
             )
 
         nifti_group = url / "nifti" / f"c{sep}0"
-        if not nifti_group.exists():
+        if not exists(nifti_group):
             raise FileNotFoundError("Cannot find nifti group in zarr.")
 
         self.nifti = NiftiVolumeInfo(

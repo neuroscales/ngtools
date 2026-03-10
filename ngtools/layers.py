@@ -20,6 +20,7 @@ from ngtools.datasources import (
 from ngtools.local.tracts import TractDataSource, TractSkeleton
 from ngtools.opener import parse_protocols
 from ngtools.shaders import shaders
+from ngtools.url_adapter import get_layer_url
 from ngtools.utils import Wraps
 
 LOG = logging.getLogger(__name__)
@@ -48,58 +49,6 @@ _LayerArg = (
     ng.LayerDataSources |
     (ng.Layer | dict | None)
 )
-
-
-def _get_url(arg: _LayerArg, **kwargs) -> str | _LocalLike | None:
-    if kwargs.get("source", None):
-        return _get_url(kwargs.pop("source"), **kwargs)
-    if kwargs.get("url", None):
-        return _get_url(kwargs.pop("url"), **kwargs)
-    if isinstance(arg, (str, PathLike)):
-        return str(arg)
-    if isinstance(arg, _LocalType):
-        if hasattr(arg, "_url"):
-            return arg._url
-        return arg
-    if hasattr(arg, "source"):
-        return _get_url(arg.source)
-    if hasattr(arg, "url"):
-        return _get_url(arg.url)
-    if isinstance(arg, dict):
-        if arg.get("source", None):
-            return _get_url(arg.get("source", arg))
-        if arg.get("url", None):
-            return _get_url(arg.get("url", arg))
-    if hasattr(arg, "__iter__"):
-        for arg1 in arg:
-            url = _get_url(arg1, **kwargs)
-            if url is not None:
-                return url
-    print("None")
-    return None
-
-
-def _get_source(arg: _LayerArg, **kwargs) -> _DataSourcesLike:
-    if kwargs.get("source", None):
-        return _get_url(kwargs.pop("source"), **kwargs)
-    if isinstance(arg, (str, PathLike)):
-        return str(arg)
-    if isinstance(arg, _LocalType):
-        return arg
-    if hasattr(arg, "source"):
-        return _get_url(arg.source)
-    if hasattr(arg, "url"):
-        return arg
-    if isinstance(arg, dict):
-        if arg.get("source", None):
-            return _get_url(arg.get("source", arg))
-        if "url" in arg:
-            return arg
-    if hasattr(arg, "__iter__"):
-        return arg
-    if isinstance(arg, (ng.LayerDataSource, ng.LayerDataSources)):
-        return arg
-    return None
 
 
 class LayerFactory(type):
@@ -146,7 +95,7 @@ class LayerFactory(type):
             arg = None
 
         # Switch based on layer protocol
-        url = _get_url(arg, **kwargs)
+        url = get_layer_url(arg, **kwargs)
         LOG.debug(f"LayerFactory - url: {url}")
 
         GuessedLayer = None
@@ -468,7 +417,7 @@ class SkeletonLayerFactory(LayerFactory):
             arg = None
 
         # Switch based on layer protocol
-        url = _get_url(arg, **kwargs)
+        url = get_layer_url(arg, **kwargs)
         LOG.debug(f"SkeletonLayerFactory - url: {url}")
 
         GuessedLayer = None

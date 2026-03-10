@@ -22,6 +22,7 @@ from numpy.typing import ArrayLike
 # import to trigger datasource registration
 import ngtools.local.datasources  # noqa: F401
 import ngtools.local.tracts  # noqa: F401
+from ngtools.local.fileserver import CurrentFileserver
 
 # internals
 import ngtools.spaces as S
@@ -510,6 +511,56 @@ class Scene(ViewerState):
         super().__init__(*args, **kwargs)
         self.stdio = stdio
 
+    def _adapt_url(self, uri: str, fileserver: str | None = None) -> str:
+        uri = str(uri).rstrip("/")
+        parsed = parse_protocols(uri)
+        short_uri = parsed.url
+        basename = op.basename(short_uri)
+
+        # extension-based hint
+        if not parsed.format:
+            if basename.endswith(".zarr"):
+                parsed = parsed.with_format("zarr")
+            elif basename.endswith(".n5"):
+                parsed = parsed.with_format("n5")
+            elif basename.endswith((".nii", ".nii.gz")):
+                parsed = parsed.with_format("nifti")
+
+        if parsed.stream == "dandi":
+            # neuroglancer does not understand dandi:// uris,
+            # so we use the s3 url instead.
+            short_uri = filesystem(short_uri).s3_url(short_uri)
+            parsed = parsed.with_part(stream="https", url=short_uri)
+
+        elif parsed.stream == "file":
+            # neuroglancer does not understand file:// uris,
+            # so we serve it over http using a local fileserver.
+            if not fileserver:
+                raise ValueError(
+                    "Cannot load local files without a fileserver"
+                )
+            short_uri = fileserver + "/local/" + op.abspath(short_uri)
+            parsed = parsed.with_part(stream="http", url=short_uri)
+
+        if fileserver:
+            # if local viewer and data is on linc
+            # -> redirect to our handler that deals with credentials
+            linc_prefix = "https://neuroglancer.lincbrain.org/"
+            if parsed.url.startswith(linc_prefix):
+                path = parsed.url[len(linc_prefix):]
+                local_url = fileserver + "/linc/" + path
+                parsed = parsed.with_part(stream="http", url=local_url)
+
+        uri = str(parsed).rstrip("/")
+        return uri
+
+    def _default_name(uri: str) -> str:
+        uri = str(uri).rstrip("/")
+        parsed = parse_protocols(uri)
+        short_uri = parsed.url
+        basename = op.basename(short_uri)
+        return basename
+
     @autolog
     def load(
         self,
@@ -566,48 +617,11 @@ class Scene(ViewerState):
 
             # TODO: wrap each file loading in a try/except block?
 
-            uri = str(uri).rstrip("/")
-            parsed = parse_protocols(uri)
-            short_uri = parsed.url
-            basename = op.basename(short_uri)
-            name = names[n] if names else basename
+            name = names[n] if names else Scene._default_name(uri)
 
-            # extension-based hint
-            if not parsed.format:
-                if basename.endswith(".zarr"):
-                    parsed = parsed.with_format("zarr")
-                elif basename.endswith(".n5"):
-                    parsed = parsed.with_format("n5")
-                elif basename.endswith((".nii", ".nii.gz")):
-                    parsed = parsed.with_format("nifti")
+            with CurrentFileserver(fileserver):
+                layer = Layer(uri, **kwargs)
 
-            if parsed.stream == "dandi":
-                # neuroglancer does not understand dandi:// uris,
-                # so we use the s3 url instead.
-                short_uri = filesystem(short_uri).s3_url(short_uri)
-                parsed = parsed.with_part(stream="https", url=short_uri)
-
-            elif parsed.stream == "file":
-                # neuroglancer does not understand file:// uris,
-                # so we serve it over http using a local fileserver.
-                if not fileserver:
-                    raise ValueError(
-                        "Cannot load local files without a fileserver"
-                    )
-                short_uri = fileserver + "/local/" + op.abspath(short_uri)
-                parsed = parsed.with_part(stream="http", url=short_uri)
-
-            if fileserver:
-                # if local viewer and data is on linc
-                # -> redirect to our handler that deals with credentials
-                linc_prefix = "https://neuroglancer.lincbrain.org/"
-                if parsed.url.startswith(linc_prefix):
-                    path = parsed.url[len(linc_prefix):]
-                    local_url = fileserver + "/linc/" + path
-                    parsed = parsed.with_part(stream="http", url=local_url)
-
-            uri = str(parsed).rstrip("/")
-            layer = Layer(str(parsed), **kwargs)
             self.layers.append(name=name, layer=layer)
             self.stdio.info(f"Loaded: {self.layers[name].to_json()}")
             onames.append(name)
@@ -629,6 +643,15 @@ class Scene(ViewerState):
 
         if shader is not None:
             self.shader(shader, layer=onames)
+
+    @autolog
+    def adapt_state(self, **kwargs) -> None:
+        """Adapt the URL of the current state to ngtools fileserver."""
+        fileserver = (kwargs.pop("fileserver", "") or "").rstrip("/")
+        with CurrentFileserver(fileserver):
+            for layer in self.layers:
+                layer: ng.ManagedLayer
+                layer.layer = Layer(layer.layer)  # trigger layer re-creation
 
     @autolog
     def unload(

@@ -615,3 +615,65 @@ class FileNotFoundHandler(ErrorHandler):
 
     def __init__(self, app: "Application", msg: str | None = None) -> None:
         super().__init__(app, 404, msg)
+
+
+class CurrentFileserver:
+    """
+    A context manager to set or access the current fileserver.
+
+    Example
+    -------
+    ```python
+    def some_function():
+        with CurrentFileserver() as fileserver:
+            if fileserver is not None:
+                print("Current fileserver URL:", fileserver.get_url())
+            else:
+                print("No current fileserver.")
+
+    def main():
+        with CurrentFileserver(True) as fileserver:
+            print("Fileserver started at:", fileserver.get_url())
+            some_function()  # This will print the fileserver URL.
+
+    def main2():
+        my_fileserver = LocalFileServer()
+        with CurrentFileserver(my_fileserver) as fileserver:
+            print("Fileserver started at:", fileserver.get_url())
+            some_function()  # This will print the fileserver URL.
+    ```
+    """
+
+    current_fileserver: LocalFileServer | None = None
+
+    def __init__(
+        self, fileserver: LocalFileServer | bool | None = None
+    ) -> None:
+        """
+        Parameters
+        ----------
+        fileserver : LocalFileServer | bool | None
+            * If a LocalFileServer instance is provided, it will be set
+              as  the current fileserver for the duration of the context.
+            * If True and no current fileserver is set, a new server
+              will be created and set as the current fileserver.
+            * If None or False, the current fileserver will remain unchanged.
+        """
+        self.fileserver: LocalFileServer | bool | None = fileserver
+        self.previous_fileserver: LocalFileServer | None = None
+
+    def __enter__(self) -> "LocalFileServer":
+        cls = type(self)
+        self.previous_fileserver = self.current_fileserver
+
+        if self.fileserver is True and self.current_fileserver is None:
+            cls.current_fileserver = LocalFileServer()
+        elif self.fileserver:
+            cls.current_fileserver = self.fileserver
+
+        return cls.current_fileserver
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        cls = type(self)
+        cls.current_fileserver = self.previous_fileserver
+        self.previous_fileserver = None

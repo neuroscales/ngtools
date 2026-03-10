@@ -92,7 +92,7 @@ def state_action(name: str, preproc: Callable | None = None) -> callable:
         # build scene
         scene = Scene(state.to_json(), stdio=self.console.stdio)
         # if loader, pass fileserver
-        if name in ("load", "shader"):
+        if name in ("load", "shader", "adapt_state"):
             kwargs["fileserver"] = self.get_fileserver_url()
         # run action
         scene_fn = getattr(scene, name)
@@ -732,6 +732,12 @@ class LocalNeuroglancer(OSMixin):
             help='Name(s) of layer(s) to unload')
 
         # --------------------------------------------------------------
+        #   ADAPT STATE
+        # --------------------------------------------------------------
+        _ = add_parser('adapt_state', help='Adapt the current state\'s URLs')
+        _.set_defaults(func=self.adapt_state)
+
+        # --------------------------------------------------------------
         #   RENAME
         # --------------------------------------------------------------
         _ = add_parser('rename', help='Rename a file')
@@ -1050,6 +1056,7 @@ class LocalNeuroglancer(OSMixin):
 
     load = state_action("load")
     unload = state_action("unload")
+    adapt_state = state_action("adapt_state")
     rename = state_action("rename")
     world_axes = state_action("world_axes")
     rename_axes = state_action("rename_axes")
