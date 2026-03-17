@@ -814,7 +814,7 @@ class LocalNeuroglancer(OSMixin):
         _ = add_parser('save_transform', help='Save the current transform')
         _.set_defaults(func=self.save_transform)
         _.add_argument(
-            dest='output', nargs='*', help='Path to output transform.')
+            dest='output', nargs='+', help='Path to output transform.')
         _.add_argument(
             '--layer', '-l', nargs='+', help='Name(s) of layer(s) to save')
         _.add_argument(
