@@ -30,6 +30,7 @@ dependencies = [
     "dandi >= 0.44",               # get_assets_by_glob
     "requests",
     "pyreadline3; platform_system == 'Windows'",
+    "trk_to_annotation",
 ]
 dynamic = ["version"]
 

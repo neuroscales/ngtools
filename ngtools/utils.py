@@ -26,6 +26,31 @@ NG_URLS = {
         "https://neuroglancer.lincbrain.org/cloudfront/frontend/index.html",
 }
 
+class _SizedCache(dict):
+    def __init__(self, max_size: int | None = None) -> None:
+        self._max_size = max_size
+        self._keys = []
+
+    def __setitem__(self, key: object, value: object) -> None:
+        if key in self:
+            del self[key]
+        super().__setitem__(key, value)
+        self._keys.append(key)
+        if self._max_size:
+            while len(self) > self._max_size:
+                del self[self._keys[0]]
+    
+    def __delitem__(self, key: object) -> None:
+        super().__delitem__(key)
+        self._keys.remove(key)
+
+class _SizedRefreshCache(_SizedCache):
+    def __getitem__(self, key: object) -> object:
+        value = super().__getitem__(key)
+        self._keys.remove(key)
+        self._keys.append(key)
+        return value
+
 
 def neuroglancer_state_to_neuroglancer_url(
     state: ng.ViewerState,
