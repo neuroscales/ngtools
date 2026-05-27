@@ -287,8 +287,8 @@ class LayerDataSource(Wraps(ng.LayerDataSource),
                 LOG.debug("Recompute info")
                 try:
                     _DATASOURCE_INFO_CACHE[key] = self._compute_info()
-                except Exception:
-                    LOG.warning(f"Could not compute info for: {key}")
+                except Exception as exc:
+                    LOG.warning(f"Could not compute info for: {key} -- {exc}")
             else:
                 LOG.debug("Use cached info")
             self._info = _DATASOURCE_INFO_CACHE.get(key, None)
@@ -971,7 +971,7 @@ class NiftiVolumeInfo(VolumeInfo):
                     pass
         toc = time.time()
         LOG.info(f"Failed to load nii header: {toc-tic} s")
-        raise RuntimeError("Failed to load file.")
+        raise RuntimeError("Failed to load nifti file.")
 
     _allSourceNames = ["i", "j", "k", "m", "c^", "c1^", "c2^"]
     _allViewNames = ["x", "y", "z", "t", "c^", "c1^", "c2^"]
@@ -1458,10 +1458,12 @@ class Zarr2VolumeInfo(ZarrVolumeInfo):
                     self.nifti = NiftiVolumeInfo(
                         url, affine="best", align_corner=True
                     )
-                except Exception:
+                except Exception as exc:
+                    LOG.error(f"Failed to load nifti metadata from zarr: {exc}")
                     if nifti is True:
                         raise
             elif nifti is True:
+                LOG.error("Cannot find nifti group in zarr")
                 raise FileNotFoundError("Cannot find nifti group in zarr.")
 
     def getDataType(self) -> np.dtype:
@@ -1523,19 +1525,31 @@ class Zarr3VolumeInfo(ZarrVolumeInfo):
             content = json.loads(nifti_json.read_text())
             sep = content["chunk_key_encoding"]["configuration"]["separator"]
         except (KeyError, json.JSONDecodeError):
-            raise ValueError(
-                "Failed to read dimension separator from NIfTI zarr metadata."
-            )
+            LOG.error("Failed to read dimension separator from NIfTI zarr metadata.")
+            if nifti:
+                raise ValueError(
+                    "Failed to read dimension separator from NIfTI zarr metadata."
+                )
+            return
 
         nifti_group = url / "nifti" / f"c{sep}0"
         if not nifti_group.exists():
-            raise FileNotFoundError("Cannot find nifti group in zarr.")
+            LOG.error("Failed to find nifti group in zarr.")
+            if nifti:
+                raise FileNotFoundError("Failed to find nifti group in zarr.")
+            return
 
-        self.nifti = NiftiVolumeInfo(
-            nifti_group,
-            affine="best",
-            align_corner=True
-        )
+        try:
+            self.nifti = NiftiVolumeInfo(
+                nifti_group,
+                affine="best",
+                align_corner=True
+            )
+        except Exception as exc:
+            LOG.error(f"Failed to load nifti metadata from zarr: {exc}")
+            if nifti is True:
+                raise
+
 
     def getDataType(self) -> np.dtype:
         """Array shape at a given level."""
