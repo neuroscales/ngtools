@@ -375,6 +375,25 @@ class FixOrderHelpFormatter(argparse.HelpFormatter):
     method.
     """
 
+    def _get_actions_usage_and_parts(
+        self,
+        actions: list[argparse.Action],
+        groups: list[argparse._ArgumentGroup],
+    ) -> tuple[str, list[str]]:
+        if hasattr(self, "_get_actions_usage_parts"):
+            parts, _ = self._get_actions_usage_parts(actions, groups)
+            usage = ' '.join(parts)
+        else:
+            part_regexp = (
+                r'\(.*?\)+(?=\s|$)|'
+                r'\[.*?\]+(?=\s|$)|'
+                r'\S+'
+            )
+            usage = self._format_actions_usage(actions, groups)
+            parts = re.findall(part_regexp, usage)
+        return usage, parts
+
+
     def _format_usage(  # noqa: ANN202
         self: argparse.HelpFormatter,
         usage: str | None,
@@ -407,8 +426,10 @@ class FixOrderHelpFormatter(argparse.HelpFormatter):
                     positionals.append(action)
 
             # build full usage string
-            format = self._format_actions_usage
-            action_usage = format(positionals + optionals, groups)
+            # format = getattr(self, '_format_action_invocation', self._format_actions_usage)
+            # format = self._format_actions_usage
+            action_usage, _ = self._get_actions_usage_and_parts(positionals + optionals, groups)
+            # action_usage = format(positionals + optionals, groups)
             usage = ' '.join([s for s in [prog, action_usage] if s])
 
             # wrap the usage parts if it's too long
@@ -421,10 +442,8 @@ class FixOrderHelpFormatter(argparse.HelpFormatter):
                     r'\[.*?\]+(?=\s|$)|'
                     r'\S+'
                 )
-                opt_usage = format(optionals, groups)
-                pos_usage = format(positionals, groups)
-                opt_parts = re.findall(part_regexp, opt_usage)
-                pos_parts = re.findall(part_regexp, pos_usage)
+                opt_usage, opt_parts = self._get_actions_usage_and_parts(optionals, groups)
+                pos_usage, pos_parts = self._get_actions_usage_and_parts(positionals, groups)
                 assert ' '.join(opt_parts) == opt_usage
                 assert ' '.join(pos_parts) == pos_usage
 

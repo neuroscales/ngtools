@@ -716,11 +716,11 @@ class LocalNeuroglancer(OSMixin):
             dest='filename', nargs='+', metavar='FILENAME',
             help='Filename(s) with protocols')
         _.add_argument(
-            '--name', '-n', nargs='+', help='A name for the image layer')
+            '-n', '--name', nargs='+', help='A name for the image layer')
         _.add_argument(
-            '--transform', '-t', nargs='+', help='Apply a transform')
+            '-t', '--transform', nargs='+', help='Apply a transform')
         _.add_argument(
-            '--shader', '-s', help='Apply a shader')
+            '-s', '--shader', help='Apply a shader')
 
         # --------------------------------------------------------------
         #   UNLOAD
@@ -749,13 +749,13 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             dest='axes', metavar='DEST', nargs="*", help='New axis names')
         _.add_argument(
-            '--destination', '--dst', '-d', metavar='DEST', nargs="+",
-            help='New axis names')
+            '-d', '--dst', '--destination',
+            metavar='DEST', nargs="+", dest="dst", help='New axis names')
         _.add_argument(
-            '--source', '--src', '-s', metavar='SOURCE', nargs="*",
-            help='Native axis names')
+            '-s', '--src', '--source',
+            metavar='SOURCE', nargs="*", dest="src", help='Native axis names')
         _.add_argument(
-            '--print', '-p', action="store_true", help='Print result')
+            '-p', '--print', action="store_true", help='Print result')
 
         # --------------------------------------------------------------
         #   RENAME AXES
@@ -765,13 +765,13 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             dest='dst', metavar='DEST', nargs="*", help='New axis names')
         _.add_argument(
-            '--destination', '--dst', '-d', metavar='DEST', nargs="+",
-            dest="dst", help='New axis names')
+            '-d', '--dst', '--destination',
+            metavar='DEST', nargs="+", dest="dst", help='New axis names')
         _.add_argument(
-            '--source', '--src', '-s', metavar='SOURCE', nargs="*",
-            dest="src", help='Old axis names')
+            '-s', '--src', '--source',
+            metavar='SOURCE', nargs="*", dest="src", help='Old axis names')
         _.add_argument(
-            '--layer', '-l', nargs="*", help='Layer(s) to rename')
+            '-l', '--layer', nargs="*", help='Layer(s) to rename')
 
         # --------------------------------------------------------------
         #   SPACE
@@ -782,7 +782,7 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             dest='mode', nargs="?", help='New axis names', choices=MODES)
         _.add_argument(
-            '--layer', '-l',
+            '-l', '--layer',
             help='If the name of a layer, align the cross-section with its '
                  'voxel grid. If "world", align the cross section with the '
                  'canonical axes.')
@@ -797,18 +797,18 @@ class LocalNeuroglancer(OSMixin):
             help='Path to transform file or flattened transformation '
                  'matrix (row major)')
         _.add_argument(
-            '--layer', '-l', nargs='+',
+            '-l', '--layer', nargs='+',
             help='Name(s) of layer(s) to transform')
         _.add_argument(
-            '--inv', '-i', action='store_true', default=False,
+            '-i', '--inv', action='store_true', default=False,
             help='Invert the transform before applying it')
         _.add_argument(
-            '--reset', '-r', action='store_true', default=False,
+            '-r', '--reset', action='store_true', default=False,
             help="Reset the layer's transform before applying the new one")
         _.add_argument(
-            '--mov', '-m', help='Moving image (required by some formats)')
+            '-m', '--mov', help='Moving image (required by some formats)')
         _.add_argument(
-            '--fix', '-f', help='Fixed image (required by some formats)')
+            '-f', '--fix', help='Fixed image (required by some formats)')
 
         # Save current transform
         _ = add_parser('save_transform', help='Save the current transform')
@@ -816,9 +816,9 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             dest='output', nargs='+', help='Path to output transform.')
         _.add_argument(
-            '--layer', '-l', nargs='+', help='Name(s) of layer(s) to save')
+            '-l', '--layer', nargs='+', help='Name(s) of layer(s) to save')
         _.add_argument(
-            '--format', '-f', help='Format to save into')
+            '-f', '--format', help='Format to save into')
 
         # Place registration landmarks
         _ = add_parser('landmarks', help='Place landmarks')
@@ -826,17 +826,17 @@ class LocalNeuroglancer(OSMixin):
         _.add_argument(
             dest='landmarks', nargs='*', help='Landmarks to add.', type=float)
         _.add_argument(
-            '--layer', '-l', default="::landmarks",
+            '-l', '--layer', default="::landmarks",
             help='Name of landmark layer')
         _.add_argument(
-            '--clear', '-c', action='store_true',
+            '-c', '--clear', action='store_true',
             help='Clear existing landmarks')
         _.add_argument(
-            '--pop', '-p', nargs="*", default=False,
+            '-p', '--pop', nargs="*", default=False,
             help='Pop landmarks. If used as a flag, pop the last landmark.'
         )
         _.add_argument(
-            '--delete', '-d', action='store_true',
+            '-d', '--delete', action='store_true',
             help='Delete landmarks layer')
 
         # --------------------------------------------------------------
@@ -850,10 +850,10 @@ class LocalNeuroglancer(OSMixin):
             choices=('local', 'channel', 'global'),
             help='How to interpret the channel (or another) axis')
         _.add_argument(
-            '--layer', '-l', nargs='+', default=None,
+            '-l', '--layer', nargs='+', default=None,
             help='Name(s) of layer(s) to transform')
         _.add_argument(
-            '--dimension', '-d', nargs='+', default=['c'],
+            '-d', '--dimension', nargs='+', default=['c'],
             help='Name(s) of axes to transform')
 
         # --------------------------------------------------------------
@@ -865,10 +865,10 @@ class LocalNeuroglancer(OSMixin):
             dest='shader', metavar='SHADER',
             help='Shader name or GLSL shader code')
         _.add_argument(
-            '--layer', '-l', nargs='+',
+            '-l', '--layer', nargs='+',
             help='Layer(s) to apply shader to')
         _.add_argument(
-            '--layer-type', '-t', nargs='+',
+            '-t', '--layer-type', nargs='+',
             help='Layer type(s) to apply shader to')
 
         # --------------------------------------------------------------
@@ -890,28 +890,28 @@ class LocalNeuroglancer(OSMixin):
             dest='layout', nargs='*', choices=LAYOUTS, metavar='LAYOUT',
             help='Layout')
         _.add_argument(
-            '--stack', '-s', choices=("row", "column"), help="Stack direction")
+            '-s', '--stack', choices=("row", "column"), help="Stack direction")
         _.add_argument(
-            '--layer', '-l', nargs='*', help="Layer(s) to include")
+            '-l', '--layer', nargs='*', help="Layer(s) to include")
         _.add_argument(
             '--flex', type=float, default=1, help="Flex")
         _.add_argument(
-            '--append', '-a', type=int, nargs='*',
+            '-a', '--append', type=int, nargs='*',
             help="Append to existing (nested) layout")
         _.add_argument(
-            '--assign', '-x', type=int, nargs='*',
+            '-x', '--assign', type=int, nargs='*',
             help="Assign into existing (nested) layout")
         _.add_argument(
-            '--insert', '-i', type=int, nargs='+',
+            '-i', '--insert', type=int, nargs='+',
             help="Insert in existing (nested) layout")
         _.add_argument(
-            '--remove', '-r', type=int, nargs='+',
+            '-r', '--remove', type=int, nargs='+',
             help="Remove from an existing (nested) layout")
         _.add_argument(
             '--row', dest="stack", action="store_const", const="row",
             help="Alias for `--stack row`")
         _.add_argument(
-            '--column', "--col", dest="stack",
+            '--col', '--column', dest="stack",
             action="store_const", const="column",
             help="Alias for `--stack column`")
 
@@ -924,19 +924,19 @@ class LocalNeuroglancer(OSMixin):
             '--no-print', action='store_false', default=True, dest='print',
             help='Do not print the state.')
         _.add_argument(
-            '--save', '-s', help='Save JSON state to this file.')
+            '-s', '--save', help='Save JSON state to this file.')
         _.add_argument(
-            '--load', '-l',
+            '-l', '--load',
             help='Load JSON state from this file. '
                  'Can also be a JSON string or a URL.')
         _.add_argument(
-            '--url', '-u', action='store_true', default=False,
+            '-u', '--url', action='store_true', default=False,
             help='Load (or print) the url form of the state')
         _.add_argument(
-            '--open', '-o', action='store_true', default=False,
+            '-o', '--open', action='store_true', default=False,
             help='Open the url (if `--url`) or viewer (otherwise)')
         _.add_argument(
-            '--instance', '-i', choices=list(NG_URLS.keys()),
+            '-i', '--instance', choices=list(NG_URLS.keys()),
             help='Link to this neuroglancer instance')
 
         # --------------------------------------------------------------
@@ -948,16 +948,17 @@ class LocalNeuroglancer(OSMixin):
             dest='coord', nargs='*', metavar='COORD', type=float,
             help='Cursor coordinates. If None, print current one.')
         _.add_argument(
-            '--dimensions', '-d', nargs='+', default=None,
+            '-d', '--dimensions', nargs='+', default=None,
             help='Axis name for each coordinate (can be compact)')
         _.add_argument(
-            '--unit', '-u',
+            '-u', '--unit',
             help='Coordinates are expressed in this unit')
         _.add_argument(
-            '--absolute', '--abs', '-a', action='store_true', default=False,
+            '-a', '--abs', '--absolute',
+            action='store_true', default=False, dest="absolute",
             help='Move to absolute position, rather than relative to current')
         _.add_argument(
-            '--reset', '-r', action='store_true', default=False,
+            '-r', '--reset', action='store_true', default=False,
             help='Reset coordinates to zero')
 
         # --------------------------------------------------------------
@@ -969,7 +970,7 @@ class LocalNeuroglancer(OSMixin):
             dest='factor', nargs='?', type=float, default=2.0,
             help='Zoom factor.')
         _.add_argument(
-            '--reset', '-r', action='store_true', default=False,
+            '-r', '--reset', action='store_true', default=False,
             help='Reset zoom level to default.')
 
         _ = add_parser('unzoom', help='Unzoom by a factor [default: ÷2]')
@@ -978,7 +979,7 @@ class LocalNeuroglancer(OSMixin):
             dest='factor', nargs='?', type=float, default=2.0,
             help='Inverse zoom factor.')
         _.add_argument(
-            '--reset', '-r', action='store_true', default=False,
+            '-r', '--reset', action='store_true', default=False,
             help='Reset zoom level to default.')
 
         # --------------------------------------------------------------
@@ -990,10 +991,10 @@ class LocalNeuroglancer(OSMixin):
             dest='layer', nargs='+', metavar='LAYER',
             help='Layer(s) name(s)')
         _.add_argument(
-            '--up', '-u', '-^', action='count', default=0,
+            '-^', '-u', '--up', action='count', default=0,
             help='Move upwards')
         _.add_argument(
-            '--down', '-d', '-v', action='count', default=0,
+            '-v', '-d', '--down', action='count', default=0,
             help='Move downwards')
 
         # --------------------------------------------------------------
@@ -1006,8 +1007,8 @@ class LocalNeuroglancer(OSMixin):
         _ = add_parser('ls', help='List files')
         _.set_defaults(func=self.ls)
         _.add_argument(dest='path', nargs='?', default='.', metavar='PATH')
-        _.add_argument('--long', '-l', action="store_true")
-        _.add_argument('--hidden', '-a', action="store_true")
+        _.add_argument('-l', '--long', action="store_true")
+        _.add_argument('-a', '--hidden', action="store_true")
 
         _ = add_parser('ll', help='List files (long form)')
         _.set_defaults(func=partial(self.ls, long=True, hidden=True))
