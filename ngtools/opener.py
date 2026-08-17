@@ -286,8 +286,8 @@ def filesystem(protocol: URILike | FileSystem, **opt) -> FileSystem:
         linc_auth = "neuroglancer.lincbrain.org" in url
         linc_auth = linc_auth or "dandi://linc" in url
     dandi_auth = opt.pop("dandi_auth", None)
-    if dandi_auth is None:
-        dandi_auth = "dandi://" in url
+    # if dandi_auth is None:
+    #     dandi_auth = "dandi://" in url
     # -----------------------------------
 
     if (protocol, linc_auth, dandi_auth) in _FILESYSTEMS_CACHE:
