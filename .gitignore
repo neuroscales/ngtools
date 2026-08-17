@@ -1,6 +1,9 @@
 # versioningit
 ngtools/_version.py
 
+# vscode
+.vscode
+
 # macos
 .DS_Store
 
